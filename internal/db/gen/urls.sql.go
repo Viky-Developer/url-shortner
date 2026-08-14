@@ -10,10 +10,23 @@ import (
 	"database/sql"
 )
 
+const countURLs = `-- name: CountURLs :one
+SELECT COUNT(*)
+FROM urls
+WHERE deleted_at IS NULL
+`
+
+func (q *Queries) CountURLs(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countURLs)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createURL = `-- name: CreateURL :one
 INSERT INTO urls (short_code, original_url, is_custom, expires_at)
 VALUES ($1, $2, $3, $4)
-RETURNING id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at
+RETURNING id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at, deleted_at
 `
 
 type CreateURLParams struct {
@@ -41,14 +54,41 @@ func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, erro
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getURLByID = `-- name: GetURLByID :one
+SELECT id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at, deleted_at
+FROM urls
+WHERE id = $1
+  AND deleted_at IS NULL
+`
+
+func (q *Queries) GetURLByID(ctx context.Context, id int64) (Url, error) {
+	row := q.db.QueryRowContext(ctx, getURLByID, id)
+	var i Url
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.OriginalUrl,
+		&i.IsCustom,
+		&i.ExpiresAt,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getURLByShortCode = `-- name: GetURLByShortCode :one
-SELECT id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at
+SELECT id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at, deleted_at
 FROM urls
 WHERE short_code = $1
+  AND deleted_at IS NULL
   AND (expires_at IS NULL OR expires_at > NOW())
 `
 
@@ -65,6 +105,123 @@ func (q *Queries) GetURLByShortCode(ctx context.Context, shortCode string) (Url,
 		&i.IsActive,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const hardDeleteURL = `-- name: HardDeleteURL :exec
+DELETE FROM urls
+WHERE id = $1
+  AND deleted_at IS NOT NULL
+`
+
+func (q *Queries) HardDeleteURL(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, hardDeleteURL, id)
+	return err
+}
+
+const listURLs = `-- name: ListURLs :many
+SELECT id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at, deleted_at
+FROM urls
+WHERE deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListURLsParams struct {
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
+}
+
+func (q *Queries) ListURLs(ctx context.Context, arg ListURLsParams) ([]Url, error) {
+	rows, err := q.db.QueryContext(ctx, listURLs, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Url
+	for rows.Next() {
+		var i Url
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ShortCode,
+			&i.OriginalUrl,
+			&i.IsCustom,
+			&i.ExpiresAt,
+			&i.IsActive,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const softDeleteURL = `-- name: SoftDeleteURL :one
+UPDATE urls
+SET is_active = FALSE, deleted_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at, deleted_at
+`
+
+func (q *Queries) SoftDeleteURL(ctx context.Context, id int64) (Url, error) {
+	row := q.db.QueryRowContext(ctx, softDeleteURL, id)
+	var i Url
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.OriginalUrl,
+		&i.IsCustom,
+		&i.ExpiresAt,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const updateURL = `-- name: UpdateURL :one
+UPDATE urls
+SET original_url = $2, expires_at = $3, updated_at = NOW()
+WHERE id = $1
+  AND deleted_at IS NULL
+RETURNING id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at, deleted_at
+`
+
+type UpdateURLParams struct {
+	ID          int64        `json:"id"`
+	OriginalUrl string       `json:"original_url"`
+	ExpiresAt   sql.NullTime `json:"expires_at"`
+}
+
+func (q *Queries) UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error) {
+	row := q.db.QueryRowContext(ctx, updateURL, arg.ID, arg.OriginalUrl, arg.ExpiresAt)
+	var i Url
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.OriginalUrl,
+		&i.IsCustom,
+		&i.ExpiresAt,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

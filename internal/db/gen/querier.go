@@ -9,8 +9,14 @@ import (
 )
 
 type Querier interface {
+	CountURLs(ctx context.Context) (int64, error)
 	CreateURL(ctx context.Context, arg CreateURLParams) (Url, error)
+	GetURLByID(ctx context.Context, id int64) (Url, error)
 	GetURLByShortCode(ctx context.Context, shortCode string) (Url, error)
+	HardDeleteURL(ctx context.Context, id int64) error
+	ListURLs(ctx context.Context, arg ListURLsParams) ([]Url, error)
+	SoftDeleteURL(ctx context.Context, id int64) (Url, error)
+	UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error)
 }
 
 var _ Querier = (*Queries)(nil)

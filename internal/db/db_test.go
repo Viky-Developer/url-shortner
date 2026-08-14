@@ -84,3 +84,81 @@ func TestCreateAndGetURL(t *testing.T) {
 		t.Errorf("expected original_url %q, got %q", created.OriginalUrl, got.OriginalUrl)
 	}
 }
+
+func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
+	database := setup(t)
+
+	if err := db.Migrate(database, "migrations"); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	q := gen.New(database)
+	ctx := context.Background()
+	code := fmt.Sprintf("u%d", time.Now().UnixNano()%100000000)
+
+	created, err := q.CreateURL(ctx, gen.CreateURLParams{
+		ShortCode:   code,
+		OriginalUrl: "https://example.com/original",
+		IsCustom:    sql.NullBool{Bool: false, Valid: true},
+		ExpiresAt:   sql.NullTime{Valid: false},
+	})
+	if err != nil {
+		t.Fatalf("create url: %v", err)
+	}
+
+	t.Run("list", func(t *testing.T) {
+		items, err := q.ListURLs(ctx, gen.ListURLsParams{Limit: 10, Offset: 0})
+		if err != nil {
+			t.Fatalf("list urls: %v", err)
+		}
+		if len(items) == 0 {
+			t.Fatal("expected at least one url")
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		updated, err := q.UpdateURL(ctx, gen.UpdateURLParams{
+			ID:          created.ID,
+			OriginalUrl: "https://example.com/updated",
+			ExpiresAt:   sql.NullTime{Valid: false},
+		})
+		if err != nil {
+			t.Fatalf("update url: %v", err)
+		}
+		if updated.OriginalUrl != "https://example.com/updated" {
+			t.Errorf("expected updated original_url, got %q", updated.OriginalUrl)
+		}
+	})
+
+	t.Run("soft delete", func(t *testing.T) {
+		deleted, err := q.SoftDeleteURL(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("soft delete url: %v", err)
+		}
+		if !deleted.DeletedAt.Valid {
+			t.Error("expected deleted_at to be set")
+		}
+
+		if _, err := q.GetURLByID(ctx, created.ID); err != sql.ErrNoRows {
+			t.Errorf("expected ErrNoRows after soft delete, got %v", err)
+		}
+	})
+
+	t.Run("hard delete", func(t *testing.T) {
+		if err := q.HardDeleteURL(ctx, created.ID); err != nil {
+			t.Fatalf("hard delete url: %v", err)
+		}
+
+		var count int64
+		err := database.QueryRow(
+			`SELECT COUNT(*) FROM urls WHERE id = $1 AND deleted_at IS NOT NULL`,
+			created.ID,
+		).Scan(&count)
+		if err != nil {
+			t.Fatalf("count after hard delete: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("expected 0 rows after hard delete, got %d", count)
+		}
+	})
+}
