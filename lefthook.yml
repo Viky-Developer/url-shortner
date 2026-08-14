@@ -41,3 +41,8 @@ commit-msg:
         fi
       skip:
         - merge
+
+pre-push:
+  commands:
+    branch-name:
+      run: bash scripts/check-branch.sh
