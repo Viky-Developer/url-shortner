@@ -41,6 +41,63 @@ Client ──► HTTP Server (cmd/server)
 - [goose](https://pressly.github.io/goose/) for database migrations
 - Docker & Docker Compose (for Postgres, RabbitMQ, Prometheus, Grafana)
 - PostgreSQL for URL storage
+- [lefthook](https://lefthook.dev/) for git hooks (install via `go install github.com/evilmartians/lefthook@latest`)
+
+## Git Hooks (lefthook)
+
+Git hooks are managed with [lefthook](https://lefthook.dev/), configured in `lefthook.yml`. Install them once:
+
+```bash
+lefthook install
+```
+
+### pre-commit
+
+Runs in parallel (up to 4) over staged Go files:
+
+| Check      | What it does                                             |
+|------------|----------------------------------------------------------|
+| `gofmt`    | Fails if staged `.go` files are unformatted               |
+| `goimports`| Fails on import formatting issues (skipped on merges)     |
+| `go-vet`   | Runs `go vet ./...`                                       |
+| `golangci` | Runs `golangci-lint run ./... --timeout 5m`               |
+| `sqlc`     | Runs `sqlc generate` and fails if `internal/db/gen` is stale |
+| `build`    | Runs `go build ./...`                                     |
+
+> `sqlc`, `sqlc-dev`, and a Go toolchain must be on `PATH` for the hooks to pass.
+
+### commit-msg
+
+Enforces [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<optional scope>): <subject>
+```
+
+Allowed types: `feat, fix, refactor, chore, docs, test, perf, ci, style, build, revert`. Merges are skipped.
+
+### pre-push (branch naming)
+
+Branches must use a context prefix. Pushes are blocked if the name does not match:
+
+| Prefix      | Purpose                   |
+|-------------|---------------------------|
+| `feat/`     | New features              |
+| `refactor/` | Refactoring existing code |
+| `bug/`      | Bug fixes                 |
+| `fix/`      | Immediate fixes (dev/main)|
+| `hotfix/`   | Urgent production fixes   |
+| `chore/`    | Maintenance tasks         |
+
+> `main`, `dev`, and `migrations` are allowlisted and can be pushed without a prefix.
+
+Create a properly named branch with the Makefile helper:
+
+```bash
+make branch type=feat name=add-login
+```
+
+This runs `git checkout -b feat/add-login`.
 
 ## Database (sqlc + goose)
 
