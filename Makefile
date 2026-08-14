@@ -57,6 +57,17 @@ lefthook-run: ## Manually run all pre-commit checks
 	lefthook run pre-commit
 
 ## ---------------------------------------------------------------------------
+## Branches
+## ---------------------------------------------------------------------------
+
+.PHONY: branch
+branch: ## Create a prefixed branch: make branch type=feat name=add-login
+	@test -n "$(type)" || (echo "Usage: make branch type=<feat|refactor|bug|fix|chore> name=<branch-name>"; exit 1)
+	@test -n "$(name)" || (echo "Usage: make branch type=<feat|refactor|bug|fix|chore> name=<branch-name>"; exit 1)
+	@case "$(type)" in feat|refactor|bug|fix|chore|hotfix) ;; *) echo "invalid type '$(type)': allowed types are feat|refactor|bug|fix|chore|hotfix"; exit 1;; esac
+	git checkout -b "$(type)/$(name)"
+
+## ---------------------------------------------------------------------------
 ## Code quality
 ## ---------------------------------------------------------------------------
 

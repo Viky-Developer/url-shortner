@@ -76,6 +76,29 @@ Enforces [Conventional Commits](https://www.conventionalcommits.org/):
 
 Allowed types: `feat, fix, refactor, chore, docs, test, perf, ci, style, build, revert`. Merges are skipped.
 
+### pre-push (branch naming)
+
+Branches must use a context prefix. Pushes are blocked if the name does not match:
+
+| Prefix      | Purpose                   |
+|-------------|---------------------------|
+| `feat/`     | New features              |
+| `refactor/` | Refactoring existing code |
+| `bug/`      | Bug fixes                 |
+| `fix/`      | Immediate fixes (dev/main)|
+| `hotfix/`   | Urgent production fixes   |
+| `chore/`    | Maintenance tasks         |
+
+> `main`, `dev`, and `migrations` are allowlisted and can be pushed without a prefix.
+
+Create a properly named branch with the Makefile helper:
+
+```bash
+make branch type=feat name=add-login
+```
+
+This runs `git checkout -b feat/add-login`.
+
 ## Database (sqlc + goose)
 
 Database access is **not** ORM-based. Instead:
