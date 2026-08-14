@@ -66,7 +66,7 @@ func (c *Config) Connect() (*sql.DB, error) {
 }
 
 func getEnv(key, fallback string) string {
-	
+
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
