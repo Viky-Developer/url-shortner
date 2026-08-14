@@ -1,0 +1,38 @@
+min_version: 1.10.0
+
+pre-commit:
+  parallel: true
+  parallelism: 4
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: gofmt -l {staged_files}
+      fail_text: "gofmt found unformatted files. Run 'gofmt -w {staged_files}'."
+    goimports:
+      glob: "*.go"
+      run: goimports -l {staged_files}
+      fail_text: "goimports found formatting issues. Run 'goimports -w {staged_files}'."
+      skip:
+        - merge
+    go-vet:
+      glob: "*.go"
+      run: go vet ./...
+    golangci:
+      glob: "*.go"
+      run: golangci-lint run ./... --timeout 5m
+    sqlc:
+      glob: "{sqlc.yaml,internal/db/queries/**,internal/db/migrations/**.sql}"
+      run: sqlc generate && git diff --exit-code internal/db/gen
+      fail_text: "sqlc generated code is out of date. Run 'sqlc generate' and stage the changes."
+    build:
+      glob: "*.go"
+      run: go build ./...
+
+commit-msg:
+  parallel: true
+  commands:
+    lint-commit:
+      run: npx --no-install commitlint --edit {1}
+      skip:
+        - merge
+      optional: true
