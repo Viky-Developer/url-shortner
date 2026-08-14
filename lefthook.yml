@@ -32,7 +32,12 @@ commit-msg:
   parallel: true
   commands:
     lint-commit:
-      run: npx --no-install commitlint --edit {1}
+      run: |-
+        subject="$(head -1 {1})"
+        if ! printf '%s' "$subject" | grep -qE '^(feat|fix|refactor|chore|docs|test|perf|ci|style|build|revert)(\([a-z0-9-]+\))?!?: .+'; then
+          echo "invalid commit message: expected '<type>(<scope>): <subject>'"
+          echo "got: $subject"
+          exit 1
+        fi
       skip:
         - merge
-      optional: true
