@@ -6,8 +6,8 @@ on:
   pull_request:
 
 jobs:
-  checks:
-    name: Lint & format
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -48,8 +48,24 @@ jobs:
           sqlc generate
           git diff --exit-code internal/db/gen
 
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
   test:
-    name: Build, migrations & tests
+    name: test
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -84,9 +100,6 @@ jobs:
 
       - name: Install goose
         run: go install github.com/pressly/goose/v3/cmd/goose@latest
-
-      - name: Build
-        run: go build ./...
 
       - name: Goose migrations check
         run: |
