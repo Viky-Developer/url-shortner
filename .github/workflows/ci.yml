@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tools
+        run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          test -z "$unformatted" || { echo "unformatted files:"; echo "$unformatted"; exit 1; }
+
+      - name: goimports
+        run: |
+          unformatted=$(goimports -l $(git ls-files '*.go'))
+          test -z "$unformatted" || { echo "goimports issues:"; echo "$unformatted"; exit 1; }
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          args: --timeout=5m
+
+      - name: sqlc generate (diff check)
+        run: |
+          sqlc generate
+          git diff --exit-code internal/db/gen
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:alpine
+        env:
+          POSTGRES_USER: urlshortner
+          POSTGRES_PASSWORD: urlshortner123
+          POSTGRES_DB: urlshortner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U urlshortner -d urlshortner"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: urlshortner
+      DB_PASSWORD: urlshortner123
+      DB_NAME: urlshortner
+      DB_SSLMODE: disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@latest
+
+      - name: Goose migrations check
+        run: |
+          DSN="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?sslmode=$DB_SSLMODE"
+          goose -dir internal/db/migrations postgres "$DSN" up
+          goose -dir internal/db/migrations postgres "$DSN" status
+
+      - name: Test (with Postgres)
+        run: go test ./... -count=1
+        env:
+          RUN_DB_TESTS: "1"

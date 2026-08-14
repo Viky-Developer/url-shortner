@@ -1,7 +1,7 @@
 package handler
 
-import "fmt"
+import "github.com/vicky/url-shortner/external/logger"
 
-func Hello() {
-	fmt.Println("url-shortner server")
+func Hello(log logger.Logger) {
+	log.Info("url-shortner server")
 }
