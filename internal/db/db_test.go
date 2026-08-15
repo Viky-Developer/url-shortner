@@ -7,11 +7,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/vicky/url-shortner/internal/config"
-	"github.com/vicky/url-shortner/internal/db"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 )
 
@@ -36,10 +36,7 @@ func setup(t *testing.T) *sql.DB {
 func TestMigrationsApplyAndCreateTables(t *testing.T) {
 	database := setup(t)
 
-	if err := db.Migrate(database, "migrations"); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
-
+	// Check tables exist (migrations already applied in CI via goose up)
 	expected := []string{
 		"click_logs", "daily_url_stats", "url_versions", "urls",
 		"destinations", "blocked_domains", "sessions", "users",
@@ -65,17 +62,24 @@ func TestMigrationsApplyAndCreateTables(t *testing.T) {
 func TestCreateAndGetURL(t *testing.T) {
 	database := setup(t)
 
-	if err := db.Migrate(database, "migrations"); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
-
+	// Migrations already applied in CI; ensure default user exists
 	q := gen.New(database)
 	ctx := context.Background()
+
+	// Create default user if not exists
+	_, err := q.CreateUser(ctx, gen.CreateUserParams{
+		Email:        "default@urlshortner.local",
+		PasswordHash: "test",
+		DisplayUserID: sql.NullString{String: "USR_default", Valid: true},
+	})
+	if err != nil && !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("create default user: %v", err)
+	}
 	code := fmt.Sprintf("c%d", time.Now().UnixNano()%100000000)
 
 	dest, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
-		OriginalUrl: "https://example.com/ci-test",
-		UrlHash:     hashURL("https://example.com/ci-test"),
+		OriginalUrl: "https://example.com/ci-test-" + code,
+		UrlHash:     hashURL("https://example.com/ci-test-" + code),
 	})
 	if err != nil {
 		t.Fatalf("create destination: %v", err)
@@ -100,25 +104,33 @@ func TestCreateAndGetURL(t *testing.T) {
 	if got.ID != created.ID {
 		t.Errorf("expected id %d, got %d", created.ID, got.ID)
 	}
-	if got.OriginalUrl != "https://example.com/ci-test" {
-		t.Errorf("expected original_url %q, got %q", "https://example.com/ci-test", got.OriginalUrl)
+	expectedURL := "https://example.com/ci-test-" + code
+	if got.OriginalUrl != expectedURL {
+		t.Errorf("expected original_url %q, got %q", expectedURL, got.OriginalUrl)
 	}
 }
 
 func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	database := setup(t)
 
-	if err := db.Migrate(database, "migrations"); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
-
+	// Migrations already applied in CI; ensure default user exists
 	q := gen.New(database)
 	ctx := context.Background()
+
+	_, err := q.CreateUser(ctx, gen.CreateUserParams{
+		Email:        "default@urlshortner.local",
+		PasswordHash: "test",
+		DisplayUserID: sql.NullString{String: "USR_default", Valid: true},
+	})
+	if err != nil && !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("create default user: %v", err)
+	}
+
 	code := fmt.Sprintf("u%d", time.Now().UnixNano()%100000000)
 
 	dest, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
-		OriginalUrl: "https://example.com/original",
-		UrlHash:     hashURL("https://example.com/original"),
+		OriginalUrl: "https://example.com/original-" + code,
+		UrlHash:     hashURL("https://example.com/original-" + code),
 	})
 	if err != nil {
 		t.Fatalf("create destination: %v", err)
@@ -147,8 +159,8 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 
 	t.Run("update", func(t *testing.T) {
 		updDest, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
-			OriginalUrl: "https://example.com/updated",
-			UrlHash:     hashURL("https://example.com/updated"),
+			OriginalUrl: "https://example.com/updated-" + code,
+			UrlHash:     hashURL("https://example.com/updated-" + code),
 		})
 		if err != nil {
 			t.Fatalf("create destination: %v", err)
@@ -171,8 +183,9 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get url by short code: %v", err)
 		}
-		if got.OriginalUrl != "https://example.com/updated" {
-			t.Errorf("expected updated original_url, got %q", got.OriginalUrl)
+		expectedUpdatedURL := "https://example.com/updated-" + code
+		if got.OriginalUrl != expectedUpdatedURL {
+			t.Errorf("expected updated original_url %q, got %q", expectedUpdatedURL, got.OriginalUrl)
 		}
 	})
 
