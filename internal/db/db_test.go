@@ -63,6 +63,7 @@ func TestCreateAndGetURL(t *testing.T) {
 	code := fmt.Sprintf("c%d", time.Now().UnixNano()%100000000)
 
 	created, err := q.CreateURL(ctx, gen.CreateURLParams{
+		UserID:      1,
 		ShortCode:   code,
 		OriginalUrl: "https://example.com/ci-test",
 		IsCustom:    sql.NullBool{Bool: false, Valid: true},
@@ -72,7 +73,7 @@ func TestCreateAndGetURL(t *testing.T) {
 		t.Fatalf("create url: %v", err)
 	}
 
-	got, err := q.GetURLByShortCode(ctx, code)
+	got, err := q.GetURLByShortCode(ctx, gen.GetURLByShortCodeParams{UserID: 1, ShortCode: code})
 	if err != nil {
 		t.Fatalf("get url by short code: %v", err)
 	}
@@ -97,6 +98,7 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	code := fmt.Sprintf("u%d", time.Now().UnixNano()%100000000)
 
 	created, err := q.CreateURL(ctx, gen.CreateURLParams{
+		UserID:      1,
 		ShortCode:   code,
 		OriginalUrl: "https://example.com/original",
 		IsCustom:    sql.NullBool{Bool: false, Valid: true},
@@ -107,7 +109,7 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	}
 
 	t.Run("list", func(t *testing.T) {
-		items, err := q.ListURLs(ctx, gen.ListURLsParams{Limit: 10, Offset: 0})
+		items, err := q.ListURLs(ctx, gen.ListURLsParams{UserID: 1, Limit: 10, Offset: 0})
 		if err != nil {
 			t.Fatalf("list urls: %v", err)
 		}
@@ -119,6 +121,7 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	t.Run("update", func(t *testing.T) {
 		updated, err := q.UpdateURL(ctx, gen.UpdateURLParams{
 			ID:          created.ID,
+			UserID:      1,
 			OriginalUrl: "https://example.com/updated",
 			ExpiresAt:   sql.NullTime{Valid: false},
 		})
@@ -131,7 +134,7 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	})
 
 	t.Run("soft delete", func(t *testing.T) {
-		deleted, err := q.SoftDeleteURL(ctx, created.ID)
+		deleted, err := q.SoftDeleteURL(ctx, gen.SoftDeleteURLParams{ID: created.ID, UserID: 1})
 		if err != nil {
 			t.Fatalf("soft delete url: %v", err)
 		}
@@ -139,13 +142,13 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 			t.Error("expected deleted_at to be set")
 		}
 
-		if _, err := q.GetURLByID(ctx, created.ID); err != sql.ErrNoRows {
+		if _, err := q.GetURLByID(ctx, gen.GetURLByIDParams{ID: created.ID, UserID: 1}); err != sql.ErrNoRows {
 			t.Errorf("expected ErrNoRows after soft delete, got %v", err)
 		}
 	})
 
 	t.Run("hard delete", func(t *testing.T) {
-		if err := q.HardDeleteURL(ctx, created.ID); err != nil {
+		if err := q.HardDeleteURL(ctx, gen.HardDeleteURLParams{ID: created.ID, UserID: 1}); err != nil {
 			t.Fatalf("hard delete url: %v", err)
 		}
 

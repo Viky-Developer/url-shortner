@@ -14,19 +14,22 @@ import (
 
 // Config holds all runtime configuration values for the application.
 type Config struct {
-	DBHost        string        // Postgres host.
-	DBPort        string        // Postgres port.
-	DBUser        string        // Postgres user.
-	DBPassword    string        // Postgres password.
-	DBName        string        // Postgres database name.
-	SSLMode       string        // Postgres sslmode.
-	LogLevel      string        // Minimum log level (debug, info, warn, error).
-	DBMaxOpen     int           // Maximum number of open connections.
-	DBMaxIdle     int           // Maximum number of idle connections.
-	DBMaxLife     time.Duration // Maximum connection lifetime.
-	ServerHost    string        // HTTP server bind host.
-	ServerPort    string        // HTTP server bind port.
-	ServerBaseURL string        // Public base URL used to build short URLs.
+	DBHost              string        // Postgres host.
+	DBPort              string        // Postgres port.
+	DBUser              string        // Postgres user.
+	DBPassword          string        // Postgres password.
+	DBName              string        // Postgres database name.
+	SSLMode             string        // Postgres sslmode.
+	LogLevel            string        // Minimum log level (debug, info, warn, error).
+	DBMaxOpen           int           // Maximum number of open connections.
+	DBMaxIdle           int           // Maximum number of idle connections.
+	DBMaxLife           time.Duration // Maximum connection lifetime.
+	ServerHost          string        // HTTP server bind host.
+	ServerPort          string        // HTTP server bind port.
+	ServerBaseURL       string        // Public base URL used to build short URLs.
+	DefaultUserEmail    string        // Email of the default user created at startup.
+	DefaultUserPassword string        // Password of the default user created at startup.
+	UserIDSecretKey     string        // Secret key used to encode/decode display user ids.
 }
 
 // Load reads configuration from the .env file (if present) and the process
@@ -34,19 +37,22 @@ type Config struct {
 func Load() *Config {
 	_ = godotenv.Load()
 	return &Config{
-		DBHost:        getEnv("DB_HOST", "localhost"),
-		DBPort:        getEnv("DB_PORT", "5432"),
-		DBUser:        getEnv("DB_USER", "urlshortner"),
-		DBPassword:    getEnv("DB_PASSWORD", "urlshortner123"),
-		DBName:        getEnv("DB_NAME", "urlshortner"),
-		SSLMode:       getEnv("DB_SSLMODE", "disable"),
-		LogLevel:      getEnv("LOG_LEVEL", "info"),
-		DBMaxOpen:     getEnvInt("DB_MAX_OPEN_CONNS", 25),
-		DBMaxIdle:     getEnvInt("DB_MAX_IDLE_CONNS", 25),
-		DBMaxLife:     time.Duration(getEnvInt("DB_MAX_LIFETIME", 5)) * time.Minute,
-		ServerHost:    getEnv("SERVER_HOST", "0.0.0.0"),
-		ServerPort:    getEnv("SERVER_PORT", "8080"),
-		ServerBaseURL: getEnv("SERVER_BASE_URL", "http://localhost:8080"),
+		DBHost:              getEnv("DB_HOST", "localhost"),
+		DBPort:              getEnv("DB_PORT", "5432"),
+		DBUser:              getEnv("DB_USER", "urlshortner"),
+		DBPassword:          getEnv("DB_PASSWORD", "urlshortner123"),
+		DBName:              getEnv("DB_NAME", "urlshortner"),
+		SSLMode:             getEnv("DB_SSLMODE", "disable"),
+		LogLevel:            getEnv("LOG_LEVEL", "info"),
+		DBMaxOpen:           getEnvInt("DB_MAX_OPEN_CONNS", 25),
+		DBMaxIdle:           getEnvInt("DB_MAX_IDLE_CONNS", 25),
+		DBMaxLife:           time.Duration(getEnvInt("DB_MAX_LIFETIME", 5)) * time.Minute,
+		ServerHost:          getEnv("SERVER_HOST", "0.0.0.0"),
+		ServerPort:          getEnv("SERVER_PORT", "8080"),
+		ServerBaseURL:       getEnv("SERVER_BASE_URL", "http://localhost:8080/api/v1"),
+		DefaultUserEmail:    getEnv("DEFAULT_USER_EMAIL", "default@urlshortner.local"),
+		DefaultUserPassword: getEnv("DEFAULT_USER_PASSWORD", "default123"),
+		UserIDSecretKey:     getEnv("USER_ID_SECRET_KEY", "change-me-in-production"),
 	}
 }
 

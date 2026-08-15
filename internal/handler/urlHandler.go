@@ -4,8 +4,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,13 +21,14 @@ import (
 // URLService is the contract the handlers depend on for URL business logic.
 // It is satisfied by *service.URLService and can be mocked in tests.
 type URLService interface {
-	Create(ctx context.Context, req payload.CreateURLRequest) (*payload.URLResponse, error)
-	GetByShortCode(ctx context.Context, shortCode string) (*payload.URLResponse, error)
-	GetByID(ctx context.Context, id int64) (*payload.URLResponse, error)
-	List(ctx context.Context, page, perPage int) (*payload.URLListResponse, error)
-	Update(ctx context.Context, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error)
-	SoftDelete(ctx context.Context, id int64) (*payload.DeleteResponse, error)
-	HardDelete(ctx context.Context, id int64) error
+	ResolveUserID(ctx context.Context, encodedUserID string) (int64, error)
+	Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error)
+	GetByShortCode(ctx context.Context, userID int64, shortCode string) (*payload.URLResponse, error)
+	GetByID(ctx context.Context, userID int64, id int64) (*payload.URLResponse, error)
+	List(ctx context.Context, userID int64, page, perPage, offset int32) (*payload.URLListResponse, error)
+	Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error)
+	SoftDelete(ctx context.Context, userID int64, id int64) (*payload.DeleteResponse, error)
+	HardDelete(ctx context.Context, userID int64, id int64) error
 }
 
 // URLHandler holds the dependencies required by the URL HTTP handlers.
@@ -49,13 +53,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // writeSuccess writes a unified success envelope containing the status code,
-// a message, and optional data.
-func writeSuccess(w http.ResponseWriter, status int, message string, data any) {
-	writeJSON(w, status, payload.SuccessResponse{
+// a message, optional data array, and optional pagination metadata.
+func writeSuccess(w http.ResponseWriter, status int, message string, data []any, pagination ...*payload.Pagination) {
+	resp := payload.SuccessResponse{
 		StatusCode: status,
 		Message:    message,
 		Data:       data,
-	})
+	}
+	if len(pagination) > 0 {
+		resp.Pagination = pagination[0]
+	}
+	writeJSON(w, status, resp)
 }
 
 // writeError writes a unified error envelope containing the status code and
@@ -90,37 +98,73 @@ func parseID(r *http.Request) (int64, error) {
 	return id, nil
 }
 
-// parsePagination reads and clamps the page and perPage query parameters,
-// defaulting to page 1 and 10 per page (maximum 100).
-func parsePagination(r *http.Request) (page, perPage int) {
-
-	page = parsePositiveInt(r.URL.Query().Get("page"), 1)
-	perPage = parsePositiveInt(r.URL.Query().Get("perPage"), 10)
-	if perPage > 100 {
-		perPage = 100
+// resolveUserID decodes the HMAC-signed {userId} path segment into the
+// internal integer user id via the service, so callers can scope URL queries.
+func (h *URLHandler) resolveUserID(r *http.Request) (int64, error) {
+	userID := r.PathValue("userId")
+	if userID == "" {
+		return 0, fmt.Errorf("%w: userId is required", apperror.ErrInvalidPayload)
 	}
-	return page, perPage
+	return h.urlService.ResolveUserID(r.Context(), userID)
 }
 
-// parsePositiveInt parses value as a positive integer, falling back when the
+// resolveUserIDOrError is resolveUserID plus HTTP error mapping: unknown users
+// yield 404 and malformed requests yield 400. It reports false when the
+// response has already been written.
+func (h *URLHandler) resolveUserIDOrError(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	userID, err := h.resolveUserID(r)
+	if err != nil {
+		if errors.Is(err, apperror.ErrNotFound) {
+			h.log.Warn("displayUserId not found", logger.Error(err))
+			writeError(w, http.StatusNotFound, err)
+		} else {
+			h.log.Warn("invalid displayUserId", logger.Error(err))
+			writeError(w, http.StatusBadRequest, err)
+		}
+		return 0, false
+	}
+	return userID, true
+}
+
+// parsePagination reads and clamps the page and perPage query parameters,
+// defaulting to page 1 and 10 per page (maximum 100). The offset is computed
+// in int64 and clamped to int32 so the LIMIT/OFFSET pair cannot overflow.
+func parsePagination(r *http.Request) (page, perPage, offset int32) {
+
+	page = max(parsePositiveInt(r.URL.Query().Get("page"), 1), 1)
+	perPage = min(max(parsePositiveInt(r.URL.Query().Get("perPage"), 10), 1), 100)
+
+	o := int64(page-1) * int64(perPage)
+	offset = int32(min(max(o, 0), math.MaxInt32))
+
+	return page, perPage, offset
+}
+
+// parsePositiveInt parses value as a positive int32, falling back when the
 // value is empty or invalid.
-func parsePositiveInt(value string, fallback int) int {
+func parsePositiveInt(value string, fallback int32) int32 {
 
 	if value == "" {
 		return fallback
 	}
-	n, err := strconv.Atoi(value)
+	n, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || n < 1 {
 		return fallback
 	}
-	return n
+	if n > math.MaxInt32 {
+		n = math.MaxInt32
+	}
+	return int32(n)
 }
 
 // decodeBody decodes the request body into v.
 func decodeBody(r *http.Request, v any) error {
 
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		return fmt.Errorf("invalid request body: %w", err)
+		if errors.Is(err, io.EOF) {
+			return fmt.Errorf("%w: request body is required", apperror.ErrInvalidPayload)
+		}
+		return fmt.Errorf("%w: %v", apperror.ErrInvalidPayload, err)
 	}
 	return nil
 }
@@ -128,9 +172,21 @@ func decodeBody(r *http.Request, v any) error {
 // CreateShortURL handles POST /shorten and creates a new short URL.
 func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 
+	userID, ok := h.resolveUserIDOrError(w, r)
+	if !ok {
+		return
+	}
+
 	var req payload.CreateURLRequest
 	if err := decodeBody(r, &req); err != nil {
 		h.log.Error("invalid request body", logger.Error(err))
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	if req.OriginalURL == "" && req.CustomCode == "" && !req.ExpiresAt.Valid {
+		err := fmt.Errorf("%w: request body is required", apperror.ErrInvalidPayload)
+		h.log.Error("invalid payload", logger.Error(err))
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -141,8 +197,13 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.urlService.Create(r.Context(), req)
+	created, err := h.urlService.Create(r.Context(), userID, req)
 	if err != nil {
+		if errors.Is(err, apperror.ErrConflict) {
+			h.log.Warn("short code already taken", logger.Error(err))
+			writeError(w, http.StatusConflict, err)
+			return
+		}
 		h.log.Error("failed to create url", logger.Error(err))
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -150,25 +211,38 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 
 	h.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", created.ShortCode))
 
-	writeSuccess(w, http.StatusCreated, "url created", created)
+	writeSuccess(w, http.StatusCreated, "url created", []any{created})
 }
 
-// RedirectShortURL handles GET /{shortCode} and redirects the client to the
-// original URL.
+// RedirectShortURL handles GET /{userId}/{shortCode} and redirects the client
+// to the original URL.
 func (h *URLHandler) RedirectShortURL(w http.ResponseWriter, r *http.Request) {
 
-	u, err := h.urlService.GetByShortCode(r.Context(), r.PathValue("shortCode"))
+	userID, ok := h.resolveUserIDOrError(w, r)
+	if !ok {
+		return
+	}
+
+	u, err := h.urlService.GetByShortCode(r.Context(), userID, r.PathValue("shortCode"))
 	if err != nil {
 		h.log.Error("redirect failed", logger.Error(err))
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
 
-	http.Redirect(w, r, u.OriginalURL, http.StatusFound)
+	// Return the destination URL in the response body so the client performs
+	// the redirect itself; this avoids server-side redirects dropping any
+	// client cookies or browser context.
+	writeSuccess(w, http.StatusOK, "redirect url", []any{map[string]string{"redirectURL": u.OriginalURL}})
 }
 
 // GetURLByID handles GET /urls/{id} and returns the URL details.
 func (h *URLHandler) GetURLByID(w http.ResponseWriter, r *http.Request) {
+
+	userID, ok := h.resolveUserIDOrError(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parseID(r)
 	if err != nil {
@@ -176,33 +250,53 @@ func (h *URLHandler) GetURLByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := h.urlService.GetByID(r.Context(), id)
+	u, err := h.urlService.GetByID(r.Context(), userID, id)
 	if err != nil {
 		h.log.Error("get url failed", logger.Error(err))
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
 
-	writeSuccess(w, http.StatusOK, "url retrieved", u)
+	writeSuccess(w, http.StatusOK, "url retrieved", []any{u})
 }
 
 // ListURLs handles GET /urls and returns a paginated list of active URLs.
 func (h *URLHandler) ListURLs(w http.ResponseWriter, r *http.Request) {
 
-	page, perPage := parsePagination(r)
+	userID, ok := h.resolveUserIDOrError(w, r)
+	if !ok {
+		return
+	}
 
-	list, err := h.urlService.List(r.Context(), page, perPage)
+	page, perPage, offset := parsePagination(r)
+
+	list, err := h.urlService.List(r.Context(), userID, page, perPage, offset)
 	if err != nil {
 		h.log.Error("list urls failed", logger.Error(err))
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeSuccess(w, http.StatusOK, "urls listed", list)
+	items := make([]any, len(list.Items))
+	for i, item := range list.Items {
+		items[i] = item
+	}
+
+	writeSuccess(w, http.StatusOK, "urls listed", items, &payload.Pagination{
+		Total:      list.Total,
+		Page:       list.Page,
+		PerPage:    list.PerPage,
+		TotalPages: list.TotalPages,
+	})
 }
 
-// UpdateURL handles PUT /urls/{id} and updates the URL details.
+// UpdateURL handles PATCH /urls/{id} and updates the URL details.
 func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
+
+	userID, ok := h.resolveUserIDOrError(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parseID(r)
 	if err != nil {
@@ -223,7 +317,7 @@ func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.urlService.Update(r.Context(), id, req)
+	updated, err := h.urlService.Update(r.Context(), userID, id, req)
 	if err != nil {
 		h.log.Error("update url failed", logger.Error(err))
 		writeError(w, http.StatusBadRequest, err)
@@ -232,12 +326,17 @@ func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 
 	h.log.Info("url updated", logger.Int64("id", updated.ID))
 
-	writeSuccess(w, http.StatusOK, "url updated", updated)
+	writeSuccess(w, http.StatusOK, "url updated", []any{updated})
 }
 
 // DeleteURL handles DELETE /urls/{id} and soft deletes the URL, leaving a
 // hard-delete pending approval.
 func (h *URLHandler) DeleteURL(w http.ResponseWriter, r *http.Request) {
+
+	userID, ok := h.resolveUserIDOrError(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parseID(r)
 	if err != nil {
@@ -245,7 +344,7 @@ func (h *URLHandler) DeleteURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deleted, err := h.urlService.SoftDelete(r.Context(), id)
+	deleted, err := h.urlService.SoftDelete(r.Context(), userID, id)
 	if err != nil {
 		h.log.Error("soft delete failed", logger.Error(err))
 		writeError(w, http.StatusNotFound, err)
@@ -254,12 +353,17 @@ func (h *URLHandler) DeleteURL(w http.ResponseWriter, r *http.Request) {
 
 	h.log.Info("url soft deleted", logger.Int64("id", deleted.ID), logger.String("shortCode", deleted.ShortCode))
 
-	writeSuccess(w, http.StatusOK, "url soft deleted", deleted)
+	writeSuccess(w, http.StatusOK, "url soft deleted", []any{deleted})
 }
 
 // ApproveHardDelete handles DELETE /urls/{id}/approve and permanently removes
 // a previously soft-deleted URL.
 func (h *URLHandler) ApproveHardDelete(w http.ResponseWriter, r *http.Request) {
+
+	userID, ok := h.resolveUserIDOrError(w, r)
+	if !ok {
+		return
+	}
 
 	id, err := parseID(r)
 	if err != nil {
@@ -267,13 +371,13 @@ func (h *URLHandler) ApproveHardDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.urlService.HardDelete(r.Context(), id); err != nil {
+	if err := h.urlService.HardDelete(r.Context(), userID, id); err != nil {
 		h.log.Error("hard delete failed", logger.Error(err))
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	h.log.Info("url hard deleted", logger.Int64("id", id))
-	
-	writeSuccess(w, http.StatusOK, "url permanently deleted", nil)
+
+	writeSuccess(w, http.StatusOK, "url permanently deleted", []any{})
 }
