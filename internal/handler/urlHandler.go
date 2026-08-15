@@ -147,12 +147,9 @@ func parsePositiveInt(value string, fallback int32) int32 {
 	if value == "" {
 		return fallback
 	}
-	n, err := strconv.ParseInt(value, 10, 64)
+	n, err := strconv.ParseInt(value, 10, 32)
 	if err != nil || n < 1 {
 		return fallback
-	}
-	if n > math.MaxInt32 {
-		n = math.MaxInt32
 	}
 	return int32(n)
 }
