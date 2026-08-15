@@ -68,8 +68,8 @@ func TestCreateAndGetURL(t *testing.T) {
 
 	// Create default user if not exists
 	_, err := q.CreateUser(ctx, gen.CreateUserParams{
-		Email:        "default@urlshortner.local",
-		PasswordHash: "test",
+		Email:         "default@urlshortner.local",
+		PasswordHash:  "test",
 		DisplayUserID: sql.NullString{String: "USR_default", Valid: true},
 	})
 	if err != nil && !strings.Contains(err.Error(), "duplicate") {
@@ -118,8 +118,8 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := q.CreateUser(ctx, gen.CreateUserParams{
-		Email:        "default@urlshortner.local",
-		PasswordHash: "test",
+		Email:         "default@urlshortner.local",
+		PasswordHash:  "test",
 		DisplayUserID: sql.NullString{String: "USR_default", Valid: true},
 	})
 	if err != nil && !strings.Contains(err.Error(), "duplicate") {
