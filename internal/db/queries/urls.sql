@@ -1,34 +1,56 @@
 -- name: CreateURL :one
-INSERT INTO urls (user_id, short_code, original_url, is_custom, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetURLByShortCode :one
-SELECT *
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.is_active,
+  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
 FROM urls
-WHERE user_id = $1
-  AND short_code = $2
-  AND deleted_at IS NULL
-  AND (expires_at IS NULL OR expires_at > NOW());
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.short_code = $1
+  AND urls.deleted_at IS NULL
+  AND urls.is_active = TRUE
+  AND urls.is_safe = TRUE;
 
 -- name: GetURLByID :one
-SELECT *
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.is_active,
+  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
 FROM urls
-WHERE id = $1
-  AND user_id = $2
-  AND deleted_at IS NULL;
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.id = $1
+  AND urls.user_id = $2
+  AND urls.deleted_at IS NULL;
 
 -- name: ListURLs :many
-SELECT *
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.is_active,
+  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
 FROM urls
-WHERE user_id = $1
-  AND deleted_at IS NULL
-ORDER BY created_at DESC
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.user_id = $1
+  AND urls.deleted_at IS NULL
+ORDER BY urls.created_at DESC
 LIMIT $2 OFFSET $3;
 
 -- name: UpdateURL :one
 UPDATE urls
-SET original_url = $3, expires_at = $4, updated_at = NOW()
+SET destination_id = $3, title = $4, description = $5, expires_at = $6,
+    is_active = COALESCE($7, is_active), updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
   AND deleted_at IS NULL
@@ -53,3 +75,25 @@ SELECT COUNT(*)
 FROM urls
 WHERE user_id = $1
   AND deleted_at IS NULL;
+
+-- name: GetURLByShortCodeForUpdate :one
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.is_active,
+  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
+FROM urls
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.short_code = $1
+  AND urls.deleted_at IS NULL
+  AND urls.is_active = TRUE
+  AND urls.is_safe = TRUE
+FOR UPDATE OF urls;
+
+-- name: IncrementURLClick :exec
+UPDATE urls
+SET click_count = COALESCE(click_count, 0) + 1,
+  updated_at = NOW()
+WHERE id = $1;

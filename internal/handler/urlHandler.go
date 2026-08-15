@@ -9,21 +9,29 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
 	"github.com/vicky/url-shortner/internal/payload"
+	"github.com/vicky/url-shortner/internal/utils"
 )
+
+// lookupIP resolves a host to its IP addresses. It is a variable so tests can
+// stub DNS resolution.
+var lookupIP = net.LookupIP
 
 // URLService is the contract the handlers depend on for URL business logic.
 // It is satisfied by *service.URLService and can be mocked in tests.
 type URLService interface {
 	ResolveUserID(ctx context.Context, encodedUserID string) (int64, error)
 	Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error)
-	GetByShortCode(ctx context.Context, userID int64, shortCode string) (*payload.URLResponse, error)
+	Redirect(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, error)
 	GetByID(ctx context.Context, userID int64, id int64) (*payload.URLResponse, error)
 	List(ctx context.Context, userID int64, page, perPage, offset int32) (*payload.URLListResponse, error)
 	Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error)
@@ -76,16 +84,81 @@ func writeError(w http.ResponseWriter, status int, err error) {
 }
 
 // validateURL ensures the given URL is present and uses http or https.
+// validateURL checks that the raw URL is a well-formed http(s) URL and does
+// not point at a localhost, internal, private, or loopback destination.  DNS
+// resolution is performed so a host resolving to a private IP is rejected.
 func validateURL(rawURL string) error {
 
 	if rawURL == "" {
 		return fmt.Errorf("%w: originalURL is required", apperror.ErrInvalidURL)
 	}
 	parsed, err := url.ParseRequestURI(rawURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return fmt.Errorf("%w: must start with http:// or https://", apperror.ErrInvalidURL)
+	if err != nil || parsed.Scheme != "https" {
+		return fmt.Errorf("%w: must start with https://", apperror.ErrInvalidURL)
+	}
+
+	fmt.Printf("parsed: %v\n", parsed)
+
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return fmt.Errorf("%w: invalid host", apperror.ErrInvalidURL)
+	}
+
+	if host == "localhost" {
+		return fmt.Errorf("%w: localhost is not allowed", apperror.ErrInvalidURL)
+	}
+
+	// Internal TLD suffixes are never allowed.
+	blockedSuffixes := []string{".local", ".internal", ".lan", ".corp", ".home"}
+	for _, suffix := range blockedSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return fmt.Errorf("%w: internal domain not allowed", apperror.ErrInvalidURL)
+		}
+	}
+
+	// If the host is an IP literal, validate it directly.
+	if ip := net.ParseIP(host); ip != nil {
+		if isBlockedIP(ip) {
+			return fmt.Errorf("%w: private or loopback IP not allowed", apperror.ErrInvalidURL)
+		}
+		return nil
+	}
+
+	// Otherwise resolve the host and reject any private/loopback addresses.
+	ips, err := lookupIP(host)
+	if err != nil {
+		return fmt.Errorf("%w: unable to resolve host", apperror.ErrInvalidURL)
+	}
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			return fmt.Errorf("%w: host resolves to private or loopback IP", apperror.ErrInvalidURL)
+		}
+	}
+
+	return nil
+}
+
+// validateExpiresAt ensures that when an expiration time is provided it is not
+// in the past (i.e. it must be the current moment or a future time).
+func validateExpiresAt(e utils.OptionalTime) error {
+	if !e.Valid {
+		return nil
+	}
+	if e.Time.Before(time.Now()) {
+		return fmt.Errorf("%w: expiresAt must not be in the past", apperror.ErrInvalidPayload)
 	}
 	return nil
+}
+
+// isBlockedIP reports whether ip is loopback, private, link-local, multicast,
+// or unspecified — any of which make an address unsafe as a redirect target.
+func isBlockedIP(ip net.IP) bool {
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsUnspecified()
 }
 
 // parseID extracts the integer id from the {id} path segment.
@@ -181,7 +254,8 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.OriginalURL == "" && req.CustomCode == "" && !req.ExpiresAt.Valid {
+	if req.OriginalURL == "" && req.CustomCode == "" && req.Title == "" &&
+		req.Description == "" && !req.ExpiresAt.Valid {
 		err := fmt.Errorf("%w: request body is required", apperror.ErrInvalidPayload)
 		h.log.Error("invalid payload", logger.Error(err))
 		writeError(w, http.StatusBadRequest, err)
@@ -190,6 +264,12 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 
 	if err := validateURL(req.OriginalURL); err != nil {
 		h.log.Error("invalid url", logger.Error(err))
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	if err := validateExpiresAt(req.ExpiresAt); err != nil {
+		h.log.Error("invalid expiresAt", logger.Error(err))
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -211,26 +291,46 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, http.StatusCreated, "url created", []any{created})
 }
 
-// RedirectShortURL handles GET /{userId}/{shortCode} and redirects the client
-// to the original URL.
+// RedirectShortURL handles GET /api/v1/{shortCode}, records a click, and
+// issues an HTTP 302 redirect to the destination URL. The browser reads the
+// Location header and follows the redirect automatically.
 func (h *URLHandler) RedirectShortURL(w http.ResponseWriter, r *http.Request) {
-
-	userID, ok := h.resolveUserIDOrError(w, r)
-	if !ok {
-		return
-	}
-
-	u, err := h.urlService.GetByShortCode(r.Context(), userID, r.PathValue("shortCode"))
+	u, err := h.urlService.Redirect(r.Context(), r.PathValue("shortCode"), payload.ClickInfo{
+		IP:        clientIP(r),
+		UserAgent: r.UserAgent(),
+		Referrer:  r.Referer(),
+	})
 	if err != nil {
+		if errors.Is(err, apperror.ErrURLExpired) {
+			h.log.Warn("redirect expired", logger.Error(err))
+			writeError(w, http.StatusGone, err)
+			return
+		}
 		h.log.Error("redirect failed", logger.Error(err))
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
 
-	// Return the destination URL in the response body so the client performs
-	// the redirect itself; this avoids server-side redirects dropping any
-	// client cookies or browser context.
-	writeSuccess(w, http.StatusOK, "redirect url", []any{map[string]string{"redirectURL": u.OriginalURL}})
+	http.Redirect(w, r, u.OriginalURL, http.StatusFound)
+}
+
+// clientIP extracts the client IP from the X-Forwarded-For header or the
+// request's remote address. Returns a fallback loopback address when the
+// source IP cannot be determined.
+func clientIP(r *http.Request) net.IP {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if ip := net.ParseIP(strings.TrimSpace(strings.Split(xff, ",")[0])); ip != nil {
+			return ip
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return net.IPv4(127, 0, 0, 1)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip
+	}
+	return net.IPv4(127, 0, 0, 1)
 }
 
 // GetURLByID handles GET /urls/{id} and returns the URL details.
@@ -308,8 +408,16 @@ func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateURL(req.OriginalURL); err != nil {
-		h.log.Error("invalid url", logger.Error(err))
+	if req.OriginalURL != "" {
+		if err := validateURL(req.OriginalURL); err != nil {
+			h.log.Error("invalid url", logger.Error(err))
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+
+	if err := validateExpiresAt(req.ExpiresAt); err != nil {
+		h.log.Error("invalid expiresAt", logger.Error(err))
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}

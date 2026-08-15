@@ -8,27 +8,38 @@ import "github.com/vicky/url-shortner/internal/utils"
 type CreateURLRequest struct {
 	OriginalURL string             `json:"originalURL" binding:"required"` // The long URL to shorten. Required.
 	CustomCode  string             `json:"customCode,omitempty"`           // Optional custom short code. If empty, a random 10-char code is generated.
+	Title       string             `json:"title,omitempty"`                // Optional title for the short URL.
+	Description string             `json:"description,omitempty"`          // Optional description for the short URL.
 	ExpiresAt   utils.OptionalTime `json:"expiresAt,omitzero"`             // Optional expiration time for the short URL.
 }
 
 // UpdateURLRequest is the request body for updating an existing URL.
 type UpdateURLRequest struct {
-	OriginalURL string             `json:"originalURL"`         // The new long URL value.
-	ExpiresAt   utils.OptionalTime `json:"expiresAt,omitempty"` // Optional new expiration time.
+	OriginalURL string             `json:"originalURL"`           // The new long URL value.
+	Title       string             `json:"title,omitempty"`       // The new title value.
+	Description string             `json:"description,omitempty"` // The new description value.
+	IsActive    *bool              `json:"isActive,omitempty"`    // Manually activate/deactivate the URL.
+	ExpiresAt   utils.OptionalTime `json:"expiresAt,omitempty"`   // Optional new expiration time.
 }
 
 // URLResponse represents a single URL as returned by the API.
 type URLResponse struct {
-	ID          int64  `json:"id"`                  // Database identifier.
-	UserID      string `json:"userId"`              // HMAC-encoded display user id (e.g. "USR_...").
-	ShortCode   string `json:"shortCode"`           // Short code used in the short URL path.
-	OriginalURL string `json:"originalURL"`         // The original long URL.
-	ShortURL    string `json:"shortURL"`            // The generated short URL.
-	IsCustom    *bool  `json:"isCustom,omitempty"`  // Whether a custom code was used.
-	IsActive    bool   `json:"isActive"`            // Whether the URL is active.
-	ExpiresAt   string `json:"expiresAt,omitempty"` // Expiration timestamp (RFC3339).
-	CreatedAt   string `json:"createdAt"`           // Creation timestamp (RFC3339).
-	UpdatedAt   string `json:"updatedAt"`           // Last update timestamp (RFC3339).
+	ID                int64  `json:"id"`                          // Database identifier.
+	UserID            string `json:"userId"`                      // HMAC-encoded display user id (e.g. "USR_...").
+	ShortCode         string `json:"shortCode"`                   // Short code used in the short URL path.
+	OriginalURL       string `json:"originalURL"`                 // The original long URL.
+	ShortURL          string `json:"shortURL"`                    // The generated short URL.
+	Title             string `json:"title,omitempty"`             // Optional title.
+	Description       string `json:"description,omitempty"`       // Optional description.
+	IsCustom          *bool  `json:"isCustom,omitempty"`          // Whether a custom code was used.
+	IsActive          bool   `json:"isActive"`                    // Whether the URL is active.
+	ClickCount        int64  `json:"clickCount"`                  // Number of times the short URL was hit.
+	LastAccessedAt    string `json:"lastAccessedAt,omitempty"`    // Last time the short URL was redirected (RFC3339).
+	DestinationStatus *int16 `json:"destinationStatus,omitempty"` // Health status of the destination.
+	LastHealthCheck   string `json:"lastHealthCheck,omitempty"`   // Last health-check timestamp (RFC3339).
+	ExpiresAt         string `json:"expiresAt,omitempty"`         // Expiration timestamp (RFC3339).
+	CreatedAt         string `json:"createdAt"`                   // Creation timestamp (RFC3339).
+	UpdatedAt         string `json:"updatedAt"`                   // Last update timestamp (RFC3339).
 }
 
 // URLListResponse is the paginated list of URLs returned by the API.

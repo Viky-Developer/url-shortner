@@ -10,13 +10,22 @@ import (
 
 type Querier interface {
 	CountURLs(ctx context.Context, userID int64) (int64, error)
+	CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error)
+	CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error)
 	CreateURL(ctx context.Context, arg CreateURLParams) (Url, error)
+	CreateURLVersion(ctx context.Context, arg CreateURLVersionParams) (UrlVersion, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
-	GetURLByID(ctx context.Context, arg GetURLByIDParams) (Url, error)
-	GetURLByShortCode(ctx context.Context, arg GetURLByShortCodeParams) (Url, error)
+	GetBlockedDomain(ctx context.Context, domain string) (GetBlockedDomainRow, error)
+	GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error)
+	GetDestinationByID(ctx context.Context, id int64) (GetDestinationByIDRow, error)
+	GetLatestURLVersion(ctx context.Context, urlID int64) (int32, error)
+	GetURLByID(ctx context.Context, arg GetURLByIDParams) (GetURLByIDRow, error)
+	GetURLByShortCode(ctx context.Context, shortCode string) (GetURLByShortCodeRow, error)
+	GetURLByShortCodeForUpdate(ctx context.Context, shortCode string) (GetURLByShortCodeForUpdateRow, error)
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error
-	ListURLs(ctx context.Context, arg ListURLsParams) ([]Url, error)
+	IncrementURLClick(ctx context.Context, id int64) error
+	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
 	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)
 	UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error)
 	UpdateUserDisplayID(ctx context.Context, arg UpdateUserDisplayIDParams) (UpdateUserDisplayIDRow, error)

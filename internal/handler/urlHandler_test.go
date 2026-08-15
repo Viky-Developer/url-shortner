@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,7 +19,7 @@ import (
 type mockService struct {
 	resolveFn    func(context.Context, string) (int64, error)
 	createFn     func(context.Context, int64, payload.CreateURLRequest) (*payload.URLResponse, error)
-	byCodeFn     func(context.Context, int64, string) (*payload.URLResponse, error)
+	redirectFn   func(context.Context, string, payload.ClickInfo) (*payload.URLResponse, error)
 	byIDFn       func(context.Context, int64, int64) (*payload.URLResponse, error)
 	listFn       func(context.Context, int64, int32, int32, int32) (*payload.URLListResponse, error)
 	updateFn     func(context.Context, int64, int64, payload.UpdateURLRequest) (*payload.URLResponse, error)
@@ -33,8 +35,8 @@ func (m *mockService) Create(ctx context.Context, userID int64, req payload.Crea
 	return m.createFn(ctx, userID, req)
 }
 
-func (m *mockService) GetByShortCode(ctx context.Context, userID int64, code string) (*payload.URLResponse, error) {
-	return m.byCodeFn(ctx, userID, code)
+func (m *mockService) Redirect(ctx context.Context, code string, click payload.ClickInfo) (*payload.URLResponse, error) {
+	return m.redirectFn(ctx, code, click)
 }
 
 func (m *mockService) GetByID(ctx context.Context, userID int64, id int64) (*payload.URLResponse, error) {
@@ -70,6 +72,17 @@ func mockResolveUserID(_ context.Context, _ string) (int64, error) {
 	return 1, nil
 }
 
+// stubLookupIP replaces DNS resolution with a fixed public IP so tests do not
+// hit the real network, and restores it after the test.
+func stubLookupIP(t *testing.T) {
+	t.Helper()
+	orig := lookupIP
+	lookupIP = func(_ string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	t.Cleanup(func() { lookupIP = orig })
+}
+
 func sampleResponse() *payload.URLResponse {
 	now := time.Now()
 	return &payload.URLResponse{
@@ -85,6 +98,7 @@ func sampleResponse() *payload.URLResponse {
 }
 
 func TestCreateShortURLHandler(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		resolveFn: mockResolveUserID,
 		createFn: func(_ context.Context, _ int64, _ payload.CreateURLRequest) (*payload.URLResponse, error) {
@@ -171,41 +185,106 @@ func TestCreateShortURLValidation(t *testing.T) {
 	}
 }
 
+func TestValidateURL(t *testing.T) {
+	stubLookupIP(t)
+
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{name: "valid https", url: "https://example.com/foo", wantErr: false},
+		{name: "http scheme rejected", url: "http://example.com/foo", wantErr: true},
+		{name: "missing url", url: "", wantErr: true},
+		{name: "not a url", url: "not-a-url", wantErr: true},
+		{name: "missing scheme", url: "example.com/foo", wantErr: true},
+		{name: "local hostname", url: "https://localhost:8080/x", wantErr: true},
+		{name: "local suffix", url: "https://api.internal/x", wantErr: true},
+		{name: "lan suffix", url: "https://printer.lan/x", wantErr: true},
+		{name: "home suffix", url: "https://nas.home/x", wantErr: true},
+		{name: "loopback ip", url: "https://127.0.0.1/x", wantErr: true},
+		{name: "ipv6 loopback", url: "https://[::1]/x", wantErr: true},
+		{name: "private ip", url: "https://192.168.1.10/x", wantErr: true},
+		{name: "link-local ip", url: "https://169.254.169.254/x", wantErr: true},
+	}
+
+	orig := lookupIP
+	lookupIP = func(host string) ([]net.IP, error) {
+		if host == "internal.local" || host == "10.0.0.5" {
+			return []net.IP{net.ParseIP("10.0.0.5")}, nil
+		}
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	t.Cleanup(func() { lookupIP = orig })
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateURL(tt.url)
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error for %q, got nil", tt.url)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("expected no error for %q, got %v", tt.url, err)
+			}
+		})
+	}
+}
+
+func TestValidateURLRejectsPrivateIPViaDNS(t *testing.T) {
+	orig := lookupIP
+	lookupIP = func(_ string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("10.0.0.5")}, nil
+	}
+	t.Cleanup(func() { lookupIP = orig })
+
+	if err := validateURL("https://somehost.example.com/x"); err == nil {
+		t.Fatal("expected error for host resolving to private IP")
+	}
+}
+
+func TestValidateURLRejectsUnresolvableHost(t *testing.T) {
+	orig := lookupIP
+	lookupIP = func(_ string) ([]net.IP, error) {
+		return nil, fmt.Errorf("no such host")
+	}
+	t.Cleanup(func() { lookupIP = orig })
+
+	if err := validateURL("https://nonexistent.example.com/x"); err == nil {
+		t.Fatal("expected error for unresolvable host")
+	}
+}
+
 func TestRedirectShortURL(t *testing.T) {
 	mock := &mockService{
-		resolveFn: mockResolveUserID,
-		byCodeFn: func(_ context.Context, _ int64, _ string) (*payload.URLResponse, error) {
+		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (*payload.URLResponse, error) {
 			return &payload.URLResponse{OriginalURL: "https://example.com/target"}, nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
 
-	req := httptest.NewRequest(http.MethodGet, "/USR_test123/abc1234567", nil)
-	req.SetPathValue("userId", "USR_test123")
+	req := httptest.NewRequest(http.MethodGet, "/abc1234567", nil)
 	req.SetPathValue("shortCode", "abc1234567")
 	w := httptest.NewRecorder()
 
 	h.RedirectShortURL(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "https://example.com/target") {
-		t.Errorf("unexpected body: %s", w.Body.String())
+	if w.Header().Get("Location") != "https://example.com/target" {
+		t.Errorf("unexpected Location header: %s", w.Header().Get("Location"))
 	}
 }
 
 func TestRedirectShortURLNotFound(t *testing.T) {
 	mock := &mockService{
-		resolveFn: mockResolveUserID,
-		byCodeFn: func(_ context.Context, _ int64, _ string) (*payload.URLResponse, error) {
+		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (*payload.URLResponse, error) {
 			return nil, sql.ErrNoRows
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
 
-	req := httptest.NewRequest(http.MethodGet, "/USR_test123/missing", nil)
-	req.SetPathValue("userId", "USR_test123")
+	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
 	req.SetPathValue("shortCode", "missing")
 	w := httptest.NewRecorder()
 
@@ -283,6 +362,7 @@ func TestListURLsDefaults(t *testing.T) {
 }
 
 func TestUpdateURL(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		resolveFn: mockResolveUserID,
 		updateFn: func(_ context.Context, _ int64, _ int64, _ payload.UpdateURLRequest) (*payload.URLResponse, error) {

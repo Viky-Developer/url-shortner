@@ -6,42 +6,84 @@ package db
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/sqlc-dev/pqtype"
 )
 
-type ClickLog struct {
+type BlockedDomain struct {
 	ID        int64          `json:"id"`
-	UrlID     int64          `json:"url_id"`
-	ClickedAt sql.NullTime   `json:"clicked_at"`
-	IpAddress pqtype.Inet    `json:"ip_address"`
-	UserAgent sql.NullString `json:"user_agent"`
-	Referrer  sql.NullString `json:"referrer"`
+	Domain    string         `json:"domain"`
+	Reason    sql.NullString `json:"reason"`
+	CreatedAt sql.NullTime   `json:"created_at"`
+}
+
+type ClickLog struct {
+	ID         int64          `json:"id"`
+	UrlID      int64          `json:"url_id"`
+	ClickedAt  sql.NullTime   `json:"clicked_at"`
+	IpAddress  pqtype.Inet    `json:"ip_address"`
+	Country    sql.NullString `json:"country"`
+	City       sql.NullString `json:"city"`
+	Browser    sql.NullString `json:"browser"`
+	DeviceType sql.NullString `json:"device_type"`
+	Referrer   sql.NullString `json:"referrer"`
+	UserAgent  sql.NullString `json:"user_agent"`
+}
+
+type DailyUrlStat struct {
+	UrlID       int64         `json:"url_id"`
+	StatDate    time.Time     `json:"stat_date"`
+	TotalClicks sql.NullInt64 `json:"total_clicks"`
+}
+
+type Destination struct {
+	ID                int64         `json:"id"`
+	OriginalUrl       string        `json:"original_url"`
+	UrlHash           string        `json:"url_hash"`
+	DestinationStatus sql.NullInt16 `json:"destination_status"`
+	LastHealthCheck   sql.NullTime  `json:"last_health_check"`
 }
 
 type Session struct {
-	ID           int64          `json:"id"`
-	UserID       int64          `json:"user_id"`
-	DeviceType   sql.NullString `json:"device_type"`
-	DeviceName   sql.NullString `json:"device_name"`
-	IpAddress    pqtype.Inet    `json:"ip_address"`
-	UserAgent    sql.NullString `json:"user_agent"`
-	LoggedInAt   sql.NullTime   `json:"logged_in_at"`
-	LastActiveAt sql.NullTime   `json:"last_active_at"`
-	IsActive     sql.NullBool   `json:"is_active"`
+	ID               int64          `json:"id"`
+	UserID           int64          `json:"user_id"`
+	RefreshTokenHash string         `json:"refresh_token_hash"`
+	DeviceType       sql.NullString `json:"device_type"`
+	DeviceName       sql.NullString `json:"device_name"`
+	IpAddress        pqtype.Inet    `json:"ip_address"`
+	UserAgent        sql.NullString `json:"user_agent"`
+	LoggedInAt       sql.NullTime   `json:"logged_in_at"`
+	LastActiveAt     sql.NullTime   `json:"last_active_at"`
+	IsActive         sql.NullBool   `json:"is_active"`
 }
 
 type Url struct {
-	ID          int64        `json:"id"`
-	UserID      int64        `json:"user_id"`
-	ShortCode   string       `json:"short_code"`
-	OriginalUrl string       `json:"original_url"`
-	IsCustom    sql.NullBool `json:"is_custom"`
-	ExpiresAt   sql.NullTime `json:"expires_at"`
-	IsActive    sql.NullBool `json:"is_active"`
-	CreatedAt   sql.NullTime `json:"created_at"`
-	UpdatedAt   sql.NullTime `json:"updated_at"`
-	DeletedAt   sql.NullTime `json:"deleted_at"`
+	ID                int64          `json:"id"`
+	UserID            int64          `json:"user_id"`
+	ShortCode         string         `json:"short_code"`
+	DestinationID     int64          `json:"destination_id"`
+	Title             sql.NullString `json:"title"`
+	Description       sql.NullString `json:"description"`
+	IsCustom          sql.NullBool   `json:"is_custom"`
+	IsSafe            sql.NullBool   `json:"is_safe"`
+	ClickCount        sql.NullInt64  `json:"click_count"`
+	ExpiresAt         sql.NullTime   `json:"expires_at"`
+	IsActive          sql.NullBool   `json:"is_active"`
+	LastAccessedAt    sql.NullTime   `json:"last_accessed_at"`
+	DestinationStatus sql.NullInt16  `json:"destination_status"`
+	LastHealthCheck   sql.NullTime   `json:"last_health_check"`
+	CreatedAt         sql.NullTime   `json:"created_at"`
+	UpdatedAt         sql.NullTime   `json:"updated_at"`
+	DeletedAt         sql.NullTime   `json:"deleted_at"`
+}
+
+type UrlVersion struct {
+	ID            int64        `json:"id"`
+	UrlID         int64        `json:"url_id"`
+	OriginalUrl   string       `json:"original_url"`
+	VersionNumber int32        `json:"version_number"`
+	CreatedAt     sql.NullTime `json:"created_at"`
 }
 
 type User struct {

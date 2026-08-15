@@ -2,7 +2,9 @@ package db_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"testing"
@@ -12,6 +14,11 @@ import (
 	"github.com/vicky/url-shortner/internal/db"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 )
+
+func hashURL(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
 
 func setup(t *testing.T) *sql.DB {
 	t.Helper()
@@ -33,7 +40,11 @@ func TestMigrationsApplyAndCreateTables(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	expected := []string{"click_logs", "goose_db_version", "sessions", "urls", "users"}
+	expected := []string{
+		"click_logs", "daily_url_stats", "url_versions", "urls",
+		"destinations", "blocked_domains", "sessions", "users",
+		"goose_db_version",
+	}
 	for _, table := range expected {
 		var exists bool
 		err := database.QueryRow(
@@ -62,18 +73,26 @@ func TestCreateAndGetURL(t *testing.T) {
 	ctx := context.Background()
 	code := fmt.Sprintf("c%d", time.Now().UnixNano()%100000000)
 
-	created, err := q.CreateURL(ctx, gen.CreateURLParams{
-		UserID:      1,
-		ShortCode:   code,
+	dest, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
 		OriginalUrl: "https://example.com/ci-test",
-		IsCustom:    sql.NullBool{Bool: false, Valid: true},
-		ExpiresAt:   sql.NullTime{Valid: false},
+		UrlHash:     hashURL("https://example.com/ci-test"),
+	})
+	if err != nil {
+		t.Fatalf("create destination: %v", err)
+	}
+
+	created, err := q.CreateURL(ctx, gen.CreateURLParams{
+		UserID:        1,
+		ShortCode:     code,
+		DestinationID: dest.ID,
+		IsCustom:      sql.NullBool{Bool: false, Valid: true},
+		ExpiresAt:     sql.NullTime{Valid: false},
 	})
 	if err != nil {
 		t.Fatalf("create url: %v", err)
 	}
 
-	got, err := q.GetURLByShortCode(ctx, gen.GetURLByShortCodeParams{UserID: 1, ShortCode: code})
+	got, err := q.GetURLByShortCode(ctx, code)
 	if err != nil {
 		t.Fatalf("get url by short code: %v", err)
 	}
@@ -81,8 +100,8 @@ func TestCreateAndGetURL(t *testing.T) {
 	if got.ID != created.ID {
 		t.Errorf("expected id %d, got %d", created.ID, got.ID)
 	}
-	if got.OriginalUrl != created.OriginalUrl {
-		t.Errorf("expected original_url %q, got %q", created.OriginalUrl, got.OriginalUrl)
+	if got.OriginalUrl != "https://example.com/ci-test" {
+		t.Errorf("expected original_url %q, got %q", "https://example.com/ci-test", got.OriginalUrl)
 	}
 }
 
@@ -97,12 +116,20 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	ctx := context.Background()
 	code := fmt.Sprintf("u%d", time.Now().UnixNano()%100000000)
 
-	created, err := q.CreateURL(ctx, gen.CreateURLParams{
-		UserID:      1,
-		ShortCode:   code,
+	dest, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
 		OriginalUrl: "https://example.com/original",
-		IsCustom:    sql.NullBool{Bool: false, Valid: true},
-		ExpiresAt:   sql.NullTime{Valid: false},
+		UrlHash:     hashURL("https://example.com/original"),
+	})
+	if err != nil {
+		t.Fatalf("create destination: %v", err)
+	}
+
+	created, err := q.CreateURL(ctx, gen.CreateURLParams{
+		UserID:        1,
+		ShortCode:     code,
+		DestinationID: dest.ID,
+		IsCustom:      sql.NullBool{Bool: false, Valid: true},
+		ExpiresAt:     sql.NullTime{Valid: false},
 	})
 	if err != nil {
 		t.Fatalf("create url: %v", err)
@@ -119,17 +146,33 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	})
 
 	t.Run("update", func(t *testing.T) {
-		updated, err := q.UpdateURL(ctx, gen.UpdateURLParams{
-			ID:          created.ID,
-			UserID:      1,
+		updDest, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
 			OriginalUrl: "https://example.com/updated",
-			ExpiresAt:   sql.NullTime{Valid: false},
+			UrlHash:     hashURL("https://example.com/updated"),
+		})
+		if err != nil {
+			t.Fatalf("create destination: %v", err)
+		}
+
+		updated, err := q.UpdateURL(ctx, gen.UpdateURLParams{
+			ID:            created.ID,
+			UserID:        1,
+			DestinationID: updDest.ID,
+			ExpiresAt:     sql.NullTime{Valid: false},
 		})
 		if err != nil {
 			t.Fatalf("update url: %v", err)
 		}
-		if updated.OriginalUrl != "https://example.com/updated" {
-			t.Errorf("expected updated original_url, got %q", updated.OriginalUrl)
+		if updated.DestinationID != updDest.ID {
+			t.Errorf("expected destination_id %d, got %d", updDest.ID, updated.DestinationID)
+		}
+
+		got, err := q.GetURLByShortCode(ctx, code)
+		if err != nil {
+			t.Fatalf("get url by short code: %v", err)
+		}
+		if got.OriginalUrl != "https://example.com/updated" {
+			t.Errorf("expected updated original_url, got %q", got.OriginalUrl)
 		}
 	})
 

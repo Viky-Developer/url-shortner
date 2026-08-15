@@ -13,7 +13,7 @@ func New(urlHandler *handler.URLHandler) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /api/v1/{userId}/shorten", urlHandler.CreateShortURL)
-	mux.HandleFunc("GET /api/v1/{userId}/{shortCode}", urlHandler.RedirectShortURL)
+	mux.HandleFunc("GET /api/v1/{shortCode}", urlHandler.RedirectShortURL)
 	mux.HandleFunc("GET /api/v1/{userId}/urls", urlHandler.ListURLs)
 	mux.HandleFunc("GET /api/v1/{userId}/urls/{id}", urlHandler.GetURLByID)
 	mux.HandleFunc("PATCH /api/v1/{userId}/urls/{id}", urlHandler.UpdateURL)

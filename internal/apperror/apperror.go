@@ -21,4 +21,6 @@ var (
 	// ErrConflict is returned when a resource already exists (e.g. duplicate
 	// short code).
 	ErrConflict = errors.New("already exists")
+	// ErrURLExpired is returned when a URL has passed its expiration time.
+	ErrURLExpired = errors.New("your url has expired")
 )

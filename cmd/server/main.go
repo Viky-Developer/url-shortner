@@ -157,6 +157,6 @@ func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) 
 // the URL endpoints.
 func buildURLHandler(cfg *config.Config, database *sql.DB, log logger.Logger) *handler.URLHandler {
 	queries := gen.New(database)
-	urlService := service.NewURLService(queries, cfg.ServerBaseURL, cfg.UserIDSecretKey, log)
+	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, log)
 	return handler.NewURLHandler(urlService, log)
 }
