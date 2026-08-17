@@ -59,23 +59,24 @@ type Session struct {
 }
 
 type Url struct {
-	ID                int64          `json:"id"`
-	UserID            int64          `json:"user_id"`
-	ShortCode         string         `json:"short_code"`
-	DestinationID     int64          `json:"destination_id"`
-	Title             sql.NullString `json:"title"`
-	Description       sql.NullString `json:"description"`
-	IsCustom          sql.NullBool   `json:"is_custom"`
-	IsSafe            sql.NullBool   `json:"is_safe"`
-	ClickCount        sql.NullInt64  `json:"click_count"`
-	ExpiresAt         sql.NullTime   `json:"expires_at"`
-	IsActive          sql.NullBool   `json:"is_active"`
-	LastAccessedAt    sql.NullTime   `json:"last_accessed_at"`
-	DestinationStatus sql.NullInt16  `json:"destination_status"`
-	LastHealthCheck   sql.NullTime   `json:"last_health_check"`
-	CreatedAt         sql.NullTime   `json:"created_at"`
-	UpdatedAt         sql.NullTime   `json:"updated_at"`
-	DeletedAt         sql.NullTime   `json:"deleted_at"`
+	ID                  int64          `json:"id"`
+	UserID              int64          `json:"user_id"`
+	ShortCode           string         `json:"short_code"`
+	DestinationID       int64          `json:"destination_id"`
+	Title               sql.NullString `json:"title"`
+	Description         sql.NullString `json:"description"`
+	IsCustom            sql.NullBool   `json:"is_custom"`
+	IsSafe              sql.NullBool   `json:"is_safe"`
+	ClickCount          sql.NullInt64  `json:"click_count"`
+	ExpiresAt           sql.NullTime   `json:"expires_at"`
+	IsActive            sql.NullBool   `json:"is_active"`
+	LastAccessedAt      sql.NullTime   `json:"last_accessed_at"`
+	DestinationStatus   sql.NullInt16  `json:"destination_status"`
+	LastHealthCheck     sql.NullTime   `json:"last_health_check"`
+	DestinationHttpCode sql.NullInt32  `json:"destination_http_code"`
+	CreatedAt           sql.NullTime   `json:"created_at"`
+	UpdatedAt           sql.NullTime   `json:"updated_at"`
+	DeletedAt           sql.NullTime   `json:"deleted_at"`
 }
 
 type UrlVersion struct {

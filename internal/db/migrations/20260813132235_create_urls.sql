@@ -67,8 +67,9 @@ CREATE TABLE urls (
         expires_at TIMESTAMPTZ NULL,
         is_active BOOLEAN DEFAULT TRUE,
         last_accessed_at TIMESTAMPTZ NULL,
-        destination_status SMALLINT,
+        destination_status SMALLINT DEFAULT 0,
         last_health_check TIMESTAMPTZ,
+        destination_http_code INTEGER NULL,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW(),
         deleted_at TIMESTAMPTZ NULL

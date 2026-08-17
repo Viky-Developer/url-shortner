@@ -28,6 +28,7 @@ type Querier interface {
 	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
 	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)
 	UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error)
+	UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error)
 	UpdateUserDisplayID(ctx context.Context, arg UpdateUserDisplayIDParams) (UpdateUserDisplayIDRow, error)
 }
 

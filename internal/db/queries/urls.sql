@@ -49,8 +49,12 @@ LIMIT $2 OFFSET $3;
 
 -- name: UpdateURL :one
 UPDATE urls
-SET destination_id = $3, title = $4, description = $5, expires_at = $6,
-    is_active = COALESCE($7, is_active), updated_at = NOW()
+SET destination_id = $3,
+    title = COALESCE(sqlc.narg('title'), title),
+    description = COALESCE(sqlc.narg('description'), description),
+    expires_at = sqlc.narg('expires_at'),
+    is_active = COALESCE(sqlc.narg('is_active'), is_active),
+    updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
   AND deleted_at IS NULL
@@ -97,3 +101,13 @@ UPDATE urls
 SET click_count = COALESCE(click_count, 0) + 1,
   updated_at = NOW()
 WHERE id = $1;
+
+-- name: UpdateURLHealthStatus :one
+UPDATE urls
+SET destination_status = $2,
+    destination_http_code = $3,
+    last_health_check = $4,
+    last_accessed_at = $5,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;

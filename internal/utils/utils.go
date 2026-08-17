@@ -30,3 +30,19 @@ func (t *OptionalTime) UnmarshalJSON(b []byte) error {
 	t.Valid = true
 	return nil
 }
+
+// DerefInt16 safely dereferences an int16 pointer, returning 0 if nil.
+func DerefInt16(p *int16) int16 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// DerefInt32 safely dereferences an int32 pointer, returning 0 if nil.
+func DerefInt32(p *int32) int32 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}

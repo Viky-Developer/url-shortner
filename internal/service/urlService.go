@@ -16,6 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"net/http"
+	"strconv"
+
 	"github.com/jackc/pgerrcode"
 	"github.com/lib/pq"
 	"github.com/sqlc-dev/pqtype"
@@ -25,6 +28,54 @@ import (
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/utils"
 )
+
+// DestinationStatus represents the health status of a URL destination.
+type DestinationStatus int16
+
+const (
+	// DestinationStatusUnknown indicates the destination has not been checked.
+	DestinationStatusUnknown DestinationStatus = 0
+	// DestinationStatusHealthy indicates the destination is healthy.
+	DestinationStatusHealthy DestinationStatus = 1
+	// DestinationStatusUnhealthy indicates the destination is unhealthy.
+	DestinationStatusUnhealthy DestinationStatus = 2
+)
+
+// String returns the string representation of the DestinationStatus.
+func (s DestinationStatus) String() string {
+	switch s {
+	case DestinationStatusHealthy:
+		return "Healthy"
+	case DestinationStatusUnhealthy:
+		return "Unhealthy"
+	default:
+		return "Unknown / Not Checked"
+	}
+}
+
+// checkDestinationHealth sends a HEAD request to the originalURL and returns the health status.
+func (s *URLService) checkDestinationHealth(originalURL string) (DestinationStatus, int32) {
+	parsedURL, err := url.ParseRequestURI(originalURL)
+	if err != nil {
+		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", originalURL))
+		return DestinationStatusUnknown, 0
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Head(parsedURL.String())
+	if err != nil {
+		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", originalURL))
+		return DestinationStatusUnknown, 0
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Determine health status based on HTTP status code
+	statusCode := int32(resp.StatusCode)
+	if statusCode >= 200 && statusCode < 400 {
+		return DestinationStatusHealthy, statusCode
+	}
+	return DestinationStatusUnhealthy, statusCode
+}
 
 const maxShortCodeAttempts = 5
 
@@ -188,6 +239,28 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 	}
 
 	s.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", created.ShortCode))
+
+	// Synchronously check the health of the originalURL if provided
+	if req.OriginalURL != "" {
+		status, httpCode := s.checkDestinationHealth(req.OriginalURL)
+		now := sql.NullTime{Time: time.Now(), Valid: true}
+
+		updatedUrl, err := s.queries.UpdateURLHealthStatus(context.Background(), gen.UpdateURLHealthStatusParams{
+			ID:                  created.ID,
+			DestinationStatus:   sql.NullInt16{Int16: int16(status), Valid: true},
+			DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
+			LastHealthCheck:     now,
+		})
+		if err != nil {
+			s.log.Error("failed to update URL health status", logger.Error(err), logger.Int64("id", created.ID))
+		} else {
+			created.DestinationStatus = updatedUrl.DestinationStatus
+			created.DestinationHttpCode = updatedUrl.DestinationHttpCode
+			created.LastHealthCheck = updatedUrl.LastHealthCheck
+			created.UpdatedAt = updatedUrl.UpdatedAt
+		}
+	}
+
 	return s.toResponse(created, req.OriginalURL), nil
 }
 
@@ -276,6 +349,10 @@ func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offs
 	}
 
 	total, err := s.queries.CountURLs(ctx, userID)
+	if err != nil {
+		s.log.Error("failed to count urls", logger.Error(err))
+		return nil, fmt.Errorf("failed to count urls: %w", err)
+	}
 	if err != nil {
 		s.log.Error("failed to count urls", logger.Error(err))
 		return nil, fmt.Errorf("failed to count urls: %w", err)
@@ -387,6 +464,28 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 	}
 
 	s.log.Info("url updated", logger.Int64("id", updated.ID))
+
+	// Synchronously check the health of the originalURL if provided
+	if req.OriginalURL != "" {
+		status, httpCode := s.checkDestinationHealth(req.OriginalURL)
+		now := sql.NullTime{Time: time.Now(), Valid: true}
+
+		updatedUrl, err := s.queries.UpdateURLHealthStatus(context.Background(), gen.UpdateURLHealthStatusParams{
+			ID:                  updated.ID,
+			DestinationStatus:   sql.NullInt16{Int16: int16(status), Valid: true},
+			DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
+			LastHealthCheck:     now,
+		})
+		if err != nil {
+			s.log.Error("failed to update URL health status", logger.Error(err), logger.Int64("id", updated.ID))
+		} else {
+			updated.DestinationStatus = updatedUrl.DestinationStatus
+			updated.DestinationHttpCode = updatedUrl.DestinationHttpCode
+			updated.LastHealthCheck = updatedUrl.LastHealthCheck
+			updated.UpdatedAt = updatedUrl.UpdatedAt
+		}
+	}
+
 	return s.toResponse(updated, responseOriginalURL), nil
 }
 
@@ -438,17 +537,53 @@ func (s *URLService) buildShortURL(shortCode string) string {
 
 // toResponse builds an API response from a gen.Url and its original URL.
 func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLResponse {
-	resp := &payload.URLResponse{
-		ID:          u.ID,
-		UserID:      utils.EncodeID(u.UserID, utils.UserIDPrefix, s.secretKey),
-		ShortCode:   u.ShortCode,
-		OriginalURL: originalURL,
-		ShortURL:    s.buildShortURL(u.ShortCode),
-		IsActive:    u.IsActive.Valid && u.IsActive.Bool,
-		CreatedAt:   u.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   u.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
+
+	// Map destination status to string
+	status := DestinationStatusUnknown
+	if u.DestinationStatus.Valid {
+		status = DestinationStatus(u.DestinationStatus.Int16)
+	}
+	statusString := status.String()
+
+	// Map HTTP code to string
+	httpCode := ""
+	if u.DestinationHttpCode.Valid {
+		httpCode = strconv.Itoa(int(u.DestinationHttpCode.Int32))
 	}
 
+	// Handle boolean fields
+	isCustom := false
+	if u.IsCustom.Valid {
+		isCustom = u.IsCustom.Bool
+	}
+
+	hasBeenAccessed := u.LastAccessedAt.Valid
+	healthChecked := u.LastHealthCheck.Valid
+
+	// Build response with all fields populated
+	resp := &payload.URLResponse{
+		ID:                      u.ID,
+		UserID:                  utils.EncodeID(u.UserID, utils.UserIDPrefix, s.secretKey),
+		ShortCode:               u.ShortCode,
+		OriginalURL:             originalURL,
+		ShortURL:                s.buildShortURL(u.ShortCode),
+		Title:                   "",
+		Description:             "",
+		IsCustom:                &isCustom,
+		IsActive:                u.IsActive.Valid && u.IsActive.Bool,
+		ClickCount:              0,
+		HasBeenAccessed:         hasBeenAccessed,
+		HealthChecked:           healthChecked,
+		LastAccessedAt:          "",
+		DestinationStatusString: statusString,
+		DestinationHTTPCode:     httpCode,
+		LastHealthCheck:         "",
+		ExpiresAt:               "",
+		CreatedAt:               u.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:               u.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
+	}
+
+	// Set optional fields
 	if u.ClickCount.Valid {
 		resp.ClickCount = u.ClickCount.Int64
 	}
@@ -465,22 +600,22 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 		resp.LastAccessedAt = u.LastAccessedAt.Time.Format("2006-01-02T15:04:05Z")
 	}
 
-	if u.DestinationStatus.Valid {
-		status := u.DestinationStatus.Int16
-		resp.DestinationStatus = &status
-	}
-
 	if u.LastHealthCheck.Valid {
 		resp.LastHealthCheck = u.LastHealthCheck.Time.Format("2006-01-02T15:04:05Z")
 	}
 
-	if u.IsCustom.Valid {
-		resp.IsCustom = &u.IsCustom.Bool
+	if u.DestinationHttpCode.Valid {
+		resp.DestinationHTTPCode = strconv.Itoa(int(u.DestinationHttpCode.Int32))
 	}
 
 	if u.ExpiresAt.Valid {
 		resp.ExpiresAt = u.ExpiresAt.Time.Format("2006-01-02T15:04:05Z")
 	}
+
+	fmt.Printf("resp.HasBeenAccessed: %v\n", resp.HasBeenAccessed)
+	fmt.Printf("resp.HealthChecked: %v\n", resp.HealthChecked)
+	fmt.Printf("resp.LastAccessedAt: %v\n", resp.LastAccessedAt)
+	fmt.Printf("resp.LastHealthCheck: %v\n", resp.LastHealthCheck)
 
 	return resp
 }

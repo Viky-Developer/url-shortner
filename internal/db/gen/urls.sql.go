@@ -27,7 +27,7 @@ func (q *Queries) CountURLs(ctx context.Context, userID int64) (int64, error) {
 const createURL = `-- name: CreateURL :one
 INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, created_at, updated_at, deleted_at
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
 `
 
 type CreateURLParams struct {
@@ -66,6 +66,7 @@ func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, erro
 		&i.LastAccessedAt,
 		&i.DestinationStatus,
 		&i.LastHealthCheck,
+		&i.DestinationHttpCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
@@ -387,7 +388,7 @@ SET is_active = FALSE, deleted_at = NOW(), updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
   AND deleted_at IS NULL
-RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, created_at, updated_at, deleted_at
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
 `
 
 type SoftDeleteURLParams struct {
@@ -413,6 +414,7 @@ func (q *Queries) SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (U
 		&i.LastAccessedAt,
 		&i.DestinationStatus,
 		&i.LastHealthCheck,
+		&i.DestinationHttpCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
@@ -422,12 +424,16 @@ func (q *Queries) SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (U
 
 const updateURL = `-- name: UpdateURL :one
 UPDATE urls
-SET destination_id = $3, title = $4, description = $5, expires_at = $6,
-    is_active = COALESCE($7, is_active), updated_at = NOW()
+SET destination_id = $3,
+    title = COALESCE($4, title),
+    description = COALESCE($5, description),
+    expires_at = $6,
+    is_active = COALESCE($7, is_active),
+    updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
   AND deleted_at IS NULL
-RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, created_at, updated_at, deleted_at
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
 `
 
 type UpdateURLParams struct {
@@ -466,6 +472,58 @@ func (q *Queries) UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, erro
 		&i.LastAccessedAt,
 		&i.DestinationStatus,
 		&i.LastHealthCheck,
+		&i.DestinationHttpCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const updateURLHealthStatus = `-- name: UpdateURLHealthStatus :one
+UPDATE urls
+SET destination_status = $2,
+    destination_http_code = $3,
+    last_health_check = $4,
+    last_accessed_at = $5,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
+`
+
+type UpdateURLHealthStatusParams struct {
+	ID                  int64         `json:"id"`
+	DestinationStatus   sql.NullInt16 `json:"destination_status"`
+	DestinationHttpCode sql.NullInt32 `json:"destination_http_code"`
+	LastHealthCheck     sql.NullTime  `json:"last_health_check"`
+	LastAccessedAt      sql.NullTime  `json:"last_accessed_at"`
+}
+
+func (q *Queries) UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error) {
+	row := q.db.QueryRowContext(ctx, updateURLHealthStatus,
+		arg.ID,
+		arg.DestinationStatus,
+		arg.DestinationHttpCode,
+		arg.LastHealthCheck,
+		arg.LastAccessedAt,
+	)
+	var i Url
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.DestinationID,
+		&i.Title,
+		&i.Description,
+		&i.IsCustom,
+		&i.IsSafe,
+		&i.ClickCount,
+		&i.ExpiresAt,
+		&i.IsActive,
+		&i.LastAccessedAt,
+		&i.DestinationStatus,
+		&i.LastHealthCheck,
+		&i.DestinationHttpCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,

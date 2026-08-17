@@ -34,6 +34,7 @@ type mockQuerier struct {
 	latestVerFn       func(context.Context, int64) (int32, error)
 	createClickFn     func(context.Context, gen.CreateClickLogParams) (gen.ClickLog, error)
 	incrementClickFn  func(context.Context, int64) error
+	updateHealthFn    func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
 }
 
 func (m *mockQuerier) GetBlockedDomain(ctx context.Context, domain string) (gen.GetBlockedDomainRow, error) {
@@ -114,6 +115,13 @@ func (m *mockQuerier) SoftDeleteURL(ctx context.Context, arg gen.SoftDeleteURLPa
 
 func (m *mockQuerier) HardDeleteURL(ctx context.Context, arg gen.HardDeleteURLParams) error {
 	return m.hardFn(ctx, arg)
+}
+
+func (m *mockQuerier) UpdateURLHealthStatus(ctx context.Context, arg gen.UpdateURLHealthStatusParams) (gen.Url, error) {
+	if m.updateHealthFn != nil {
+		return m.updateHealthFn(ctx, arg)
+	}
+	return gen.Url{}, nil
 }
 
 func testLog(t *testing.T) logger.Logger {
