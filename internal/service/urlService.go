@@ -192,6 +192,14 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		}
 	}
 
+	// Check destination health before the transaction
+	var healthStatus DestinationStatus
+	var httpCode int32
+	var healthCheckedAt sql.NullTime
+
+	healthStatus, httpCode = s.checkDestinationHealth(req.OriginalURL)
+	healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+
 	var created gen.Url
 	err := s.withTx(ctx, func(q gen.Querier) error {
 		destID, err := s.findOrCreateDestination(q, ctx, req.OriginalURL)
@@ -201,13 +209,16 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 
 		for attempt := range maxShortCodeAttempts {
 			created, err = q.CreateURL(ctx, gen.CreateURLParams{
-				UserID:        userID,
-				ShortCode:     code,
-				DestinationID: destID,
-				Title:         nullString(req.Title),
-				Description:   nullString(req.Description),
-				IsCustom:      sql.NullBool{Bool: custom, Valid: true},
-				ExpiresAt:     nullTime(req.ExpiresAt),
+				UserID:              userID,
+				ShortCode:           code,
+				DestinationID:       destID,
+				Title:               nullString(req.Title),
+				Description:         nullString(req.Description),
+				IsCustom:            sql.NullBool{Bool: custom, Valid: true},
+				ExpiresAt:           nullTime(req.ExpiresAt),
+				DestinationStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
+				DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
+				LastHealthCheck:     healthCheckedAt,
 			})
 			if err != nil {
 				if custom && isDuplicateKey(err) {
@@ -239,24 +250,6 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 	}
 
 	s.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", created.ShortCode))
-
-	// Synchronously check the health of the originalURL if provided
-	status, httpCode := s.checkDestinationHealth(req.OriginalURL)
-	now := sql.NullTime{Time: time.Now(), Valid: true}
-
-	updatedUrl, err := s.queries.UpdateURLHealthStatus(context.Background(), gen.UpdateURLHealthStatusParams{
-		ID:                  created.ID,
-		DestinationStatus:   sql.NullInt16{Int16: int16(status), Valid: true},
-		DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
-		LastHealthCheck:     now,
-	})
-	if err != nil {
-		s.log.Error("failed to update URL health status", logger.Error(err), logger.Int64("id", created.ID))
-	}
-	created.DestinationStatus = updatedUrl.DestinationStatus
-	created.DestinationHttpCode = updatedUrl.DestinationHttpCode
-	created.LastHealthCheck = updatedUrl.LastHealthCheck
-	created.UpdatedAt = updatedUrl.UpdatedAt
 
 	return s.toResponse(created, req.OriginalURL), nil
 }
@@ -386,6 +379,15 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 		}
 	}
 
+	// Check destination health before the transaction when originalURL changes
+	var healthStatus DestinationStatus
+	var httpCode int32
+	var healthCheckedAt sql.NullTime
+	if req.OriginalURL != "" {
+		healthStatus, httpCode = s.checkDestinationHealth(req.OriginalURL)
+		healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+	}
+
 	var updated gen.Url
 	var responseOriginalURL string
 
@@ -422,6 +424,24 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 				return fmt.Errorf("%w: id=%d", apperror.ErrNotFound, id)
 			}
 			return fmt.Errorf("update url: %w", uErr)
+		}
+
+		// Update health status within the same transaction when originalURL changed
+		if req.OriginalURL != "" {
+			updatedUrl, hErr := q.UpdateURLHealthStatus(ctx, gen.UpdateURLHealthStatusParams{
+				ID:                  updated.ID,
+				DestinationStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
+				DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
+				LastHealthCheck:     healthCheckedAt,
+			})
+			if hErr != nil {
+				s.log.Error("failed to update URL health status", logger.Error(hErr), logger.Int64("id", updated.ID))
+			} else {
+				updated.DestinationStatus = updatedUrl.DestinationStatus
+				updated.DestinationHttpCode = updatedUrl.DestinationHttpCode
+				updated.LastHealthCheck = updatedUrl.LastHealthCheck
+				updated.UpdatedAt = updatedUrl.UpdatedAt
+			}
 		}
 
 		// Resolve the original_url for the response.
@@ -461,27 +481,6 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 	}
 
 	s.log.Info("url updated", logger.Int64("id", updated.ID))
-
-	// Synchronously check the health of the originalURL if provided
-	if req.OriginalURL != "" {
-		status, httpCode := s.checkDestinationHealth(req.OriginalURL)
-		now := sql.NullTime{Time: time.Now(), Valid: true}
-
-		updatedUrl, err := s.queries.UpdateURLHealthStatus(context.Background(), gen.UpdateURLHealthStatusParams{
-			ID:                  updated.ID,
-			DestinationStatus:   sql.NullInt16{Int16: int16(status), Valid: true},
-			DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
-			LastHealthCheck:     now,
-		})
-		if err != nil {
-			s.log.Error("failed to update URL health status", logger.Error(err), logger.Int64("id", updated.ID))
-		} else {
-			updated.DestinationStatus = updatedUrl.DestinationStatus
-			updated.DestinationHttpCode = updatedUrl.DestinationHttpCode
-			updated.LastHealthCheck = updatedUrl.LastHealthCheck
-			updated.UpdatedAt = updatedUrl.UpdatedAt
-		}
-	}
 
 	return s.toResponse(updated, responseOriginalURL), nil
 }

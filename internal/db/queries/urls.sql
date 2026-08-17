@@ -1,6 +1,7 @@
 -- name: CreateURL :one
-INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at,
+    destination_status, destination_http_code, last_health_check)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: GetURLByShortCode :one

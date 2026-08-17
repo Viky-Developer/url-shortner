@@ -25,19 +25,23 @@ func (q *Queries) CountURLs(ctx context.Context, userID int64) (int64, error) {
 }
 
 const createURL = `-- name: CreateURL :one
-INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at,
+    destination_status, destination_http_code, last_health_check)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
 `
 
 type CreateURLParams struct {
-	UserID        int64          `json:"user_id"`
-	ShortCode     string         `json:"short_code"`
-	DestinationID int64          `json:"destination_id"`
-	Title         sql.NullString `json:"title"`
-	Description   sql.NullString `json:"description"`
-	IsCustom      sql.NullBool   `json:"is_custom"`
-	ExpiresAt     sql.NullTime   `json:"expires_at"`
+	UserID              int64          `json:"user_id"`
+	ShortCode           string         `json:"short_code"`
+	DestinationID       int64          `json:"destination_id"`
+	Title               sql.NullString `json:"title"`
+	Description         sql.NullString `json:"description"`
+	IsCustom            sql.NullBool   `json:"is_custom"`
+	ExpiresAt           sql.NullTime   `json:"expires_at"`
+	DestinationStatus   sql.NullInt16  `json:"destination_status"`
+	DestinationHttpCode sql.NullInt32  `json:"destination_http_code"`
+	LastHealthCheck     sql.NullTime   `json:"last_health_check"`
 }
 
 func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, error) {
@@ -49,6 +53,9 @@ func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, erro
 		arg.Description,
 		arg.IsCustom,
 		arg.ExpiresAt,
+		arg.DestinationStatus,
+		arg.DestinationHttpCode,
+		arg.LastHealthCheck,
 	)
 	var i Url
 	err := row.Scan(
