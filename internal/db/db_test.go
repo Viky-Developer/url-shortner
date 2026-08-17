@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +35,6 @@ func setup(t *testing.T) *sql.DB {
 func TestMigrationsApplyAndCreateTables(t *testing.T) {
 	database := setup(t)
 
-	// Check tables exist (migrations already applied in CI via goose up)
 	expected := []string{
 		"click_logs", "daily_url_stats", "url_versions", "urls",
 		"destinations", "blocked_domains", "sessions", "users",
@@ -59,22 +57,29 @@ func TestMigrationsApplyAndCreateTables(t *testing.T) {
 	}
 }
 
-func TestCreateAndGetURL(t *testing.T) {
-	database := setup(t)
-
-	// Migrations already applied in CI; ensure default user exists
-	q := gen.New(database)
-	ctx := context.Background()
-
-	// Create default user if not exists
-	_, err := q.CreateUser(ctx, gen.CreateUserParams{
+func ensureUser(t *testing.T, q *gen.Queries) int64 {
+	t.Helper()
+	existing, err := q.GetUserByEmail(context.Background(), "default@urlshortner.local")
+	if err == nil {
+		return existing.ID
+	}
+	created, err := q.CreateUser(context.Background(), gen.CreateUserParams{
 		Email:         "default@urlshortner.local",
 		PasswordHash:  "test",
 		DisplayUserID: sql.NullString{String: "USR_default", Valid: true},
 	})
-	if err != nil && !strings.Contains(err.Error(), "duplicate") {
+	if err != nil {
 		t.Fatalf("create default user: %v", err)
 	}
+	return created.ID
+}
+
+func TestCreateAndGetURL(t *testing.T) {
+	database := setup(t)
+
+	q := gen.New(database)
+	ctx := context.Background()
+	userID := ensureUser(t, q)
 	code := fmt.Sprintf("c%d", time.Now().UnixNano()%100000000)
 
 	dest, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
@@ -86,7 +91,7 @@ func TestCreateAndGetURL(t *testing.T) {
 	}
 
 	created, err := q.CreateURL(ctx, gen.CreateURLParams{
-		UserID:        1,
+		UserID:        userID,
 		ShortCode:     code,
 		DestinationID: dest.ID,
 		IsCustom:      sql.NullBool{Bool: false, Valid: true},
@@ -113,19 +118,9 @@ func TestCreateAndGetURL(t *testing.T) {
 func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	database := setup(t)
 
-	// Migrations already applied in CI; ensure default user exists
 	q := gen.New(database)
 	ctx := context.Background()
-
-	_, err := q.CreateUser(ctx, gen.CreateUserParams{
-		Email:         "default@urlshortner.local",
-		PasswordHash:  "test",
-		DisplayUserID: sql.NullString{String: "USR_default", Valid: true},
-	})
-	if err != nil && !strings.Contains(err.Error(), "duplicate") {
-		t.Fatalf("create default user: %v", err)
-	}
-
+	userID := ensureUser(t, q)
 	code := fmt.Sprintf("u%d", time.Now().UnixNano()%100000000)
 
 	dest, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
@@ -137,7 +132,7 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	}
 
 	created, err := q.CreateURL(ctx, gen.CreateURLParams{
-		UserID:        1,
+		UserID:        userID,
 		ShortCode:     code,
 		DestinationID: dest.ID,
 		IsCustom:      sql.NullBool{Bool: false, Valid: true},
@@ -148,7 +143,7 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	}
 
 	t.Run("list", func(t *testing.T) {
-		items, err := q.ListURLs(ctx, gen.ListURLsParams{UserID: 1, Limit: 10, Offset: 0})
+		items, err := q.ListURLs(ctx, gen.ListURLsParams{UserID: userID, Limit: 10, Offset: 0})
 		if err != nil {
 			t.Fatalf("list urls: %v", err)
 		}
@@ -168,7 +163,7 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 
 		updated, err := q.UpdateURL(ctx, gen.UpdateURLParams{
 			ID:            created.ID,
-			UserID:        1,
+			UserID:        userID,
 			DestinationID: updDest.ID,
 			ExpiresAt:     sql.NullTime{Valid: false},
 		})
@@ -190,7 +185,7 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 	})
 
 	t.Run("soft delete", func(t *testing.T) {
-		deleted, err := q.SoftDeleteURL(ctx, gen.SoftDeleteURLParams{ID: created.ID, UserID: 1})
+		deleted, err := q.SoftDeleteURL(ctx, gen.SoftDeleteURLParams{ID: created.ID, UserID: userID})
 		if err != nil {
 			t.Fatalf("soft delete url: %v", err)
 		}
@@ -198,13 +193,13 @@ func TestListUpdateSoftDeleteHardDeleteURL(t *testing.T) {
 			t.Error("expected deleted_at to be set")
 		}
 
-		if _, err := q.GetURLByID(ctx, gen.GetURLByIDParams{ID: created.ID, UserID: 1}); err != sql.ErrNoRows {
+		if _, err := q.GetURLByID(ctx, gen.GetURLByIDParams{ID: created.ID, UserID: userID}); err != sql.ErrNoRows {
 			t.Errorf("expected ErrNoRows after soft delete, got %v", err)
 		}
 	})
 
 	t.Run("hard delete", func(t *testing.T) {
-		if err := q.HardDeleteURL(ctx, gen.HardDeleteURLParams{ID: created.ID, UserID: 1}); err != nil {
+		if err := q.HardDeleteURL(ctx, gen.HardDeleteURLParams{ID: created.ID, UserID: userID}); err != nil {
 			t.Fatalf("hard delete url: %v", err)
 		}
 

@@ -13,7 +13,7 @@ type Querier interface {
 	CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error)
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error)
 	CreateURL(ctx context.Context, arg CreateURLParams) (Url, error)
-	CreateURLVersion(ctx context.Context, arg CreateURLVersionParams) (UrlVersion, error)
+	CreateURLVersion(ctx context.Context, arg CreateURLVersionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	GetBlockedDomain(ctx context.Context, domain string) (GetBlockedDomainRow, error)
 	GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error)

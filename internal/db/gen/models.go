@@ -12,7 +12,7 @@ import (
 )
 
 type BlockedDomain struct {
-	ID        int64          `json:"id"`
+	ID        int32          `json:"id"`
 	Domain    string         `json:"domain"`
 	Reason    sql.NullString `json:"reason"`
 	CreatedAt sql.NullTime   `json:"created_at"`

@@ -30,7 +30,7 @@ type mockQuerier struct {
 	destByHashFn      func(context.Context, string) (gen.GetDestinationByHashRow, error)
 	destByIDFn        func(context.Context, int64) (gen.GetDestinationByIDRow, error)
 	blockedFn         func(context.Context, string) (gen.GetBlockedDomainRow, error)
-	createVerFn       func(context.Context, gen.CreateURLVersionParams) (gen.UrlVersion, error)
+	createVerFn       func(context.Context, gen.CreateURLVersionParams) error
 	latestVerFn       func(context.Context, int64) (int32, error)
 	createClickFn     func(context.Context, gen.CreateClickLogParams) (gen.ClickLog, error)
 	incrementClickFn  func(context.Context, int64) error
@@ -44,7 +44,7 @@ func (m *mockQuerier) GetDestinationByID(ctx context.Context, id int64) (gen.Get
 	return m.destByIDFn(ctx, id)
 }
 
-func (m *mockQuerier) CreateURLVersion(ctx context.Context, arg gen.CreateURLVersionParams) (gen.UrlVersion, error) {
+func (m *mockQuerier) CreateURLVersion(ctx context.Context, arg gen.CreateURLVersionParams) error {
 	return m.createVerFn(ctx, arg)
 }
 
@@ -188,8 +188,8 @@ func TestCreateGeneratesShortCode(t *testing.T) {
 			captured = arg
 			return testURL(arg.ShortCode), nil
 		},
-		createVerFn: func(_ context.Context, _ gen.CreateURLVersionParams) (gen.UrlVersion, error) {
-			return gen.UrlVersion{}, nil
+		createVerFn: func(_ context.Context, _ gen.CreateURLVersionParams) error {
+			return nil
 		},
 		latestVerFn: func(_ context.Context, _ int64) (int32, error) {
 			return 0, sql.ErrNoRows
@@ -225,8 +225,8 @@ func TestCreateUsesCustomCode(t *testing.T) {
 			captured = arg
 			return testURL(arg.ShortCode), nil
 		},
-		createVerFn: func(_ context.Context, _ gen.CreateURLVersionParams) (gen.UrlVersion, error) {
-			return gen.UrlVersion{}, nil
+		createVerFn: func(_ context.Context, _ gen.CreateURLVersionParams) error {
+			return nil
 		},
 		latestVerFn: func(_ context.Context, _ int64) (int32, error) {
 			return 0, sql.ErrNoRows

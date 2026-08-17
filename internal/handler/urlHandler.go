@@ -97,8 +97,6 @@ func validateURL(rawURL string) error {
 		return fmt.Errorf("%w: must start with https://", apperror.ErrInvalidURL)
 	}
 
-	fmt.Printf("parsed: %v\n", parsed)
-
 	host := strings.ToLower(parsed.Hostname())
 	if host == "" {
 		return fmt.Errorf("%w: invalid host", apperror.ErrInvalidURL)

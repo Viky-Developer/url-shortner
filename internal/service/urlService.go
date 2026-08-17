@@ -171,7 +171,7 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 			}
 
 			// Version 1 for every new URL.
-			_, err = q.CreateURLVersion(ctx, gen.CreateURLVersionParams{
+			err = q.CreateURLVersion(ctx, gen.CreateURLVersionParams{
 				UrlID:         created.ID,
 				OriginalUrl:   req.OriginalURL,
 				VersionNumber: 1,
@@ -371,7 +371,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 			if eErr == sql.ErrNoRows {
 				maxVer = 0
 			}
-			_, vErr := q.CreateURLVersion(ctx, gen.CreateURLVersionParams{
+			vErr := q.CreateURLVersion(ctx, gen.CreateURLVersionParams{
 				UrlID:         updated.ID,
 				OriginalUrl:   req.OriginalURL,
 				VersionNumber: maxVer + 1,

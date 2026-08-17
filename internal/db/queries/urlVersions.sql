@@ -1,7 +1,6 @@
--- name: CreateURLVersion :one
+-- name: CreateURLVersion :exec
 INSERT INTO url_versions (url_id, original_url, version_number)
-VALUES ($1, $2, $3)
-RETURNING *;
+VALUES ($1, $2, $3);
 
 -- name: GetLatestURLVersion :one
 SELECT version_number
