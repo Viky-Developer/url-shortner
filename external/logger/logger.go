@@ -17,6 +17,14 @@ type Field = zap.Field
 // String returns a string field for structured logging.
 func String(key, value string) Field { return zap.String(key, value) }
 
+// Raw returns a string field that is NOT escaped by the console encoder,
+// allowing ANSI color codes to work in terminal output.
+func Raw(key, value string) Field { return zap.Stringer(key, rawString(value)) }
+
+type rawString string
+
+func (r rawString) String() string { return string(r) }
+
 // Int returns an int field for structured logging.
 func Int(key string, value int) Field { return zap.Int(key, value) }
 
@@ -83,18 +91,13 @@ func New(opts ...Option) (Logger, error) {
 		opt(&o)
 	}
 
-	cfg := zap.NewProductionConfig()
+	cfg := zap.NewDevelopmentConfig()
 	cfg.Level = zap.NewAtomicLevelAt(o.level)
 	cfg.OutputPaths = []string{"stdout"}
 	cfg.ErrorOutputPaths = []string{"stderr"}
-
-	if o.json {
-		cfg.Encoding = "json"
-	} else {
-		cfg.Encoding = "console"
-		cfg.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
-		cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	}
+	cfg.DisableStacktrace = true
+	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
 	z, err := cfg.Build()
 	if err != nil {

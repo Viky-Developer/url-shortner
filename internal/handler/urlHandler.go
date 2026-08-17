@@ -125,6 +125,7 @@ func validateURL(rawURL string) error {
 	// Otherwise resolve the host and reject any private/loopback addresses.
 	ips, err := lookupIP(host)
 	if err != nil {
+		logger.Error(err)
 		return fmt.Errorf("%w: unable to resolve host", apperror.ErrInvalidURL)
 	}
 	for _, ip := range ips {

@@ -241,25 +241,22 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 	s.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", created.ShortCode))
 
 	// Synchronously check the health of the originalURL if provided
-	if req.OriginalURL != "" {
-		status, httpCode := s.checkDestinationHealth(req.OriginalURL)
-		now := sql.NullTime{Time: time.Now(), Valid: true}
+	status, httpCode := s.checkDestinationHealth(req.OriginalURL)
+	now := sql.NullTime{Time: time.Now(), Valid: true}
 
-		updatedUrl, err := s.queries.UpdateURLHealthStatus(context.Background(), gen.UpdateURLHealthStatusParams{
-			ID:                  created.ID,
-			DestinationStatus:   sql.NullInt16{Int16: int16(status), Valid: true},
-			DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
-			LastHealthCheck:     now,
-		})
-		if err != nil {
-			s.log.Error("failed to update URL health status", logger.Error(err), logger.Int64("id", created.ID))
-		} else {
-			created.DestinationStatus = updatedUrl.DestinationStatus
-			created.DestinationHttpCode = updatedUrl.DestinationHttpCode
-			created.LastHealthCheck = updatedUrl.LastHealthCheck
-			created.UpdatedAt = updatedUrl.UpdatedAt
-		}
+	updatedUrl, err := s.queries.UpdateURLHealthStatus(context.Background(), gen.UpdateURLHealthStatusParams{
+		ID:                  created.ID,
+		DestinationStatus:   sql.NullInt16{Int16: int16(status), Valid: true},
+		DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
+		LastHealthCheck:     now,
+	})
+	if err != nil {
+		s.log.Error("failed to update URL health status", logger.Error(err), logger.Int64("id", created.ID))
 	}
+	created.DestinationStatus = updatedUrl.DestinationStatus
+	created.DestinationHttpCode = updatedUrl.DestinationHttpCode
+	created.LastHealthCheck = updatedUrl.LastHealthCheck
+	created.UpdatedAt = updatedUrl.UpdatedAt
 
 	return s.toResponse(created, req.OriginalURL), nil
 }
@@ -576,7 +573,7 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 		HealthChecked:           healthChecked,
 		LastAccessedAt:          "",
 		DestinationStatusString: statusString,
-		DestinationHTTPCode:     httpCode,
+		DestinationHttpCode:     httpCode,
 		LastHealthCheck:         "",
 		ExpiresAt:               "",
 		CreatedAt:               u.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
@@ -605,7 +602,7 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 	}
 
 	if u.DestinationHttpCode.Valid {
-		resp.DestinationHTTPCode = strconv.Itoa(int(u.DestinationHttpCode.Int32))
+		resp.DestinationHttpCode = strconv.Itoa(int(u.DestinationHttpCode.Int32))
 	}
 
 	if u.ExpiresAt.Valid {

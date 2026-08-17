@@ -38,7 +38,7 @@ type URLResponse struct {
 	HealthChecked           bool   `json:"healthChecked"`
 	LastAccessedAt          string `json:"lastAccessedAt"` // Last time the short URL was redirected (RFC3339).
 	DestinationStatusString string `json:"destinationStatus"`
-	DestinationHTTPCode     string `json:"destinationHttpCode"` // Health status of the destination.
+	DestinationHttpCode     string `json:"destinationHttpCode"` // Health status of the destination.
 	LastHealthCheck         string `json:"lastHealthCheck"`     // Last health-check timestamp (RFC3339).
 	ExpiresAt               string `json:"expiresAt"`           // Expiration timestamp (RFC3339).
 	CreatedAt               string `json:"createdAt"`           // Creation timestamp (RFC3339).
