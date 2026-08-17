@@ -26,8 +26,8 @@ func (q *Queries) CountURLs(ctx context.Context, userID int64) (int64, error) {
 
 const createURL = `-- name: CreateURL :one
 INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at,
-    destination_status, destination_http_code, last_health_check)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    destination_status, destination_http_code, last_health_check, last_accessed_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
 `
 
@@ -42,6 +42,7 @@ type CreateURLParams struct {
 	DestinationStatus   sql.NullInt16  `json:"destination_status"`
 	DestinationHttpCode sql.NullInt32  `json:"destination_http_code"`
 	LastHealthCheck     sql.NullTime   `json:"last_health_check"`
+	LastAccessedAt      sql.NullTime   `json:"last_accessed_at"`
 }
 
 func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, error) {
@@ -56,6 +57,7 @@ func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, erro
 		arg.DestinationStatus,
 		arg.DestinationHttpCode,
 		arg.LastHealthCheck,
+		arg.LastAccessedAt,
 	)
 	var i Url
 	err := row.Scan(
@@ -387,6 +389,19 @@ func (q *Queries) ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsR
 		return nil, err
 	}
 	return items, nil
+}
+
+const shortCodeExists = `-- name: ShortCodeExists :one
+SELECT EXISTS (
+    SELECT 1 FROM urls WHERE short_code = $1
+)
+`
+
+func (q *Queries) ShortCodeExists(ctx context.Context, shortCode string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, shortCodeExists, shortCode)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const softDeleteURL = `-- name: SoftDeleteURL :one

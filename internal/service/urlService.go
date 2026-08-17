@@ -77,8 +77,6 @@ func (s *URLService) checkDestinationHealth(originalURL string) (DestinationStat
 	return DestinationStatusUnhealthy, statusCode
 }
 
-const maxShortCodeAttempts = 5
-
 // URLService implements the URL shortening business logic.
 type URLService struct {
 	queries   gen.Querier
@@ -175,11 +173,14 @@ func (s *URLService) findOrCreateDestination(q gen.Querier, ctx context.Context,
 
 // Create stores a new URL with version 1 inside a transaction.
 func (s *URLService) Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error) {
+
+	// Validate destination is reachable
 	if err := s.checkBlockedDomain(ctx, req.OriginalURL); err != nil {
 		s.log.Error("url blocked", logger.Error(err), logger.String("originalURL", req.OriginalURL))
 		return nil, err
 	}
 
+	// Validate or generate short code
 	custom := req.CustomCode != ""
 	code := req.CustomCode
 
@@ -188,62 +189,79 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		code, err = s.generateShortCode()
 		if err != nil {
 			s.log.Error("failed to generate short code", logger.Error(err))
-			return nil, err
+			return nil, fmt.Errorf("%w: could not generate short code", apperror.ErrInternal)
 		}
 	}
 
 	// Check destination health before the transaction
-	var healthStatus DestinationStatus
-	var httpCode int32
-	var healthCheckedAt sql.NullTime
+	var (
+		healthStatus    DestinationStatus
+		httpCode        int32
+		healthCheckedAt sql.NullTime
+	)
 
 	healthStatus, httpCode = s.checkDestinationHealth(req.OriginalURL)
 	healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
 
+	// Create URL in a single transaction
 	var created gen.Url
+
 	err := s.withTx(ctx, func(q gen.Querier) error {
+
+		// Check if custom code already exists before inserting
+		if custom {
+			exists, existErr := q.ShortCodeExists(ctx, code)
+			if existErr != nil {
+				s.log.Error("failed to check short code existence", logger.Error(existErr), logger.String("shortCode", code))
+				return fmt.Errorf("%w: could not validate short code", apperror.ErrInternal)
+			}
+			if exists {
+				s.log.Warn("custom code already taken", logger.String("shortCode", code))
+				return fmt.Errorf("%w: custom code '%s' is already taken. Please choose a different code", apperror.ErrConflict, code)
+			}
+		}
+
+		// Find or create destination
 		destID, err := s.findOrCreateDestination(q, ctx, req.OriginalURL)
 		if err != nil {
+			s.log.Error("failed to find or create destination", logger.Error(err), logger.String("originalURL", req.OriginalURL))
 			return err
 		}
 
-		for attempt := range maxShortCodeAttempts {
-			created, err = q.CreateURL(ctx, gen.CreateURLParams{
-				UserID:              userID,
-				ShortCode:           code,
-				DestinationID:       destID,
-				Title:               nullString(req.Title),
-				Description:         nullString(req.Description),
-				IsCustom:            sql.NullBool{Bool: custom, Valid: true},
-				ExpiresAt:           nullTime(req.ExpiresAt),
-				DestinationStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
-				DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
-				LastHealthCheck:     healthCheckedAt,
-			})
-			if err != nil {
-				if custom && isDuplicateKey(err) {
-					s.log.Warn("short code already taken", logger.Error(err))
-					return fmt.Errorf("%w: short code already taken", apperror.ErrConflict)
-				}
-				if !custom && isDuplicateKey(err) && attempt < maxShortCodeAttempts-1 {
-					code, _ = s.generateShortCode()
-					continue
-				}
-				return fmt.Errorf("create url: %w", err)
+		// Insert URL row
+		created, err = q.CreateURL(ctx, gen.CreateURLParams{
+			UserID:              userID,
+			ShortCode:           code,
+			DestinationID:       destID,
+			Title:               nullString(req.Title),
+			Description:         nullString(req.Description),
+			IsCustom:            sql.NullBool{Bool: custom, Valid: true},
+			ExpiresAt:           nullTime(req.ExpiresAt),
+			DestinationStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
+			DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
+			LastHealthCheck:     healthCheckedAt,
+		})
+		if err != nil {
+			if isDuplicateKey(err) {
+				s.log.Warn("short code collision on insert", logger.String("shortCode", code))
+				return fmt.Errorf("%w: short code '%s' is already taken", apperror.ErrConflict, code)
 			}
-
-			// Version 1 for every new URL.
-			err = q.CreateURLVersion(ctx, gen.CreateURLVersionParams{
-				UrlID:         created.ID,
-				OriginalUrl:   req.OriginalURL,
-				VersionNumber: 1,
-			})
-			if err != nil {
-				return fmt.Errorf("create url version: %w", err)
-			}
-			return nil
+			s.log.Error("failed to create url", logger.Error(err), logger.String("shortCode", code))
+			return fmt.Errorf("%w: could not create url", apperror.ErrInternal)
 		}
-		return fmt.Errorf("%w: failed to create url", apperror.ErrInternal)
+
+		// Create version 1 for every new URL
+		err = q.CreateURLVersion(ctx, gen.CreateURLVersionParams{
+			UrlID:         created.ID,
+			OriginalUrl:   req.OriginalURL,
+			VersionNumber: 1,
+		})
+		if err != nil {
+			s.log.Error("failed to create url version", logger.Error(err), logger.Int64("urlID", created.ID))
+			return fmt.Errorf("%w: could not create url version", apperror.ErrInternal)
+		}
+
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -369,9 +387,11 @@ func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offs
 	}, nil
 }
 
-// Update changes the original URL and/or expiry inside a transaction.  When
+// Update changes the original URL and/or expiry inside a transaction. When
 // the original URL changes, a new url_version row is appended.
 func (s *URLService) Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error) {
+
+	// Validate blocked domain if original URL is changing
 	if req.OriginalURL != "" {
 		if err := s.checkBlockedDomain(ctx, req.OriginalURL); err != nil {
 			s.log.Error("url blocked", logger.Error(err), logger.String("originalURL", req.OriginalURL))
@@ -380,37 +400,47 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 	}
 
 	// Check destination health before the transaction when originalURL changes
-	var healthStatus DestinationStatus
-	var httpCode int32
-	var healthCheckedAt sql.NullTime
+	var (
+		healthStatus        DestinationStatus
+		httpCode            int32
+		healthCheckedAt     sql.NullTime
+		updated             gen.Url
+		responseOriginalURL string
+	)
+
 	if req.OriginalURL != "" {
 		healthStatus, httpCode = s.checkDestinationHealth(req.OriginalURL)
 		healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
 	}
 
-	var updated gen.Url
-	var responseOriginalURL string
-
+	// Update URL in a single transaction
 	err := s.withTx(ctx, func(q gen.Querier) error {
+
+		// Fetch existing URL
 		existing, eErr := q.GetURLByID(ctx, gen.GetURLByIDParams{ID: id, UserID: userID})
 		if eErr != nil {
 			if eErr == sql.ErrNoRows {
-				return fmt.Errorf("%w: id=%d", apperror.ErrNotFound, id)
+				s.log.Warn("url not found for update", logger.Int64("id", id))
+				return fmt.Errorf("%w: url with id %d not found", apperror.ErrNotFound, id)
 			}
-			return fmt.Errorf("fetch existing url: %w", eErr)
+			s.log.Error("failed to fetch existing url", logger.Error(eErr), logger.Int64("id", id))
+			return fmt.Errorf("%w: could not fetch url", apperror.ErrInternal)
 		}
 
+		// Resolve destination ID
 		destID := existing.DestinationID
+
 		if req.OriginalURL != "" {
 			did, dErr := s.findOrCreateDestination(q, ctx, req.OriginalURL)
 			if dErr != nil {
+				s.log.Error("failed to find or create destination", logger.Error(dErr), logger.String("originalURL", req.OriginalURL))
 				return dErr
 			}
 			destID = did
 		}
 
-		var uErr error
-		updated, uErr = q.UpdateURL(ctx, gen.UpdateURLParams{
+		// Update URL fields
+		updated, eErr = q.UpdateURL(ctx, gen.UpdateURLParams{
 			ID:            id,
 			UserID:        userID,
 			DestinationID: destID,
@@ -419,11 +449,13 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 			ExpiresAt:     nullTime(req.ExpiresAt),
 			IsActive:      nullBool(req.IsActive),
 		})
-		if uErr != nil {
-			if uErr == sql.ErrNoRows {
-				return fmt.Errorf("%w: id=%d", apperror.ErrNotFound, id)
+		if eErr != nil {
+			if eErr == sql.ErrNoRows {
+				s.log.Warn("url not found for update", logger.Int64("id", id))
+				return fmt.Errorf("%w: url with id %d not found", apperror.ErrNotFound, id)
 			}
-			return fmt.Errorf("update url: %w", uErr)
+			s.log.Error("failed to update url", logger.Error(eErr), logger.Int64("id", id))
+			return fmt.Errorf("%w: could not update url", apperror.ErrInternal)
 		}
 
 		// Update health status within the same transaction when originalURL changed
@@ -435,7 +467,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 				LastHealthCheck:     healthCheckedAt,
 			})
 			if hErr != nil {
-				s.log.Error("failed to update URL health status", logger.Error(hErr), logger.Int64("id", updated.ID))
+				s.log.Error("failed to update url health status", logger.Error(hErr), logger.Int64("id", updated.ID))
 			} else {
 				updated.DestinationStatus = updatedUrl.DestinationStatus
 				updated.DestinationHttpCode = updatedUrl.DestinationHttpCode
@@ -444,36 +476,40 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 			}
 		}
 
-		// Resolve the original_url for the response.
+		// Resolve the original_url for the response
 		if req.OriginalURL != "" {
 			responseOriginalURL = req.OriginalURL
 		} else {
 			dest, dErr := q.GetDestinationByID(ctx, existing.DestinationID)
 			if dErr != nil {
-				return fmt.Errorf("fetch destination: %w", dErr)
+				s.log.Error("failed to fetch destination", logger.Error(dErr), logger.Int64("destID", existing.DestinationID))
+				return fmt.Errorf("%w: could not fetch destination url", apperror.ErrInternal)
 			}
 			responseOriginalURL = dest.OriginalUrl
 		}
 
-		// Append a new version when the original URL changed.
+		// Append a new version when the original URL changed
 		if req.OriginalURL != "" {
-			var maxVer int32
-			maxVer, eErr = q.GetLatestURLVersion(ctx, updated.ID)
-			if eErr != nil && eErr != sql.ErrNoRows {
-				return fmt.Errorf("get latest version: %w", eErr)
+			maxVer, vErr := q.GetLatestURLVersion(ctx, updated.ID)
+			if vErr != nil && vErr != sql.ErrNoRows {
+				s.log.Error("failed to get latest url version", logger.Error(vErr), logger.Int64("id", updated.ID))
+				return fmt.Errorf("%w: could not fetch url version", apperror.ErrInternal)
 			}
-			if eErr == sql.ErrNoRows {
+			if vErr == sql.ErrNoRows {
 				maxVer = 0
 			}
-			vErr := q.CreateURLVersion(ctx, gen.CreateURLVersionParams{
+
+			vErr = q.CreateURLVersion(ctx, gen.CreateURLVersionParams{
 				UrlID:         updated.ID,
 				OriginalUrl:   req.OriginalURL,
 				VersionNumber: maxVer + 1,
 			})
 			if vErr != nil {
-				return fmt.Errorf("create url version: %w", vErr)
+				s.log.Error("failed to create url version", logger.Error(vErr), logger.Int64("id", updated.ID))
+				return fmt.Errorf("%w: could not create url version", apperror.ErrInternal)
 			}
 		}
+
 		return nil
 	})
 	if err != nil {

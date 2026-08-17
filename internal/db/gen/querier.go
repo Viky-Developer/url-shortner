@@ -26,6 +26,7 @@ type Querier interface {
 	HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error
 	IncrementURLClick(ctx context.Context, id int64) error
 	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
+	ShortCodeExists(ctx context.Context, shortCode string) (bool, error)
 	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)
 	UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error)
 	UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error)

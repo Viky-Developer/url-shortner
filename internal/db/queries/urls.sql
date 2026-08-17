@@ -1,7 +1,7 @@
 -- name: CreateURL :one
 INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at,
-    destination_status, destination_http_code, last_health_check)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    destination_status, destination_http_code, last_health_check, last_accessed_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: GetURLByShortCode :one
@@ -102,6 +102,11 @@ UPDATE urls
 SET click_count = COALESCE(click_count, 0) + 1,
   updated_at = NOW()
 WHERE id = $1;
+
+-- name: ShortCodeExists :one
+SELECT EXISTS (
+    SELECT 1 FROM urls WHERE short_code = $1
+);
 
 -- name: UpdateURLHealthStatus :one
 UPDATE urls

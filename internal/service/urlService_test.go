@@ -35,6 +35,7 @@ type mockQuerier struct {
 	createClickFn     func(context.Context, gen.CreateClickLogParams) (gen.ClickLog, error)
 	incrementClickFn  func(context.Context, int64) error
 	updateHealthFn    func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
+	shortCodeExistsFn func(context.Context, string) (bool, error)
 }
 
 func (m *mockQuerier) GetBlockedDomain(ctx context.Context, domain string) (gen.GetBlockedDomainRow, error) {
@@ -122,6 +123,13 @@ func (m *mockQuerier) UpdateURLHealthStatus(ctx context.Context, arg gen.UpdateU
 		return m.updateHealthFn(ctx, arg)
 	}
 	return gen.Url{}, nil
+}
+
+func (m *mockQuerier) ShortCodeExists(ctx context.Context, shortCode string) (bool, error) {
+	if m.shortCodeExistsFn != nil {
+		return m.shortCodeExistsFn(ctx, shortCode)
+	}
+	return false, nil
 }
 
 func testLog(t *testing.T) logger.Logger {
