@@ -3,7 +3,6 @@ package handler
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,7 +12,9 @@ import (
 	"time"
 
 	"github.com/vicky/url-shortner/external/logger"
+	"github.com/vicky/url-shortner/internal/apperror"
 	"github.com/vicky/url-shortner/internal/payload"
+	"github.com/vicky/url-shortner/internal/utils"
 )
 
 type mockService struct {
@@ -150,7 +151,7 @@ func TestCreateShortURLEmptyBody(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "invalid payload") {
+	if !strings.Contains(w.Body.String(), "request body is required") {
 		t.Errorf("expected invalid payload error, got %s", w.Body.String())
 	}
 }
@@ -219,7 +220,7 @@ func TestValidateURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateURL(tt.url)
+			err := utils.ValidateURL(tt.url, lookupIP)
 			if tt.wantErr && err == nil {
 				t.Errorf("expected error for %q, got nil", tt.url)
 			}
@@ -237,7 +238,7 @@ func TestValidateURLRejectsPrivateIPViaDNS(t *testing.T) {
 	}
 	t.Cleanup(func() { lookupIP = orig })
 
-	if err := validateURL("https://somehost.example.com/x"); err == nil {
+	if err := utils.ValidateURL("https://somehost.example.com/x", lookupIP); err == nil {
 		t.Fatal("expected error for host resolving to private IP")
 	}
 }
@@ -249,7 +250,7 @@ func TestValidateURLRejectsUnresolvableHost(t *testing.T) {
 	}
 	t.Cleanup(func() { lookupIP = orig })
 
-	if err := validateURL("https://nonexistent.example.com/x"); err == nil {
+	if err := utils.ValidateURL("https://nonexistent.example.com/x", lookupIP); err == nil {
 		t.Fatal("expected error for unresolvable host")
 	}
 }
@@ -279,7 +280,7 @@ func TestRedirectShortURL(t *testing.T) {
 func TestRedirectShortURLNotFound(t *testing.T) {
 	mock := &mockService{
 		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (*payload.URLResponse, error) {
-			return nil, sql.ErrNoRows
+			return nil, fmt.Errorf("%w: missing", apperror.ErrNotFound)
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))

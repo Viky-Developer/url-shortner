@@ -25,56 +25,33 @@ import (
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
+	"github.com/vicky/url-shortner/internal/enum"
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/utils"
 )
 
-// DestinationStatus represents the health status of a URL destination.
-type DestinationStatus int16
-
-const (
-	// DestinationStatusUnknown indicates the destination has not been checked.
-	DestinationStatusUnknown DestinationStatus = 0
-	// DestinationStatusHealthy indicates the destination is healthy.
-	DestinationStatusHealthy DestinationStatus = 1
-	// DestinationStatusUnhealthy indicates the destination is unhealthy.
-	DestinationStatusUnhealthy DestinationStatus = 2
-)
-
-// String returns the string representation of the DestinationStatus.
-func (s DestinationStatus) String() string {
-	switch s {
-	case DestinationStatusHealthy:
-		return "Healthy"
-	case DestinationStatusUnhealthy:
-		return "Unhealthy"
-	default:
-		return "Unknown / Not Checked"
-	}
-}
-
 // checkDestinationHealth sends a HEAD request to the originalURL and returns the health status.
-func (s *URLService) checkDestinationHealth(originalURL string) (DestinationStatus, int32) {
+func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
 		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", originalURL))
-		return DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Head(parsedURL.String())
 	if err != nil {
 		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", originalURL))
-		return DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	// Determine health status based on HTTP status code
 	statusCode := int32(resp.StatusCode)
 	if statusCode >= 200 && statusCode < 400 {
-		return DestinationStatusHealthy, statusCode
+		return enum.DestinationStatusHealthy, statusCode
 	}
-	return DestinationStatusUnhealthy, statusCode
+	return enum.DestinationStatusUnhealthy, statusCode
 }
 
 // URLService implements the URL shortening business logic.
@@ -107,14 +84,20 @@ func (s *URLService) withTx(ctx context.Context, fn func(q gen.Querier) error) e
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		s.log.Error("failed to begin transaction", logger.Error(err))
+		return fmt.Errorf("%w: could not start transaction", apperror.ErrInternal)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	if err := fn(gen.New(tx)); err != nil {
 		return err
 	}
-	return tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		s.log.Error("failed to commit transaction", logger.Error(err))
+		return fmt.Errorf("%w: could not save changes", apperror.ErrInternal)
+	}
+	return nil
 }
 
 // ResolveUserID decodes an HMAC-signed display user id (e.g. "USR_...") back
@@ -133,17 +116,19 @@ func (s *URLService) ResolveUserID(ctx context.Context, encodedUserID string) (i
 func (s *URLService) checkBlockedDomain(ctx context.Context, originalURL string) error {
 	parsed, err := url.Parse(originalURL)
 	if err != nil || parsed.Hostname() == "" {
-		return fmt.Errorf("%w: invalid URL", apperror.ErrInvalidURL)
+		s.log.Warn("invalid URL provided", logger.Error(err), logger.String("originalURL", originalURL))
+		return fmt.Errorf("%w: the URL '%s' is not valid", apperror.ErrInvalidURL, originalURL)
 	}
 	host := strings.ToLower(parsed.Hostname())
 
 	_, err = s.queries.GetBlockedDomain(ctx, host)
 	if err == nil {
 		s.log.Warn("blocked domain rejected", logger.String("host", host))
-		return fmt.Errorf("%w: domain is blocked", apperror.ErrInvalidURL)
+		return fmt.Errorf("%w: the domain '%s' is not allowed", apperror.ErrBlockedDomain, host)
 	}
 	if err != sql.ErrNoRows {
-		return fmt.Errorf("check blocked domain: %w", err)
+		s.log.Error("failed to check blocked domain", logger.Error(err), logger.String("host", host))
+		return fmt.Errorf("%w: could not validate domain", apperror.ErrInternal)
 	}
 	return nil
 }
@@ -158,7 +143,8 @@ func (s *URLService) findOrCreateDestination(q gen.Querier, ctx context.Context,
 		return dest.ID, nil
 	}
 	if err != sql.ErrNoRows {
-		return 0, fmt.Errorf("lookup destination: %w", err)
+		s.log.Error("failed to lookup destination", logger.Error(err), logger.String("urlHash", urlHash))
+		return 0, fmt.Errorf("%w: could not lookup destination", apperror.ErrInternal)
 	}
 
 	created, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
@@ -166,7 +152,8 @@ func (s *URLService) findOrCreateDestination(q gen.Querier, ctx context.Context,
 		UrlHash:     urlHash,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("create destination: %w", err)
+		s.log.Error("failed to create destination", logger.Error(err), logger.String("originalURL", originalURL))
+		return 0, fmt.Errorf("%w: could not create destination", apperror.ErrInternal)
 	}
 	return created.ID, nil
 }
@@ -193,9 +180,22 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		}
 	}
 
+	// Check if custom code already exists before the transaction
+	if custom {
+		exists, existErr := s.queries.ShortCodeExists(ctx, code)
+		if existErr != nil {
+			s.log.Error("failed to check short code existence", logger.Error(existErr), logger.String("shortCode", code))
+			return nil, fmt.Errorf("%w: could not validate short code", apperror.ErrInternal)
+		}
+		if exists {
+			s.log.Warn("custom code already taken", logger.String("shortCode", code))
+			return nil, fmt.Errorf("%w: custom code '%s' is already taken. Please choose a different code", apperror.ErrConflict, code)
+		}
+	}
+
 	// Check destination health before the transaction
 	var (
-		healthStatus    DestinationStatus
+		healthStatus    enum.DestinationStatus
 		httpCode        int32
 		healthCheckedAt sql.NullTime
 	)
@@ -207,19 +207,6 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 	var created gen.Url
 
 	err := s.withTx(ctx, func(q gen.Querier) error {
-
-		// Check if custom code already exists before inserting
-		if custom {
-			exists, existErr := q.ShortCodeExists(ctx, code)
-			if existErr != nil {
-				s.log.Error("failed to check short code existence", logger.Error(existErr), logger.String("shortCode", code))
-				return fmt.Errorf("%w: could not validate short code", apperror.ErrInternal)
-			}
-			if exists {
-				s.log.Warn("custom code already taken", logger.String("shortCode", code))
-				return fmt.Errorf("%w: custom code '%s' is already taken. Please choose a different code", apperror.ErrConflict, code)
-			}
-		}
 
 		// Find or create destination
 		destID, err := s.findOrCreateDestination(q, ctx, req.OriginalURL)
@@ -293,7 +280,7 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 				return fmt.Errorf("%w: %s", apperror.ErrNotFound, shortCode)
 			}
 			s.log.Error("failed to get url by shortCode", logger.Error(err), logger.String("shortCode", shortCode))
-			return fmt.Errorf("failed to get url: %w", err)
+			return fmt.Errorf("%w: could not resolve short link", apperror.ErrInternal)
 		}
 
 		if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now()) {
@@ -308,12 +295,12 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 			Referrer:  nullString(click.Referrer),
 		}); err != nil {
 			s.log.Error("failed to create click log", logger.Error(err), logger.Int64("urlID", row.ID))
-			return fmt.Errorf("create click log: %w", err)
+			return fmt.Errorf("%w: could not record click", apperror.ErrInternal)
 		}
 
 		if err := q.IncrementURLClick(ctx, row.ID); err != nil {
 			s.log.Error("failed to increment click count", logger.Error(err), logger.Int64("urlID", row.ID))
-			return fmt.Errorf("increment click count: %w", err)
+			return fmt.Errorf("%w: could not update click count", apperror.ErrInternal)
 		}
 
 		resp = s.toResponse(rowToUrlForUpdate(row), row.OriginalUrl)
@@ -353,17 +340,13 @@ func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offs
 	})
 	if err != nil {
 		s.log.Error("failed to list urls", logger.Error(err))
-		return nil, fmt.Errorf("failed to list urls: %w", err)
+		return nil, fmt.Errorf("%w: could not fetch urls", apperror.ErrInternal)
 	}
 
 	total, err := s.queries.CountURLs(ctx, userID)
 	if err != nil {
 		s.log.Error("failed to count urls", logger.Error(err))
-		return nil, fmt.Errorf("failed to count urls: %w", err)
-	}
-	if err != nil {
-		s.log.Error("failed to count urls", logger.Error(err))
-		return nil, fmt.Errorf("failed to count urls: %w", err)
+		return nil, fmt.Errorf("%w: could not count urls", apperror.ErrInternal)
 	}
 
 	items := make([]payload.URLResponse, len(rows))
@@ -401,7 +384,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 
 	// Check destination health before the transaction when originalURL changes
 	var (
-		healthStatus        DestinationStatus
+		healthStatus        enum.DestinationStatus
 		httpCode            int32
 		healthCheckedAt     sql.NullTime
 		updated             gen.Url
@@ -571,9 +554,9 @@ func (s *URLService) buildShortURL(shortCode string) string {
 func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLResponse {
 
 	// Map destination status to string
-	status := DestinationStatusUnknown
+	status := enum.DestinationStatusUnknown
 	if u.DestinationStatus.Valid {
-		status = DestinationStatus(u.DestinationStatus.Int16)
+		status = enum.DestinationStatus(u.DestinationStatus.Int16)
 	}
 	statusString := status.String()
 
