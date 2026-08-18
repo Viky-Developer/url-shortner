@@ -18,7 +18,7 @@ type UpdateURLRequest struct {
 	OriginalURL string             `json:"originalURL"`           // The new long URL value.
 	Title       string             `json:"title,omitempty"`       // The new title value.
 	Description string             `json:"description,omitempty"` // The new description value.
-	IsActive    *bool              `json:"isActive,omitempty"`    // Manually activate/deactivate the URL.
+	Status      *int16             `json:"status,omitempty"`      // New URL status: 0=Disabled, 1=Active, 2=Expired, 3=Deleted.
 	ExpiresAt   utils.OptionalTime `json:"expiresAt,omitempty"`   // Optional new expiration time.
 }
 

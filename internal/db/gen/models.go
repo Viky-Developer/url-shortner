@@ -18,6 +18,11 @@ type BlockedDomain struct {
 	CreatedAt sql.NullTime   `json:"created_at"`
 }
 
+type BlockedIpRange struct {
+	Cidr        pqtype.CIDR `json:"cidr"`
+	Description string      `json:"description"`
+}
+
 type ClickLog struct {
 	ID         int64          `json:"id"`
 	UrlID      int64          `json:"url_id"`
@@ -38,11 +43,11 @@ type DailyUrlStat struct {
 }
 
 type Destination struct {
-	ID                int64         `json:"id"`
-	OriginalUrl       string        `json:"original_url"`
-	UrlHash           string        `json:"url_hash"`
-	DestinationStatus sql.NullInt16 `json:"destination_status"`
-	LastHealthCheck   sql.NullTime  `json:"last_health_check"`
+	ID                      int64         `json:"id"`
+	OriginalUrl             string        `json:"original_url"`
+	UrlHash                 string        `json:"url_hash"`
+	DestinationHealthStatus sql.NullInt16 `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime  `json:"last_health_check"`
 }
 
 type Session struct {
@@ -55,28 +60,28 @@ type Session struct {
 	UserAgent        sql.NullString `json:"user_agent"`
 	LoggedInAt       sql.NullTime   `json:"logged_in_at"`
 	LastActiveAt     sql.NullTime   `json:"last_active_at"`
-	IsActive         sql.NullBool   `json:"is_active"`
+	SessionStatus    sql.NullInt16  `json:"session_status"`
 }
 
 type Url struct {
-	ID                  int64          `json:"id"`
-	UserID              int64          `json:"user_id"`
-	ShortCode           string         `json:"short_code"`
-	DestinationID       int64          `json:"destination_id"`
-	Title               sql.NullString `json:"title"`
-	Description         sql.NullString `json:"description"`
-	IsCustom            sql.NullBool   `json:"is_custom"`
-	IsSafe              sql.NullBool   `json:"is_safe"`
-	ClickCount          sql.NullInt64  `json:"click_count"`
-	ExpiresAt           sql.NullTime   `json:"expires_at"`
-	IsActive            sql.NullBool   `json:"is_active"`
-	LastAccessedAt      sql.NullTime   `json:"last_accessed_at"`
-	DestinationStatus   sql.NullInt16  `json:"destination_status"`
-	LastHealthCheck     sql.NullTime   `json:"last_health_check"`
-	DestinationHttpCode sql.NullInt32  `json:"destination_http_code"`
-	CreatedAt           sql.NullTime   `json:"created_at"`
-	UpdatedAt           sql.NullTime   `json:"updated_at"`
-	DeletedAt           sql.NullTime   `json:"deleted_at"`
+	ID                        int64          `json:"id"`
+	UserID                    int64          `json:"user_id"`
+	ShortCode                 string         `json:"short_code"`
+	DestinationID             int64          `json:"destination_id"`
+	Title                     sql.NullString `json:"title"`
+	Description               sql.NullString `json:"description"`
+	IsCustom                  sql.NullBool   `json:"is_custom"`
+	IsSafe                    sql.NullBool   `json:"is_safe"`
+	ClickCount                sql.NullInt64  `json:"click_count"`
+	ExpiresAt                 sql.NullTime   `json:"expires_at"`
+	UrlStatus                 sql.NullInt16  `json:"url_status"`
+	LastAccessedAt            sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus   sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck           sql.NullTime   `json:"last_health_check"`
+	DestinationLastHttpStatus sql.NullInt32  `json:"destination_last_http_status"`
+	CreatedAt                 sql.NullTime   `json:"created_at"`
+	UpdatedAt                 sql.NullTime   `json:"updated_at"`
+	DeletedAt                 sql.NullTime   `json:"deleted_at"`
 }
 
 type UrlVersion struct {

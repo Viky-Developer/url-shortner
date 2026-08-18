@@ -1,6 +1,6 @@
 -- name: CreateURL :one
 INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at,
-    destination_status, destination_http_code, last_health_check, last_accessed_at)
+    destination_health_status, destination_last_http_status, last_health_check, last_accessed_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
@@ -8,23 +8,23 @@ RETURNING *;
 SELECT
   urls.id, urls.user_id, urls.short_code, urls.destination_id,
   urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.is_active,
-  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
   urls.created_at, urls.updated_at, urls.deleted_at,
   destinations.original_url
 FROM urls
 JOIN destinations ON urls.destination_id = destinations.id
 WHERE urls.short_code = $1
   AND urls.deleted_at IS NULL
-  AND urls.is_active = TRUE
+  AND urls.url_status = 1
   AND urls.is_safe = TRUE;
 
 -- name: GetURLByID :one
 SELECT
   urls.id, urls.user_id, urls.short_code, urls.destination_id,
   urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.is_active,
-  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
   urls.created_at, urls.updated_at, urls.deleted_at,
   destinations.original_url
 FROM urls
@@ -37,8 +37,8 @@ WHERE urls.id = $1
 SELECT
   urls.id, urls.user_id, urls.short_code, urls.destination_id,
   urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.is_active,
-  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
   urls.created_at, urls.updated_at, urls.deleted_at,
   destinations.original_url
 FROM urls
@@ -54,7 +54,7 @@ SET destination_id = $3,
     title = COALESCE(sqlc.narg('title'), title),
     description = COALESCE(sqlc.narg('description'), description),
     expires_at = sqlc.narg('expires_at'),
-    is_active = COALESCE(sqlc.narg('is_active'), is_active),
+    url_status = COALESCE(sqlc.narg('url_status'), url_status),
     updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
@@ -63,7 +63,7 @@ RETURNING *;
 
 -- name: SoftDeleteURL :one
 UPDATE urls
-SET is_active = FALSE, deleted_at = NOW(), updated_at = NOW()
+SET url_status = 3, deleted_at = NOW(), updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
   AND deleted_at IS NULL
@@ -85,15 +85,15 @@ WHERE user_id = $1
 SELECT
   urls.id, urls.user_id, urls.short_code, urls.destination_id,
   urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.is_active,
-  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
   urls.created_at, urls.updated_at, urls.deleted_at,
   destinations.original_url
 FROM urls
 JOIN destinations ON urls.destination_id = destinations.id
 WHERE urls.short_code = $1
   AND urls.deleted_at IS NULL
-  AND urls.is_active = TRUE
+  AND urls.url_status = 1
   AND urls.is_safe = TRUE
 FOR UPDATE OF urls;
 
@@ -110,8 +110,8 @@ SELECT EXISTS (
 
 -- name: UpdateURLHealthStatus :one
 UPDATE urls
-SET destination_status = $2,
-    destination_http_code = $3,
+SET destination_health_status = $2,
+    destination_last_http_status = $3,
     last_health_check = $4,
     last_accessed_at = $5,
     updated_at = NOW()

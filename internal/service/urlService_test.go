@@ -10,6 +10,7 @@ import (
 
 	"github.com/vicky/url-shortner/external/logger"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
+	"github.com/vicky/url-shortner/internal/enum"
 	"github.com/vicky/url-shortner/internal/payload"
 )
 
@@ -36,6 +37,7 @@ type mockQuerier struct {
 	incrementClickFn  func(context.Context, int64) error
 	updateHealthFn    func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
 	shortCodeExistsFn func(context.Context, string) (bool, error)
+	listBlockedIPFn   func(context.Context) ([]gen.BlockedIpRange, error)
 }
 
 func (m *mockQuerier) GetBlockedDomain(ctx context.Context, domain string) (gen.GetBlockedDomainRow, error) {
@@ -132,6 +134,13 @@ func (m *mockQuerier) ShortCodeExists(ctx context.Context, shortCode string) (bo
 	return false, nil
 }
 
+func (m *mockQuerier) ListBlockedIPRanges(ctx context.Context) ([]gen.BlockedIpRange, error) {
+	if m.listBlockedIPFn != nil {
+		return m.listBlockedIPFn(ctx)
+	}
+	return nil, nil
+}
+
 func testLog(t *testing.T) logger.Logger {
 	t.Helper()
 	log, err := logger.New(logger.WithLevel("error"))
@@ -148,7 +157,7 @@ func testURL(code string) gen.Url {
 		UserID:    1,
 		ShortCode: code,
 		IsCustom:  sql.NullBool{Bool: false, Valid: true},
-		IsActive:  sql.NullBool{Bool: true, Valid: true},
+		UrlStatus: sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 		CreatedAt: sql.NullTime{Time: now, Valid: true},
 		UpdatedAt: sql.NullTime{Time: now, Valid: true},
 	}
@@ -162,7 +171,7 @@ func testListRow(code string) gen.ListURLsRow {
 		ShortCode:   code,
 		OriginalUrl: "https://example.com/original",
 		IsCustom:    sql.NullBool{Bool: false, Valid: true},
-		IsActive:    sql.NullBool{Bool: true, Valid: true},
+		UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 		CreatedAt:   sql.NullTime{Time: now, Valid: true},
 		UpdatedAt:   sql.NullTime{Time: now, Valid: true},
 	}
@@ -297,7 +306,7 @@ func TestRedirectRecordsClickBeforeResponse(t *testing.T) {
 				OriginalUrl: "https://example.com/target",
 				ClickCount:  sql.NullInt64{Int64: 3, Valid: true},
 				IsCustom:    sql.NullBool{Bool: false, Valid: true},
-				IsActive:    sql.NullBool{Bool: true, Valid: true},
+				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 				CreatedAt:   sql.NullTime{Time: now, Valid: true},
 				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
 			}, nil
@@ -359,7 +368,7 @@ func TestRedirectFailsWhenClickLogFails(t *testing.T) {
 				ID:        1,
 				UserID:    1,
 				ShortCode: code,
-				IsActive:  sql.NullBool{Bool: true, Valid: true},
+				UrlStatus: sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -428,9 +437,9 @@ func TestSoftDeleteSetsDeletedAt(t *testing.T) {
 	}
 }
 
-func TestUpdatePersistsIsActive(t *testing.T) {
+func TestUpdatePersistsUrlStatus(t *testing.T) {
 	now := time.Now()
-	isActiveFalse := false
+	disabled := int16(enum.URLStatusDisabled)
 
 	var captured gen.UpdateURLParams
 	mock := &mockQuerier{
@@ -440,7 +449,7 @@ func TestUpdatePersistsIsActive(t *testing.T) {
 				UserID:        1,
 				ShortCode:     "abc1234567",
 				DestinationID: 1,
-				IsActive:      sql.NullBool{Bool: true, Valid: true},
+				UrlStatus:     sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 				CreatedAt:     sql.NullTime{Time: now, Valid: true},
 				UpdatedAt:     sql.NullTime{Time: now, Valid: true},
 			}, nil
@@ -459,24 +468,24 @@ func TestUpdatePersistsIsActive(t *testing.T) {
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
 	resp, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
-		IsActive: &isActiveFalse,
+		Status: &disabled,
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
 
-	if !captured.IsActive.Valid {
-		t.Error("expected isActive to be provided to the query")
+	if !captured.UrlStatus.Valid {
+		t.Error("expected urlStatus to be provided to the query")
 	}
-	if captured.IsActive.Bool {
-		t.Error("expected isActive=false to be passed through")
+	if captured.UrlStatus.Int16 != int16(enum.URLStatusDisabled) {
+		t.Error("expected status=disabled to be passed through")
 	}
 	if resp.ID != 1 {
 		t.Errorf("expected response id 1, got %d", resp.ID)
 	}
 }
 
-func TestUpdateLeavesIsActiveNilWhenOmitted(t *testing.T) {
+func TestUpdateLeavesUrlStatusNilWhenOmitted(t *testing.T) {
 	var captured gen.UpdateURLParams
 	mock := &mockQuerier{
 		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
@@ -485,7 +494,7 @@ func TestUpdateLeavesIsActiveNilWhenOmitted(t *testing.T) {
 				UserID:        1,
 				ShortCode:     "abc1234567",
 				DestinationID: 1,
-				IsActive:      sql.NullBool{Bool: true, Valid: true},
+				UrlStatus:     sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 			}, nil
 		},
 		destByIDFn: func(_ context.Context, _ int64) (gen.GetDestinationByIDRow, error) {
@@ -497,8 +506,8 @@ func TestUpdateLeavesIsActiveNilWhenOmitted(t *testing.T) {
 		updateFn: func(_ context.Context, arg gen.UpdateURLParams) (gen.Url, error) {
 			captured = arg
 			url := testURL("abc1234567")
-			// Simulate DB returning the preserved is_active = true via COALESCE
-			url.IsActive = sql.NullBool{Bool: true, Valid: true}
+			// Simulate DB returning the preserved url_status = active via COALESCE
+			url.UrlStatus = sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true}
 			return url, nil
 		},
 	}
@@ -509,8 +518,8 @@ func TestUpdateLeavesIsActiveNilWhenOmitted(t *testing.T) {
 		t.Fatalf("update: %v", err)
 	}
 
-	if captured.IsActive.Valid {
-		t.Error("expected isActive param to be NULL so COALESCE preserves the existing value")
+	if captured.UrlStatus.Valid {
+		t.Error("expected urlStatus param to be NULL so COALESCE preserves the existing value")
 	}
 	if !resp.IsActive {
 		t.Error("expected isActive to remain true after update without explicit isActive in the request")

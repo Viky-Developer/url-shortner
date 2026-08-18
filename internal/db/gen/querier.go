@@ -25,6 +25,7 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error
 	IncrementURLClick(ctx context.Context, id int64) error
+	ListBlockedIPRanges(ctx context.Context) ([]BlockedIpRange, error)
 	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
 	ShortCodeExists(ctx context.Context, shortCode string) (bool, error)
 	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)

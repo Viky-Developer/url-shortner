@@ -37,8 +37,8 @@ func TestMigrationsApplyAndCreateTables(t *testing.T) {
 
 	expected := []string{
 		"click_logs", "daily_url_stats", "url_versions", "urls",
-		"destinations", "blocked_domains", "sessions", "users",
-		"goose_db_version",
+		"destinations", "blocked_domains", "blocked_ip_ranges",
+		"sessions", "users", "goose_db_version",
 	}
 	for _, table := range expected {
 		var exists bool

@@ -12,7 +12,7 @@ import (
 
 const createDestination = `-- name: CreateDestination :one
 INSERT INTO destinations (original_url, url_hash) VALUES ($1, $2)
-RETURNING id, original_url, destination_status, last_health_check
+RETURNING id, original_url, destination_health_status, last_health_check
 `
 
 type CreateDestinationParams struct {
@@ -21,10 +21,10 @@ type CreateDestinationParams struct {
 }
 
 type CreateDestinationRow struct {
-	ID                int64         `json:"id"`
-	OriginalUrl       string        `json:"original_url"`
-	DestinationStatus sql.NullInt16 `json:"destination_status"`
-	LastHealthCheck   sql.NullTime  `json:"last_health_check"`
+	ID                      int64         `json:"id"`
+	OriginalUrl             string        `json:"original_url"`
+	DestinationHealthStatus sql.NullInt16 `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime  `json:"last_health_check"`
 }
 
 func (q *Queries) CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error) {
@@ -33,21 +33,21 @@ func (q *Queries) CreateDestination(ctx context.Context, arg CreateDestinationPa
 	err := row.Scan(
 		&i.ID,
 		&i.OriginalUrl,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
 	)
 	return i, err
 }
 
 const getDestinationByHash = `-- name: GetDestinationByHash :one
-SELECT id, original_url, destination_status, last_health_check FROM destinations WHERE url_hash = $1
+SELECT id, original_url, destination_health_status, last_health_check FROM destinations WHERE url_hash = $1
 `
 
 type GetDestinationByHashRow struct {
-	ID                int64         `json:"id"`
-	OriginalUrl       string        `json:"original_url"`
-	DestinationStatus sql.NullInt16 `json:"destination_status"`
-	LastHealthCheck   sql.NullTime  `json:"last_health_check"`
+	ID                      int64         `json:"id"`
+	OriginalUrl             string        `json:"original_url"`
+	DestinationHealthStatus sql.NullInt16 `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime  `json:"last_health_check"`
 }
 
 func (q *Queries) GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error) {
@@ -56,21 +56,21 @@ func (q *Queries) GetDestinationByHash(ctx context.Context, urlHash string) (Get
 	err := row.Scan(
 		&i.ID,
 		&i.OriginalUrl,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
 	)
 	return i, err
 }
 
 const getDestinationByID = `-- name: GetDestinationByID :one
-SELECT id, original_url, destination_status, last_health_check FROM destinations WHERE id = $1
+SELECT id, original_url, destination_health_status, last_health_check FROM destinations WHERE id = $1
 `
 
 type GetDestinationByIDRow struct {
-	ID                int64         `json:"id"`
-	OriginalUrl       string        `json:"original_url"`
-	DestinationStatus sql.NullInt16 `json:"destination_status"`
-	LastHealthCheck   sql.NullTime  `json:"last_health_check"`
+	ID                      int64         `json:"id"`
+	OriginalUrl             string        `json:"original_url"`
+	DestinationHealthStatus sql.NullInt16 `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime  `json:"last_health_check"`
 }
 
 func (q *Queries) GetDestinationByID(ctx context.Context, id int64) (GetDestinationByIDRow, error) {
@@ -79,7 +79,7 @@ func (q *Queries) GetDestinationByID(ctx context.Context, id int64) (GetDestinat
 	err := row.Scan(
 		&i.ID,
 		&i.OriginalUrl,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
 	)
 	return i, err

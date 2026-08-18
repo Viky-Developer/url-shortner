@@ -12,12 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
-
-	"net/http"
-	"strconv"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/lib/pq"
@@ -30,58 +29,126 @@ import (
 	"github.com/vicky/url-shortner/internal/utils"
 )
 
-// sanitizeHealthCheckURL parses rawURL, validates its scheme and host, resolves
-// the hostname to ensure it does not point to a private or loopback address,
-// and returns a clean URL safe for outbound requests.
-func sanitizeHealthCheckURL(rawURL string) (string, error) {
-	parsedURL, err := url.ParseRequestURI(rawURL)
+// loadBlockedIPRanges fetches the blocked IP ranges from the database and
+// returns them as *net.IPNet slices for fast containment checks.
+func loadBlockedIPRanges(ctx context.Context, q gen.Querier, log logger.Logger) []*net.IPNet {
+	rows, err := q.ListBlockedIPRanges(ctx)
 	if err != nil {
-		return "", fmt.Errorf("invalid URL: %w", err)
+		log.Error("failed to load blocked IP ranges, using empty list", logger.Error(err))
+		return nil
 	}
-
-	// Only allow https scheme.
-	if parsedURL.Scheme != "https" {
-		return "", fmt.Errorf("invalid scheme: %s", parsedURL.Scheme)
-	}
-
-	safeHost := parsedURL.Hostname()
-	if safeHost == "" {
-		return "", fmt.Errorf("missing host")
-	}
-
-	ips, err := net.LookupIP(safeHost)
-	if err != nil {
-		return "", fmt.Errorf("DNS resolution failed for %s: %w", safeHost, err)
-	}
-	for _, ip := range ips {
-		if utils.IsBlockedIP(ip) {
-			return "", fmt.Errorf("host %s resolves to blocked IP %s", safeHost, ip.String())
+	ranges := make([]*net.IPNet, 0, len(rows))
+	for _, row := range rows {
+		if !row.Cidr.Valid {
+			continue
 		}
+		n := row.Cidr.IPNet
+		ranges = append(ranges, &n)
 	}
-
-	return (&url.URL{
-		Scheme: "https",
-		Host:   safeHost,
-	}).String(), nil
+	return ranges
 }
 
-// checkDestinationHealth sends a HEAD request to the originalURL and returns the health status.
-func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
-	safeURL, err := sanitizeHealthCheckURL(originalURL)
+func isDisallowedIP(ip net.IP, blockedRanges []*net.IPNet) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	for _, n := range blockedRanges {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// safeDialContext wraps the default dialer and re-validates the resolved
+// IP at connection time, closing the TOCTOU/DNS-rebinding gap that
+// pre-request validation alone leaves open.
+func (s *URLService) safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		s.log.Error("health check URL validation failed", logger.Error(err), logger.String("originalURL", originalURL))
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("dns lookup failed: %w", err)
+	}
+	var dialErr error
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	for _, ip := range ips {
+		if isDisallowedIP(ip, s.blockedIPRanges) {
+			continue
+		}
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		dialErr = err
+	}
+	if dialErr == nil {
+		dialErr = fmt.Errorf("no permitted IP address for host %q", host)
+	}
+	return nil, dialErr
+}
+
+func (s *URLService) newSafeHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DialContext:           s.safeDialContext,
+			MaxIdleConns:          10,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Second,
+		},
+		// Re-validate on every redirect hop instead of following blindly.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("stopped after 5 redirects")
+			}
+			return validateRequestURL(req.URL)
+		},
+	}
+}
+
+// validateRequestURL enforces scheme allowlisting up front. IP-level
+// checks happen later in safeDialContext (post-DNS-resolution), which is
+// the check that actually matters for SSRF.
+func validateRequestURL(u *url.URL) error {
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("URL missing host")
+	}
+	return nil
+}
+
+func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
+	parsedURL, err := url.ParseRequestURI(originalURL)
+	if err != nil {
+		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", originalURL))
+		return enum.DestinationStatusUnknown, 0
+	}
+	if err := validateRequestURL(parsedURL); err != nil {
+		s.log.Error("rejected URL for health check", logger.Error(err), logger.String("originalURL", originalURL))
 		return enum.DestinationStatusUnknown, 0
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Head(safeURL)
+	client := s.newSafeHTTPClient()
+	req, err := http.NewRequest(http.MethodHead, parsedURL.String(), nil)
+	if err != nil {
+		s.log.Error("failed to build health check request", logger.Error(err), logger.String("originalURL", originalURL))
+		return enum.DestinationStatusUnknown, 0
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", originalURL))
 		return enum.DestinationStatusUnknown, 0
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Determine health status based on HTTP status code
 	statusCode := int32(resp.StatusCode)
 	if statusCode >= 200 && statusCode < 400 {
 		return enum.DestinationStatusHealthy, statusCode
@@ -91,22 +158,26 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 
 // URLService implements the URL shortening business logic.
 type URLService struct {
-	queries   gen.Querier
-	db        *sql.DB
-	baseURL   string
-	secretKey string
-	log       logger.Logger
+	queries         gen.Querier
+	db              *sql.DB
+	baseURL         string
+	secretKey       string
+	log             logger.Logger
+	blockedIPRanges []*net.IPNet
 }
 
 // NewURLService constructs a URLService with the given querier, DB handle
 // (used for transactions), base URL, HMAC secret key, and logger.
 func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, log logger.Logger) *URLService {
+	ctx := context.Background()
+	blockedRanges := loadBlockedIPRanges(ctx, queries, log)
 	return &URLService{
-		queries:   queries,
-		db:        db,
-		baseURL:   strings.TrimRight(baseURL, "/"),
-		secretKey: secretKey,
-		log:       log,
+		queries:         queries,
+		db:              db,
+		baseURL:         strings.TrimRight(baseURL, "/"),
+		secretKey:       secretKey,
+		log:             log,
+		blockedIPRanges: blockedRanges,
 	}
 }
 
@@ -252,16 +323,16 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 
 		// Insert URL row
 		created, err = q.CreateURL(ctx, gen.CreateURLParams{
-			UserID:              userID,
-			ShortCode:           code,
-			DestinationID:       destID,
-			Title:               nullString(req.Title),
-			Description:         nullString(req.Description),
-			IsCustom:            sql.NullBool{Bool: custom, Valid: true},
-			ExpiresAt:           nullTime(req.ExpiresAt),
-			DestinationStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
-			DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
-			LastHealthCheck:     healthCheckedAt,
+			UserID:                    userID,
+			ShortCode:                 code,
+			DestinationID:             destID,
+			Title:                     nullString(req.Title),
+			Description:               nullString(req.Description),
+			IsCustom:                  sql.NullBool{Bool: custom, Valid: true},
+			ExpiresAt:                 nullTime(req.ExpiresAt),
+			DestinationHealthStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
+			DestinationLastHttpStatus: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
+			LastHealthCheck:           healthCheckedAt,
 		})
 		if err != nil {
 			if isDuplicateKey(err) {
@@ -465,7 +536,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 			Title:         nullString(req.Title),
 			Description:   nullString(req.Description),
 			ExpiresAt:     nullTime(req.ExpiresAt),
-			IsActive:      nullBool(req.IsActive),
+			UrlStatus:     nullURLStatus(req.Status),
 		})
 		if eErr != nil {
 			if eErr == sql.ErrNoRows {
@@ -479,16 +550,16 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 		// Update health status within the same transaction when originalURL changed
 		if req.OriginalURL != "" {
 			updatedUrl, hErr := q.UpdateURLHealthStatus(ctx, gen.UpdateURLHealthStatusParams{
-				ID:                  updated.ID,
-				DestinationStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
-				DestinationHttpCode: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
-				LastHealthCheck:     healthCheckedAt,
+				ID:                        updated.ID,
+				DestinationHealthStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
+				DestinationLastHttpStatus: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
+				LastHealthCheck:           healthCheckedAt,
 			})
 			if hErr != nil {
 				s.log.Error("failed to update url health status", logger.Error(hErr), logger.Int64("id", updated.ID))
 			} else {
-				updated.DestinationStatus = updatedUrl.DestinationStatus
-				updated.DestinationHttpCode = updatedUrl.DestinationHttpCode
+				updated.DestinationHealthStatus = updatedUrl.DestinationHealthStatus
+				updated.DestinationLastHttpStatus = updatedUrl.DestinationLastHttpStatus
 				updated.LastHealthCheck = updatedUrl.LastHealthCheck
 				updated.UpdatedAt = updatedUrl.UpdatedAt
 			}
@@ -588,17 +659,17 @@ func (s *URLService) buildShortURL(shortCode string) string {
 // toResponse builds an API response from a gen.Url and its original URL.
 func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLResponse {
 
-	// Map destination status to string
+	// Map destination health status to string
 	status := enum.DestinationStatusUnknown
-	if u.DestinationStatus.Valid {
-		status = enum.DestinationStatus(u.DestinationStatus.Int16)
+	if u.DestinationHealthStatus.Valid {
+		status = enum.DestinationStatus(u.DestinationHealthStatus.Int16)
 	}
 	statusString := status.String()
 
-	// Map HTTP code to string
+	// Map last HTTP status code to string
 	httpCode := ""
-	if u.DestinationHttpCode.Valid {
-		httpCode = strconv.Itoa(int(u.DestinationHttpCode.Int32))
+	if u.DestinationLastHttpStatus.Valid {
+		httpCode = strconv.Itoa(int(u.DestinationLastHttpStatus.Int32))
 	}
 
 	// Handle boolean fields
@@ -620,7 +691,7 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 		Title:                   "",
 		Description:             "",
 		IsCustom:                &isCustom,
-		IsActive:                u.IsActive.Valid && u.IsActive.Bool,
+		IsActive:                u.UrlStatus.Valid && u.UrlStatus.Int16 == int16(enum.URLStatusActive),
 		ClickCount:              0,
 		HasBeenAccessed:         hasBeenAccessed,
 		HealthChecked:           healthChecked,
@@ -654,8 +725,8 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 		resp.LastHealthCheck = u.LastHealthCheck.Time.Format("2006-01-02T15:04:05Z")
 	}
 
-	if u.DestinationHttpCode.Valid {
-		resp.DestinationHttpCode = strconv.Itoa(int(u.DestinationHttpCode.Int32))
+	if u.DestinationLastHttpStatus.Valid {
+		resp.DestinationHttpCode = strconv.Itoa(int(u.DestinationLastHttpStatus.Int32))
 	}
 
 	if u.ExpiresAt.Valid {
@@ -675,8 +746,8 @@ func rowToUrlByID(row gen.GetURLByIDRow) gen.Url {
 		ID: row.ID, UserID: row.UserID, ShortCode: row.ShortCode,
 		DestinationID: row.DestinationID, Title: row.Title, Description: row.Description,
 		IsCustom: row.IsCustom, IsSafe: row.IsSafe, ClickCount: row.ClickCount,
-		ExpiresAt: row.ExpiresAt, IsActive: row.IsActive, LastAccessedAt: row.LastAccessedAt,
-		DestinationStatus: row.DestinationStatus, LastHealthCheck: row.LastHealthCheck,
+		ExpiresAt: row.ExpiresAt, UrlStatus: row.UrlStatus, LastAccessedAt: row.LastAccessedAt,
+		DestinationHealthStatus: row.DestinationHealthStatus, LastHealthCheck: row.LastHealthCheck,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
 	}
 }
@@ -686,8 +757,8 @@ func rowToUrlList(row gen.ListURLsRow) gen.Url {
 		ID: row.ID, UserID: row.UserID, ShortCode: row.ShortCode,
 		DestinationID: row.DestinationID, Title: row.Title, Description: row.Description,
 		IsCustom: row.IsCustom, IsSafe: row.IsSafe, ClickCount: row.ClickCount,
-		ExpiresAt: row.ExpiresAt, IsActive: row.IsActive, LastAccessedAt: row.LastAccessedAt,
-		DestinationStatus: row.DestinationStatus, LastHealthCheck: row.LastHealthCheck,
+		ExpiresAt: row.ExpiresAt, UrlStatus: row.UrlStatus, LastAccessedAt: row.LastAccessedAt,
+		DestinationHealthStatus: row.DestinationHealthStatus, LastHealthCheck: row.LastHealthCheck,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
 	}
 }
@@ -697,8 +768,8 @@ func rowToUrlForUpdate(row gen.GetURLByShortCodeForUpdateRow) gen.Url {
 		ID: row.ID, UserID: row.UserID, ShortCode: row.ShortCode,
 		DestinationID: row.DestinationID, Title: row.Title, Description: row.Description,
 		IsCustom: row.IsCustom, IsSafe: row.IsSafe, ClickCount: row.ClickCount,
-		ExpiresAt: row.ExpiresAt, IsActive: row.IsActive, LastAccessedAt: row.LastAccessedAt,
-		DestinationStatus: row.DestinationStatus, LastHealthCheck: row.LastHealthCheck,
+		ExpiresAt: row.ExpiresAt, UrlStatus: row.UrlStatus, LastAccessedAt: row.LastAccessedAt,
+		DestinationHealthStatus: row.DestinationHealthStatus, LastHealthCheck: row.LastHealthCheck,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
 	}
 }
@@ -707,11 +778,11 @@ func nullString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
 }
 
-func nullBool(b *bool) sql.NullBool {
-	if b == nil {
-		return sql.NullBool{Valid: false}
+func nullURLStatus(status *int16) sql.NullInt16 {
+	if status == nil {
+		return sql.NullInt16{Valid: false}
 	}
-	return sql.NullBool{Bool: *b, Valid: true}
+	return sql.NullInt16{Int16: *status, Valid: true}
 }
 
 func inet(ip net.IP) pqtype.Inet {

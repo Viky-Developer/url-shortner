@@ -26,23 +26,23 @@ func (q *Queries) CountURLs(ctx context.Context, userID int64) (int64, error) {
 
 const createURL = `-- name: CreateURL :one
 INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at,
-    destination_status, destination_http_code, last_health_check, last_accessed_at)
+    destination_health_status, destination_last_http_status, last_health_check, last_accessed_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, url_status, last_accessed_at, destination_health_status, last_health_check, destination_last_http_status, created_at, updated_at, deleted_at
 `
 
 type CreateURLParams struct {
-	UserID              int64          `json:"user_id"`
-	ShortCode           string         `json:"short_code"`
-	DestinationID       int64          `json:"destination_id"`
-	Title               sql.NullString `json:"title"`
-	Description         sql.NullString `json:"description"`
-	IsCustom            sql.NullBool   `json:"is_custom"`
-	ExpiresAt           sql.NullTime   `json:"expires_at"`
-	DestinationStatus   sql.NullInt16  `json:"destination_status"`
-	DestinationHttpCode sql.NullInt32  `json:"destination_http_code"`
-	LastHealthCheck     sql.NullTime   `json:"last_health_check"`
-	LastAccessedAt      sql.NullTime   `json:"last_accessed_at"`
+	UserID                    int64          `json:"user_id"`
+	ShortCode                 string         `json:"short_code"`
+	DestinationID             int64          `json:"destination_id"`
+	Title                     sql.NullString `json:"title"`
+	Description               sql.NullString `json:"description"`
+	IsCustom                  sql.NullBool   `json:"is_custom"`
+	ExpiresAt                 sql.NullTime   `json:"expires_at"`
+	DestinationHealthStatus   sql.NullInt16  `json:"destination_health_status"`
+	DestinationLastHttpStatus sql.NullInt32  `json:"destination_last_http_status"`
+	LastHealthCheck           sql.NullTime   `json:"last_health_check"`
+	LastAccessedAt            sql.NullTime   `json:"last_accessed_at"`
 }
 
 func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, error) {
@@ -54,8 +54,8 @@ func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, erro
 		arg.Description,
 		arg.IsCustom,
 		arg.ExpiresAt,
-		arg.DestinationStatus,
-		arg.DestinationHttpCode,
+		arg.DestinationHealthStatus,
+		arg.DestinationLastHttpStatus,
 		arg.LastHealthCheck,
 		arg.LastAccessedAt,
 	)
@@ -71,11 +71,11 @@ func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, erro
 		&i.IsSafe,
 		&i.ClickCount,
 		&i.ExpiresAt,
-		&i.IsActive,
+		&i.UrlStatus,
 		&i.LastAccessedAt,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
-		&i.DestinationHttpCode,
+		&i.DestinationLastHttpStatus,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
@@ -87,8 +87,8 @@ const getURLByID = `-- name: GetURLByID :one
 SELECT
   urls.id, urls.user_id, urls.short_code, urls.destination_id,
   urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.is_active,
-  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
   urls.created_at, urls.updated_at, urls.deleted_at,
   destinations.original_url
 FROM urls
@@ -104,24 +104,24 @@ type GetURLByIDParams struct {
 }
 
 type GetURLByIDRow struct {
-	ID                int64          `json:"id"`
-	UserID            int64          `json:"user_id"`
-	ShortCode         string         `json:"short_code"`
-	DestinationID     int64          `json:"destination_id"`
-	Title             sql.NullString `json:"title"`
-	Description       sql.NullString `json:"description"`
-	IsCustom          sql.NullBool   `json:"is_custom"`
-	IsSafe            sql.NullBool   `json:"is_safe"`
-	ClickCount        sql.NullInt64  `json:"click_count"`
-	ExpiresAt         sql.NullTime   `json:"expires_at"`
-	IsActive          sql.NullBool   `json:"is_active"`
-	LastAccessedAt    sql.NullTime   `json:"last_accessed_at"`
-	DestinationStatus sql.NullInt16  `json:"destination_status"`
-	LastHealthCheck   sql.NullTime   `json:"last_health_check"`
-	CreatedAt         sql.NullTime   `json:"created_at"`
-	UpdatedAt         sql.NullTime   `json:"updated_at"`
-	DeletedAt         sql.NullTime   `json:"deleted_at"`
-	OriginalUrl       string         `json:"original_url"`
+	ID                      int64          `json:"id"`
+	UserID                  int64          `json:"user_id"`
+	ShortCode               string         `json:"short_code"`
+	DestinationID           int64          `json:"destination_id"`
+	Title                   sql.NullString `json:"title"`
+	Description             sql.NullString `json:"description"`
+	IsCustom                sql.NullBool   `json:"is_custom"`
+	IsSafe                  sql.NullBool   `json:"is_safe"`
+	ClickCount              sql.NullInt64  `json:"click_count"`
+	ExpiresAt               sql.NullTime   `json:"expires_at"`
+	UrlStatus               sql.NullInt16  `json:"url_status"`
+	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
+	CreatedAt               sql.NullTime   `json:"created_at"`
+	UpdatedAt               sql.NullTime   `json:"updated_at"`
+	DeletedAt               sql.NullTime   `json:"deleted_at"`
+	OriginalUrl             string         `json:"original_url"`
 }
 
 func (q *Queries) GetURLByID(ctx context.Context, arg GetURLByIDParams) (GetURLByIDRow, error) {
@@ -138,9 +138,9 @@ func (q *Queries) GetURLByID(ctx context.Context, arg GetURLByIDParams) (GetURLB
 		&i.IsSafe,
 		&i.ClickCount,
 		&i.ExpiresAt,
-		&i.IsActive,
+		&i.UrlStatus,
 		&i.LastAccessedAt,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -154,37 +154,37 @@ const getURLByShortCode = `-- name: GetURLByShortCode :one
 SELECT
   urls.id, urls.user_id, urls.short_code, urls.destination_id,
   urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.is_active,
-  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
   urls.created_at, urls.updated_at, urls.deleted_at,
   destinations.original_url
 FROM urls
 JOIN destinations ON urls.destination_id = destinations.id
 WHERE urls.short_code = $1
   AND urls.deleted_at IS NULL
-  AND urls.is_active = TRUE
+  AND urls.url_status = 1
   AND urls.is_safe = TRUE
 `
 
 type GetURLByShortCodeRow struct {
-	ID                int64          `json:"id"`
-	UserID            int64          `json:"user_id"`
-	ShortCode         string         `json:"short_code"`
-	DestinationID     int64          `json:"destination_id"`
-	Title             sql.NullString `json:"title"`
-	Description       sql.NullString `json:"description"`
-	IsCustom          sql.NullBool   `json:"is_custom"`
-	IsSafe            sql.NullBool   `json:"is_safe"`
-	ClickCount        sql.NullInt64  `json:"click_count"`
-	ExpiresAt         sql.NullTime   `json:"expires_at"`
-	IsActive          sql.NullBool   `json:"is_active"`
-	LastAccessedAt    sql.NullTime   `json:"last_accessed_at"`
-	DestinationStatus sql.NullInt16  `json:"destination_status"`
-	LastHealthCheck   sql.NullTime   `json:"last_health_check"`
-	CreatedAt         sql.NullTime   `json:"created_at"`
-	UpdatedAt         sql.NullTime   `json:"updated_at"`
-	DeletedAt         sql.NullTime   `json:"deleted_at"`
-	OriginalUrl       string         `json:"original_url"`
+	ID                      int64          `json:"id"`
+	UserID                  int64          `json:"user_id"`
+	ShortCode               string         `json:"short_code"`
+	DestinationID           int64          `json:"destination_id"`
+	Title                   sql.NullString `json:"title"`
+	Description             sql.NullString `json:"description"`
+	IsCustom                sql.NullBool   `json:"is_custom"`
+	IsSafe                  sql.NullBool   `json:"is_safe"`
+	ClickCount              sql.NullInt64  `json:"click_count"`
+	ExpiresAt               sql.NullTime   `json:"expires_at"`
+	UrlStatus               sql.NullInt16  `json:"url_status"`
+	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
+	CreatedAt               sql.NullTime   `json:"created_at"`
+	UpdatedAt               sql.NullTime   `json:"updated_at"`
+	DeletedAt               sql.NullTime   `json:"deleted_at"`
+	OriginalUrl             string         `json:"original_url"`
 }
 
 func (q *Queries) GetURLByShortCode(ctx context.Context, shortCode string) (GetURLByShortCodeRow, error) {
@@ -201,9 +201,9 @@ func (q *Queries) GetURLByShortCode(ctx context.Context, shortCode string) (GetU
 		&i.IsSafe,
 		&i.ClickCount,
 		&i.ExpiresAt,
-		&i.IsActive,
+		&i.UrlStatus,
 		&i.LastAccessedAt,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -217,38 +217,38 @@ const getURLByShortCodeForUpdate = `-- name: GetURLByShortCodeForUpdate :one
 SELECT
   urls.id, urls.user_id, urls.short_code, urls.destination_id,
   urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.is_active,
-  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
   urls.created_at, urls.updated_at, urls.deleted_at,
   destinations.original_url
 FROM urls
 JOIN destinations ON urls.destination_id = destinations.id
 WHERE urls.short_code = $1
   AND urls.deleted_at IS NULL
-  AND urls.is_active = TRUE
+  AND urls.url_status = 1
   AND urls.is_safe = TRUE
 FOR UPDATE OF urls
 `
 
 type GetURLByShortCodeForUpdateRow struct {
-	ID                int64          `json:"id"`
-	UserID            int64          `json:"user_id"`
-	ShortCode         string         `json:"short_code"`
-	DestinationID     int64          `json:"destination_id"`
-	Title             sql.NullString `json:"title"`
-	Description       sql.NullString `json:"description"`
-	IsCustom          sql.NullBool   `json:"is_custom"`
-	IsSafe            sql.NullBool   `json:"is_safe"`
-	ClickCount        sql.NullInt64  `json:"click_count"`
-	ExpiresAt         sql.NullTime   `json:"expires_at"`
-	IsActive          sql.NullBool   `json:"is_active"`
-	LastAccessedAt    sql.NullTime   `json:"last_accessed_at"`
-	DestinationStatus sql.NullInt16  `json:"destination_status"`
-	LastHealthCheck   sql.NullTime   `json:"last_health_check"`
-	CreatedAt         sql.NullTime   `json:"created_at"`
-	UpdatedAt         sql.NullTime   `json:"updated_at"`
-	DeletedAt         sql.NullTime   `json:"deleted_at"`
-	OriginalUrl       string         `json:"original_url"`
+	ID                      int64          `json:"id"`
+	UserID                  int64          `json:"user_id"`
+	ShortCode               string         `json:"short_code"`
+	DestinationID           int64          `json:"destination_id"`
+	Title                   sql.NullString `json:"title"`
+	Description             sql.NullString `json:"description"`
+	IsCustom                sql.NullBool   `json:"is_custom"`
+	IsSafe                  sql.NullBool   `json:"is_safe"`
+	ClickCount              sql.NullInt64  `json:"click_count"`
+	ExpiresAt               sql.NullTime   `json:"expires_at"`
+	UrlStatus               sql.NullInt16  `json:"url_status"`
+	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
+	CreatedAt               sql.NullTime   `json:"created_at"`
+	UpdatedAt               sql.NullTime   `json:"updated_at"`
+	DeletedAt               sql.NullTime   `json:"deleted_at"`
+	OriginalUrl             string         `json:"original_url"`
 }
 
 func (q *Queries) GetURLByShortCodeForUpdate(ctx context.Context, shortCode string) (GetURLByShortCodeForUpdateRow, error) {
@@ -265,9 +265,9 @@ func (q *Queries) GetURLByShortCodeForUpdate(ctx context.Context, shortCode stri
 		&i.IsSafe,
 		&i.ClickCount,
 		&i.ExpiresAt,
-		&i.IsActive,
+		&i.UrlStatus,
 		&i.LastAccessedAt,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -310,8 +310,8 @@ const listURLs = `-- name: ListURLs :many
 SELECT
   urls.id, urls.user_id, urls.short_code, urls.destination_id,
   urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.is_active,
-  urls.last_accessed_at, urls.destination_status, urls.last_health_check,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
   urls.created_at, urls.updated_at, urls.deleted_at,
   destinations.original_url
 FROM urls
@@ -329,24 +329,24 @@ type ListURLsParams struct {
 }
 
 type ListURLsRow struct {
-	ID                int64          `json:"id"`
-	UserID            int64          `json:"user_id"`
-	ShortCode         string         `json:"short_code"`
-	DestinationID     int64          `json:"destination_id"`
-	Title             sql.NullString `json:"title"`
-	Description       sql.NullString `json:"description"`
-	IsCustom          sql.NullBool   `json:"is_custom"`
-	IsSafe            sql.NullBool   `json:"is_safe"`
-	ClickCount        sql.NullInt64  `json:"click_count"`
-	ExpiresAt         sql.NullTime   `json:"expires_at"`
-	IsActive          sql.NullBool   `json:"is_active"`
-	LastAccessedAt    sql.NullTime   `json:"last_accessed_at"`
-	DestinationStatus sql.NullInt16  `json:"destination_status"`
-	LastHealthCheck   sql.NullTime   `json:"last_health_check"`
-	CreatedAt         sql.NullTime   `json:"created_at"`
-	UpdatedAt         sql.NullTime   `json:"updated_at"`
-	DeletedAt         sql.NullTime   `json:"deleted_at"`
-	OriginalUrl       string         `json:"original_url"`
+	ID                      int64          `json:"id"`
+	UserID                  int64          `json:"user_id"`
+	ShortCode               string         `json:"short_code"`
+	DestinationID           int64          `json:"destination_id"`
+	Title                   sql.NullString `json:"title"`
+	Description             sql.NullString `json:"description"`
+	IsCustom                sql.NullBool   `json:"is_custom"`
+	IsSafe                  sql.NullBool   `json:"is_safe"`
+	ClickCount              sql.NullInt64  `json:"click_count"`
+	ExpiresAt               sql.NullTime   `json:"expires_at"`
+	UrlStatus               sql.NullInt16  `json:"url_status"`
+	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
+	CreatedAt               sql.NullTime   `json:"created_at"`
+	UpdatedAt               sql.NullTime   `json:"updated_at"`
+	DeletedAt               sql.NullTime   `json:"deleted_at"`
+	OriginalUrl             string         `json:"original_url"`
 }
 
 func (q *Queries) ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error) {
@@ -369,9 +369,9 @@ func (q *Queries) ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsR
 			&i.IsSafe,
 			&i.ClickCount,
 			&i.ExpiresAt,
-			&i.IsActive,
+			&i.UrlStatus,
 			&i.LastAccessedAt,
-			&i.DestinationStatus,
+			&i.DestinationHealthStatus,
 			&i.LastHealthCheck,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -406,11 +406,11 @@ func (q *Queries) ShortCodeExists(ctx context.Context, shortCode string) (bool, 
 
 const softDeleteURL = `-- name: SoftDeleteURL :one
 UPDATE urls
-SET is_active = FALSE, deleted_at = NOW(), updated_at = NOW()
+SET url_status = 3, deleted_at = NOW(), updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
   AND deleted_at IS NULL
-RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, url_status, last_accessed_at, destination_health_status, last_health_check, destination_last_http_status, created_at, updated_at, deleted_at
 `
 
 type SoftDeleteURLParams struct {
@@ -432,11 +432,11 @@ func (q *Queries) SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (U
 		&i.IsSafe,
 		&i.ClickCount,
 		&i.ExpiresAt,
-		&i.IsActive,
+		&i.UrlStatus,
 		&i.LastAccessedAt,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
-		&i.DestinationHttpCode,
+		&i.DestinationLastHttpStatus,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
@@ -450,12 +450,12 @@ SET destination_id = $3,
     title = COALESCE($4, title),
     description = COALESCE($5, description),
     expires_at = $6,
-    is_active = COALESCE($7, is_active),
+    url_status = COALESCE($7, url_status),
     updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
   AND deleted_at IS NULL
-RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, url_status, last_accessed_at, destination_health_status, last_health_check, destination_last_http_status, created_at, updated_at, deleted_at
 `
 
 type UpdateURLParams struct {
@@ -465,7 +465,7 @@ type UpdateURLParams struct {
 	Title         sql.NullString `json:"title"`
 	Description   sql.NullString `json:"description"`
 	ExpiresAt     sql.NullTime   `json:"expires_at"`
-	IsActive      sql.NullBool   `json:"is_active"`
+	UrlStatus     sql.NullInt16  `json:"url_status"`
 }
 
 func (q *Queries) UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error) {
@@ -476,7 +476,7 @@ func (q *Queries) UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, erro
 		arg.Title,
 		arg.Description,
 		arg.ExpiresAt,
-		arg.IsActive,
+		arg.UrlStatus,
 	)
 	var i Url
 	err := row.Scan(
@@ -490,11 +490,11 @@ func (q *Queries) UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, erro
 		&i.IsSafe,
 		&i.ClickCount,
 		&i.ExpiresAt,
-		&i.IsActive,
+		&i.UrlStatus,
 		&i.LastAccessedAt,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
-		&i.DestinationHttpCode,
+		&i.DestinationLastHttpStatus,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
@@ -504,28 +504,28 @@ func (q *Queries) UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, erro
 
 const updateURLHealthStatus = `-- name: UpdateURLHealthStatus :one
 UPDATE urls
-SET destination_status = $2,
-    destination_http_code = $3,
+SET destination_health_status = $2,
+    destination_last_http_status = $3,
     last_health_check = $4,
     last_accessed_at = $5,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, is_active, last_accessed_at, destination_status, last_health_check, destination_http_code, created_at, updated_at, deleted_at
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, url_status, last_accessed_at, destination_health_status, last_health_check, destination_last_http_status, created_at, updated_at, deleted_at
 `
 
 type UpdateURLHealthStatusParams struct {
-	ID                  int64         `json:"id"`
-	DestinationStatus   sql.NullInt16 `json:"destination_status"`
-	DestinationHttpCode sql.NullInt32 `json:"destination_http_code"`
-	LastHealthCheck     sql.NullTime  `json:"last_health_check"`
-	LastAccessedAt      sql.NullTime  `json:"last_accessed_at"`
+	ID                        int64         `json:"id"`
+	DestinationHealthStatus   sql.NullInt16 `json:"destination_health_status"`
+	DestinationLastHttpStatus sql.NullInt32 `json:"destination_last_http_status"`
+	LastHealthCheck           sql.NullTime  `json:"last_health_check"`
+	LastAccessedAt            sql.NullTime  `json:"last_accessed_at"`
 }
 
 func (q *Queries) UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error) {
 	row := q.db.QueryRowContext(ctx, updateURLHealthStatus,
 		arg.ID,
-		arg.DestinationStatus,
-		arg.DestinationHttpCode,
+		arg.DestinationHealthStatus,
+		arg.DestinationLastHttpStatus,
 		arg.LastHealthCheck,
 		arg.LastAccessedAt,
 	)
@@ -541,11 +541,11 @@ func (q *Queries) UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealth
 		&i.IsSafe,
 		&i.ClickCount,
 		&i.ExpiresAt,
-		&i.IsActive,
+		&i.UrlStatus,
 		&i.LastAccessedAt,
-		&i.DestinationStatus,
+		&i.DestinationHealthStatus,
 		&i.LastHealthCheck,
-		&i.DestinationHttpCode,
+		&i.DestinationLastHttpStatus,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
