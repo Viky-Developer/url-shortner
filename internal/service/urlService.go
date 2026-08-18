@@ -30,30 +30,51 @@ import (
 	"github.com/vicky/url-shortner/internal/utils"
 )
 
-// checkDestinationHealth sends a HEAD request to the originalURL and returns the health status.
-func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
-	parsedURL, err := url.ParseRequestURI(originalURL)
+// sanitizeHealthCheckURL parses rawURL, validates its scheme and host, resolves
+// the hostname to ensure it does not point to a private or loopback address,
+// and returns a clean URL safe for outbound requests.
+func sanitizeHealthCheckURL(rawURL string) (string, error) {
+	parsedURL, err := url.ParseRequestURI(rawURL)
 	if err != nil {
-		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", originalURL))
-		return enum.DestinationStatusUnknown, 0
+		return "", fmt.Errorf("invalid URL: %w", err)
 	}
 
-	// Resolve the hostname and reject private/loopback IPs (SSRF protection).
-	host := parsedURL.Hostname()
-	ips, err := net.LookupIP(host)
+	// Only allow https scheme.
+	if parsedURL.Scheme != "https" {
+		return "", fmt.Errorf("invalid scheme: %s", parsedURL.Scheme)
+	}
+
+	safeHost := parsedURL.Hostname()
+	if safeHost == "" {
+		return "", fmt.Errorf("missing host")
+	}
+
+	ips, err := net.LookupIP(safeHost)
 	if err != nil {
-		s.log.Error("DNS resolution failed for health check", logger.Error(err), logger.String("host", host))
-		return enum.DestinationStatusUnknown, 0
+		return "", fmt.Errorf("DNS resolution failed for %s: %w", safeHost, err)
 	}
 	for _, ip := range ips {
 		if utils.IsBlockedIP(ip) {
-			s.log.Error("blocked health check to private/internal IP", logger.String("host", host), logger.String("ip", ip.String()))
-			return enum.DestinationStatusUnknown, 0
+			return "", fmt.Errorf("host %s resolves to blocked IP %s", safeHost, ip.String())
 		}
 	}
 
+	return (&url.URL{
+		Scheme: "https",
+		Host:   safeHost,
+	}).String(), nil
+}
+
+// checkDestinationHealth sends a HEAD request to the originalURL and returns the health status.
+func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
+	safeURL, err := sanitizeHealthCheckURL(originalURL)
+	if err != nil {
+		s.log.Error("health check URL validation failed", logger.Error(err), logger.String("originalURL", originalURL))
+		return enum.DestinationStatusUnknown, 0
+	}
+
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Head(parsedURL.String())
+	resp, err := client.Head(safeURL)
 	if err != nil {
 		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", originalURL))
 		return enum.DestinationStatusUnknown, 0
