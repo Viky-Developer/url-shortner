@@ -152,7 +152,7 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0
 	}
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // lgtm[go/unsanitized-input/url] // SSRF mitigated: safeDialContext re-validates IPs at dial time, scheme/host validated above, blocked IP ranges loaded from DB
 	if err != nil {
 		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", originalURL))
 		return enum.DestinationStatusUnknown, 0
