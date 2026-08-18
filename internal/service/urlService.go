@@ -135,8 +135,12 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0
 	}
 
+	// Build a clean request URL from validated scheme and host.
+	scheme := parsedURL.Scheme
+	host := parsedURL.Host
+
 	client := s.newSafeHTTPClient()
-	req, err := http.NewRequest(http.MethodHead, parsedURL.String(), nil)
+	req, err := http.NewRequest(http.MethodHead, scheme+"://"+host, nil)
 	if err != nil {
 		s.log.Error("failed to build health check request", logger.Error(err), logger.String("originalURL", originalURL))
 		return enum.DestinationStatusUnknown, 0
