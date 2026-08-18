@@ -111,6 +111,19 @@ func (s *URLService) newSafeHTTPClient() *http.Client {
 	}
 }
 
+// validateAndSanitizeURL checks scheme and host, then returns a clean URL string.
+func validateAndSanitizeURL(parsedURL *url.URL) (string, error) {
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return "", fmt.Errorf("unsupported URL scheme: %s", parsedURL.Scheme)
+	}
+	host := parsedURL.Host
+	if host == "" {
+		return "", fmt.Errorf("URL missing host")
+	}
+	scheme := parsedURL.Scheme
+	return scheme + "://" + host, nil
+}
+
 // validateRequestURL enforces scheme allowlisting up front. IP-level
 // checks happen later in safeDialContext (post-DNS-resolution), which is
 // the check that actually matters for SSRF.
@@ -124,26 +137,17 @@ func validateRequestURL(u *url.URL) error {
 	return nil
 }
 
-// sanitizeURL validates the parsed URL and returns a clean, safe URL string.
-// This function acts as a taint-breaking boundary for CodeQL SSRF analysis.
-func sanitizeURL(parsedURL *url.URL) string {
-	scheme := parsedURL.Scheme
-	host := parsedURL.Host
-	return scheme + "://" + host
-}
-
 func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
 		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", originalURL))
 		return enum.DestinationStatusUnknown, 0
 	}
-	if err := validateRequestURL(parsedURL); err != nil {
+	cleanURL, err := validateAndSanitizeURL(parsedURL)
+	if err != nil {
 		s.log.Error("rejected URL for health check", logger.Error(err), logger.String("originalURL", originalURL))
 		return enum.DestinationStatusUnknown, 0
 	}
-
-	cleanURL := sanitizeURL(parsedURL)
 
 	client := s.newSafeHTTPClient()
 	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
@@ -152,7 +156,7 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0
 	}
 
-	resp, err := client.Do(req) // lgtm[go/unsanitized-input/url] // SSRF mitigated: safeDialContext re-validates IPs at dial time, scheme/host validated above, blocked IP ranges loaded from DB
+	resp, err := client.Do(req)
 	if err != nil {
 		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", originalURL))
 		return enum.DestinationStatusUnknown, 0
