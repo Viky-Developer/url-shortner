@@ -10,61 +10,545 @@ import (
 	"database/sql"
 )
 
+const countURLs = `-- name: CountURLs :one
+SELECT COUNT(*)
+FROM urls
+WHERE user_id = $1
+  AND deleted_at IS NULL
+`
+
+func (q *Queries) CountURLs(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countURLs, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createURL = `-- name: CreateURL :one
-INSERT INTO urls (short_code, original_url, is_custom, expires_at)
-VALUES ($1, $2, $3, $4)
-RETURNING id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at
+INSERT INTO urls (user_id, short_code, destination_id, title, description, is_custom, expires_at,
+    destination_health_status, destination_last_http_status, last_health_check, last_accessed_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, url_status, last_accessed_at, destination_health_status, last_health_check, destination_last_http_status, created_at, updated_at, deleted_at
 `
 
 type CreateURLParams struct {
-	ShortCode   string       `json:"short_code"`
-	OriginalUrl string       `json:"original_url"`
-	IsCustom    sql.NullBool `json:"is_custom"`
-	ExpiresAt   sql.NullTime `json:"expires_at"`
+	UserID                    int64          `json:"user_id"`
+	ShortCode                 string         `json:"short_code"`
+	DestinationID             int64          `json:"destination_id"`
+	Title                     sql.NullString `json:"title"`
+	Description               sql.NullString `json:"description"`
+	IsCustom                  sql.NullBool   `json:"is_custom"`
+	ExpiresAt                 sql.NullTime   `json:"expires_at"`
+	DestinationHealthStatus   sql.NullInt16  `json:"destination_health_status"`
+	DestinationLastHttpStatus sql.NullInt32  `json:"destination_last_http_status"`
+	LastHealthCheck           sql.NullTime   `json:"last_health_check"`
+	LastAccessedAt            sql.NullTime   `json:"last_accessed_at"`
 }
 
 func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, error) {
 	row := q.db.QueryRowContext(ctx, createURL,
+		arg.UserID,
 		arg.ShortCode,
-		arg.OriginalUrl,
+		arg.DestinationID,
+		arg.Title,
+		arg.Description,
 		arg.IsCustom,
 		arg.ExpiresAt,
+		arg.DestinationHealthStatus,
+		arg.DestinationLastHttpStatus,
+		arg.LastHealthCheck,
+		arg.LastAccessedAt,
 	)
 	var i Url
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.ShortCode,
-		&i.OriginalUrl,
+		&i.DestinationID,
+		&i.Title,
+		&i.Description,
 		&i.IsCustom,
+		&i.IsSafe,
+		&i.ClickCount,
 		&i.ExpiresAt,
-		&i.IsActive,
+		&i.UrlStatus,
+		&i.LastAccessedAt,
+		&i.DestinationHealthStatus,
+		&i.LastHealthCheck,
+		&i.DestinationLastHttpStatus,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getURLByID = `-- name: GetURLByID :one
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
+FROM urls
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.id = $1
+  AND urls.user_id = $2
+  AND urls.deleted_at IS NULL
+`
+
+type GetURLByIDParams struct {
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+}
+
+type GetURLByIDRow struct {
+	ID                      int64          `json:"id"`
+	UserID                  int64          `json:"user_id"`
+	ShortCode               string         `json:"short_code"`
+	DestinationID           int64          `json:"destination_id"`
+	Title                   sql.NullString `json:"title"`
+	Description             sql.NullString `json:"description"`
+	IsCustom                sql.NullBool   `json:"is_custom"`
+	IsSafe                  sql.NullBool   `json:"is_safe"`
+	ClickCount              sql.NullInt64  `json:"click_count"`
+	ExpiresAt               sql.NullTime   `json:"expires_at"`
+	UrlStatus               sql.NullInt16  `json:"url_status"`
+	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
+	CreatedAt               sql.NullTime   `json:"created_at"`
+	UpdatedAt               sql.NullTime   `json:"updated_at"`
+	DeletedAt               sql.NullTime   `json:"deleted_at"`
+	OriginalUrl             string         `json:"original_url"`
+}
+
+func (q *Queries) GetURLByID(ctx context.Context, arg GetURLByIDParams) (GetURLByIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getURLByID, arg.ID, arg.UserID)
+	var i GetURLByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.DestinationID,
+		&i.Title,
+		&i.Description,
+		&i.IsCustom,
+		&i.IsSafe,
+		&i.ClickCount,
+		&i.ExpiresAt,
+		&i.UrlStatus,
+		&i.LastAccessedAt,
+		&i.DestinationHealthStatus,
+		&i.LastHealthCheck,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.OriginalUrl,
 	)
 	return i, err
 }
 
 const getURLByShortCode = `-- name: GetURLByShortCode :one
-SELECT id, user_id, short_code, original_url, is_custom, expires_at, is_active, created_at, updated_at
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
 FROM urls
-WHERE short_code = $1
-  AND (expires_at IS NULL OR expires_at > NOW())
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.short_code = $1
+  AND urls.deleted_at IS NULL
+  AND urls.url_status = 1
+  AND urls.is_safe = TRUE
 `
 
-func (q *Queries) GetURLByShortCode(ctx context.Context, shortCode string) (Url, error) {
+type GetURLByShortCodeRow struct {
+	ID                      int64          `json:"id"`
+	UserID                  int64          `json:"user_id"`
+	ShortCode               string         `json:"short_code"`
+	DestinationID           int64          `json:"destination_id"`
+	Title                   sql.NullString `json:"title"`
+	Description             sql.NullString `json:"description"`
+	IsCustom                sql.NullBool   `json:"is_custom"`
+	IsSafe                  sql.NullBool   `json:"is_safe"`
+	ClickCount              sql.NullInt64  `json:"click_count"`
+	ExpiresAt               sql.NullTime   `json:"expires_at"`
+	UrlStatus               sql.NullInt16  `json:"url_status"`
+	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
+	CreatedAt               sql.NullTime   `json:"created_at"`
+	UpdatedAt               sql.NullTime   `json:"updated_at"`
+	DeletedAt               sql.NullTime   `json:"deleted_at"`
+	OriginalUrl             string         `json:"original_url"`
+}
+
+func (q *Queries) GetURLByShortCode(ctx context.Context, shortCode string) (GetURLByShortCodeRow, error) {
 	row := q.db.QueryRowContext(ctx, getURLByShortCode, shortCode)
+	var i GetURLByShortCodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.DestinationID,
+		&i.Title,
+		&i.Description,
+		&i.IsCustom,
+		&i.IsSafe,
+		&i.ClickCount,
+		&i.ExpiresAt,
+		&i.UrlStatus,
+		&i.LastAccessedAt,
+		&i.DestinationHealthStatus,
+		&i.LastHealthCheck,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.OriginalUrl,
+	)
+	return i, err
+}
+
+const getURLByShortCodeForUpdate = `-- name: GetURLByShortCodeForUpdate :one
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
+FROM urls
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.short_code = $1
+  AND urls.deleted_at IS NULL
+  AND urls.url_status = 1
+  AND urls.is_safe = TRUE
+FOR UPDATE OF urls
+`
+
+type GetURLByShortCodeForUpdateRow struct {
+	ID                      int64          `json:"id"`
+	UserID                  int64          `json:"user_id"`
+	ShortCode               string         `json:"short_code"`
+	DestinationID           int64          `json:"destination_id"`
+	Title                   sql.NullString `json:"title"`
+	Description             sql.NullString `json:"description"`
+	IsCustom                sql.NullBool   `json:"is_custom"`
+	IsSafe                  sql.NullBool   `json:"is_safe"`
+	ClickCount              sql.NullInt64  `json:"click_count"`
+	ExpiresAt               sql.NullTime   `json:"expires_at"`
+	UrlStatus               sql.NullInt16  `json:"url_status"`
+	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
+	CreatedAt               sql.NullTime   `json:"created_at"`
+	UpdatedAt               sql.NullTime   `json:"updated_at"`
+	DeletedAt               sql.NullTime   `json:"deleted_at"`
+	OriginalUrl             string         `json:"original_url"`
+}
+
+func (q *Queries) GetURLByShortCodeForUpdate(ctx context.Context, shortCode string) (GetURLByShortCodeForUpdateRow, error) {
+	row := q.db.QueryRowContext(ctx, getURLByShortCodeForUpdate, shortCode)
+	var i GetURLByShortCodeForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.DestinationID,
+		&i.Title,
+		&i.Description,
+		&i.IsCustom,
+		&i.IsSafe,
+		&i.ClickCount,
+		&i.ExpiresAt,
+		&i.UrlStatus,
+		&i.LastAccessedAt,
+		&i.DestinationHealthStatus,
+		&i.LastHealthCheck,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.OriginalUrl,
+	)
+	return i, err
+}
+
+const hardDeleteURL = `-- name: HardDeleteURL :exec
+DELETE FROM urls
+WHERE id = $1
+  AND user_id = $2
+  AND deleted_at IS NOT NULL
+`
+
+type HardDeleteURLParams struct {
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+}
+
+func (q *Queries) HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error {
+	_, err := q.db.ExecContext(ctx, hardDeleteURL, arg.ID, arg.UserID)
+	return err
+}
+
+const incrementURLClick = `-- name: IncrementURLClick :exec
+UPDATE urls
+SET click_count = COALESCE(click_count, 0) + 1,
+  updated_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) IncrementURLClick(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, incrementURLClick, id)
+	return err
+}
+
+const listURLs = `-- name: ListURLs :many
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
+FROM urls
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.user_id = $1
+  AND urls.deleted_at IS NULL
+ORDER BY urls.created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListURLsParams struct {
+	UserID int64 `json:"user_id"`
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
+}
+
+type ListURLsRow struct {
+	ID                      int64          `json:"id"`
+	UserID                  int64          `json:"user_id"`
+	ShortCode               string         `json:"short_code"`
+	DestinationID           int64          `json:"destination_id"`
+	Title                   sql.NullString `json:"title"`
+	Description             sql.NullString `json:"description"`
+	IsCustom                sql.NullBool   `json:"is_custom"`
+	IsSafe                  sql.NullBool   `json:"is_safe"`
+	ClickCount              sql.NullInt64  `json:"click_count"`
+	ExpiresAt               sql.NullTime   `json:"expires_at"`
+	UrlStatus               sql.NullInt16  `json:"url_status"`
+	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
+	CreatedAt               sql.NullTime   `json:"created_at"`
+	UpdatedAt               sql.NullTime   `json:"updated_at"`
+	DeletedAt               sql.NullTime   `json:"deleted_at"`
+	OriginalUrl             string         `json:"original_url"`
+}
+
+func (q *Queries) ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listURLs, arg.UserID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListURLsRow
+	for rows.Next() {
+		var i ListURLsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ShortCode,
+			&i.DestinationID,
+			&i.Title,
+			&i.Description,
+			&i.IsCustom,
+			&i.IsSafe,
+			&i.ClickCount,
+			&i.ExpiresAt,
+			&i.UrlStatus,
+			&i.LastAccessedAt,
+			&i.DestinationHealthStatus,
+			&i.LastHealthCheck,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.OriginalUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const shortCodeExists = `-- name: ShortCodeExists :one
+SELECT EXISTS (
+    SELECT 1 FROM urls WHERE short_code = $1
+)
+`
+
+func (q *Queries) ShortCodeExists(ctx context.Context, shortCode string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, shortCodeExists, shortCode)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const softDeleteURL = `-- name: SoftDeleteURL :one
+UPDATE urls
+SET url_status = 3, deleted_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND user_id = $2
+  AND deleted_at IS NULL
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, url_status, last_accessed_at, destination_health_status, last_health_check, destination_last_http_status, created_at, updated_at, deleted_at
+`
+
+type SoftDeleteURLParams struct {
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+}
+
+func (q *Queries) SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error) {
+	row := q.db.QueryRowContext(ctx, softDeleteURL, arg.ID, arg.UserID)
 	var i Url
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.ShortCode,
-		&i.OriginalUrl,
+		&i.DestinationID,
+		&i.Title,
+		&i.Description,
 		&i.IsCustom,
+		&i.IsSafe,
+		&i.ClickCount,
 		&i.ExpiresAt,
-		&i.IsActive,
+		&i.UrlStatus,
+		&i.LastAccessedAt,
+		&i.DestinationHealthStatus,
+		&i.LastHealthCheck,
+		&i.DestinationLastHttpStatus,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const updateURL = `-- name: UpdateURL :one
+UPDATE urls
+SET destination_id = $3,
+    title = COALESCE($4, title),
+    description = COALESCE($5, description),
+    expires_at = $6,
+    url_status = COALESCE($7, url_status),
+    updated_at = NOW()
+WHERE id = $1
+  AND user_id = $2
+  AND deleted_at IS NULL
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, url_status, last_accessed_at, destination_health_status, last_health_check, destination_last_http_status, created_at, updated_at, deleted_at
+`
+
+type UpdateURLParams struct {
+	ID            int64          `json:"id"`
+	UserID        int64          `json:"user_id"`
+	DestinationID int64          `json:"destination_id"`
+	Title         sql.NullString `json:"title"`
+	Description   sql.NullString `json:"description"`
+	ExpiresAt     sql.NullTime   `json:"expires_at"`
+	UrlStatus     sql.NullInt16  `json:"url_status"`
+}
+
+func (q *Queries) UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error) {
+	row := q.db.QueryRowContext(ctx, updateURL,
+		arg.ID,
+		arg.UserID,
+		arg.DestinationID,
+		arg.Title,
+		arg.Description,
+		arg.ExpiresAt,
+		arg.UrlStatus,
+	)
+	var i Url
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.DestinationID,
+		&i.Title,
+		&i.Description,
+		&i.IsCustom,
+		&i.IsSafe,
+		&i.ClickCount,
+		&i.ExpiresAt,
+		&i.UrlStatus,
+		&i.LastAccessedAt,
+		&i.DestinationHealthStatus,
+		&i.LastHealthCheck,
+		&i.DestinationLastHttpStatus,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const updateURLHealthStatus = `-- name: UpdateURLHealthStatus :one
+UPDATE urls
+SET destination_health_status = $2,
+    destination_last_http_status = $3,
+    last_health_check = $4,
+    last_accessed_at = $5,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, user_id, short_code, destination_id, title, description, is_custom, is_safe, click_count, expires_at, url_status, last_accessed_at, destination_health_status, last_health_check, destination_last_http_status, created_at, updated_at, deleted_at
+`
+
+type UpdateURLHealthStatusParams struct {
+	ID                        int64         `json:"id"`
+	DestinationHealthStatus   sql.NullInt16 `json:"destination_health_status"`
+	DestinationLastHttpStatus sql.NullInt32 `json:"destination_last_http_status"`
+	LastHealthCheck           sql.NullTime  `json:"last_health_check"`
+	LastAccessedAt            sql.NullTime  `json:"last_accessed_at"`
+}
+
+func (q *Queries) UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error) {
+	row := q.db.QueryRowContext(ctx, updateURLHealthStatus,
+		arg.ID,
+		arg.DestinationHealthStatus,
+		arg.DestinationLastHttpStatus,
+		arg.LastHealthCheck,
+		arg.LastAccessedAt,
+	)
+	var i Url
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.DestinationID,
+		&i.Title,
+		&i.Description,
+		&i.IsCustom,
+		&i.IsSafe,
+		&i.ClickCount,
+		&i.ExpiresAt,
+		&i.UrlStatus,
+		&i.LastAccessedAt,
+		&i.DestinationHealthStatus,
+		&i.LastHealthCheck,
+		&i.DestinationLastHttpStatus,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

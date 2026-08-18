@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 MIGRATIONS_DIR := internal/db/migrations
+SEEDS_DIR := internal/db/seeds
 DB_DSN = postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)
 
 -include .env
@@ -124,6 +125,22 @@ migration-reset: ## Roll back ALL migrations
 	goose -dir $(MIGRATIONS_DIR) postgres "$(DB_DSN)" reset
 
 ## ---------------------------------------------------------------------------
+## Seeds (goose — internal/db/seeds)
+## ---------------------------------------------------------------------------
+
+.PHONY: seed-up
+seed-up: ## Apply seed migrations (blocked_domains, etc.)
+	goose -dir $(SEEDS_DIR) postgres "$(DB_DSN)" up
+
+.PHONY: seed-down
+seed-down: ## Roll back the last seed migration
+	goose -dir $(SEEDS_DIR) postgres "$(DB_DSN)" down
+
+.PHONY: seed-status
+seed-status: ## Show applied vs pending seed migrations
+	goose -dir $(SEEDS_DIR) postgres "$(DB_DSN)" status
+
+## ---------------------------------------------------------------------------
 ## Build & run
 ## ---------------------------------------------------------------------------
 
@@ -134,6 +151,10 @@ sqlc-generate: ## Regenerate type-safe db code from SQL queries
 .PHONY: build
 build: ## Compile the server binary
 	go build -o bin/url-shortner ./cmd/server
+
+.PHONY: dev
+dev: ## Run the server with live reload (air)
+	air
 
 .PHONY: run
 run: ## Build and run the server
