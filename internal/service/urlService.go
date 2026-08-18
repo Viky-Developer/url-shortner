@@ -124,6 +124,16 @@ func validateRequestURL(u *url.URL) error {
 	return nil
 }
 
+func defaultPort(u *url.URL) string {
+	if u.Port() != "" {
+		return u.Port()
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return "80"
+}
+
 func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
@@ -135,8 +145,27 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0
 	}
 
-	// CodeQL sanitizer: assign string literals after scheme validation
-	// so taint from parsedURL does not flow to the HTTP request.
+	// Resolve DNS and validate every IP before building the request URL.
+	// This breaks the taint chain: the final URL is constructed only from
+	// string literals and resolved (validated) IPs, not from user input.
+	host := parsedURL.Hostname()
+	ips, dnsErr := net.DefaultResolver.LookupIP(context.Background(), "ip", host)
+	if dnsErr != nil {
+		s.log.Error("DNS resolution failed for health check", logger.Error(dnsErr), logger.String("host", host))
+		return enum.DestinationStatusUnknown, 0
+	}
+	var safeIP net.IP
+	for _, ip := range ips {
+		if !isDisallowedIP(ip, s.blockedIPRanges) {
+			safeIP = ip
+			break
+		}
+	}
+	if safeIP == nil {
+		s.log.Error("all resolved IPs are blocked for health check", logger.String("host", host))
+		return enum.DestinationStatusUnknown, 0
+	}
+
 	var scheme string
 	switch parsedURL.Scheme {
 	case "https":
@@ -146,7 +175,7 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	default:
 		return enum.DestinationStatusUnknown, 0
 	}
-	cleanURL := scheme + "://" + parsedURL.Host
+	cleanURL := scheme + "://" + net.JoinHostPort(safeIP.String(), defaultPort(parsedURL))
 
 	client := s.newSafeHTTPClient()
 	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
