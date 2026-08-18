@@ -38,6 +38,20 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0
 	}
 
+	// Resolve the hostname and reject private/loopback IPs (SSRF protection).
+	host := parsedURL.Hostname()
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		s.log.Error("DNS resolution failed for health check", logger.Error(err), logger.String("host", host))
+		return enum.DestinationStatusUnknown, 0
+	}
+	for _, ip := range ips {
+		if utils.IsBlockedIP(ip) {
+			s.log.Error("blocked health check to private/internal IP", logger.String("host", host), logger.String("ip", ip.String()))
+			return enum.DestinationStatusUnknown, 0
+		}
+	}
+
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Head(parsedURL.String())
 	if err != nil {
