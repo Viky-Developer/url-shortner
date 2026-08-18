@@ -3,10 +3,8 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -74,17 +72,6 @@ func (h *URLHandler) resolveUserIDOrError(w http.ResponseWriter, r *http.Request
 	return userID, true
 }
 
-// decodeBody decodes the request body into v.
-func decodeBody(r *http.Request, v any) error {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		if errors.Is(err, io.EOF) {
-			return fmt.Errorf("%w: request body is required", apperror.ErrInvalidPayload)
-		}
-		return fmt.Errorf("%w: %v", apperror.ErrInvalidPayload, err)
-	}
-	return nil
-}
-
 // clientIP extracts the client IP from the X-Forwarded-For header or the
 // request's remote address. Returns a fallback loopback address when the
 // source IP cannot be determined.
@@ -113,7 +100,7 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req payload.CreateURLRequest
-	if err := decodeBody(r, &req); err != nil {
+	if err := utils.DecodeBody(r, &req); err != nil {
 		h.log.Error("invalid request body", logger.Error(err))
 		response.Error(w, http.StatusBadRequest, err)
 		return
@@ -243,7 +230,7 @@ func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req payload.UpdateURLRequest
-	if err := decodeBody(r, &req); err != nil {
+	if err := utils.DecodeBody(r, &req); err != nil {
 		h.log.Error("invalid request body", logger.Error(err))
 		response.Error(w, http.StatusBadRequest, err)
 		return

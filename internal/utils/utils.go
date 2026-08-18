@@ -2,13 +2,19 @@
 package utils
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net"
+	"net/http"
 	neturl "net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vicky/url-shortner/internal/apperror"
 )
 
 // OptionalTime is a time that also accepts null or empty-string JSON values,
@@ -161,5 +167,16 @@ func ValidateURL(rawURL string, lookupDNS LookupFunc) error {
 		}
 	}
 
+	return nil
+}
+
+// decodeBody decodes the request body into v.
+func DecodeBody(r *http.Request, v any) error {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		if errors.Is(err, io.EOF) {
+			return fmt.Errorf("%w: request body is required", apperror.ErrInvalidPayload)
+		}
+		return fmt.Errorf("%w: %v", apperror.ErrInvalidPayload, err)
+	}
 	return nil
 }
