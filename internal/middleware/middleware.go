@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vicky/url-shortner/external/logger"
+	"github.com/vicky/url-shortner/internal/utils"
 )
 
 // responseWriter wraps http.ResponseWriter to capture the response status code
@@ -62,11 +63,11 @@ func Logger(log logger.Logger) func(http.Handler) http.Handler {
 
 			// Log with structured fields (no color, for JSON/structured logging)
 			log.Info("request",
-				logger.String("method", r.Method),
-				logger.String("path", r.URL.Path),
+				logger.String("method", utils.SanitizeLog(r.Method)),
+				logger.String("path", utils.SanitizeLog(r.URL.Path)),
 				logger.Int("status", status),
 				logger.String("duration", duration.String()),
-				logger.String("remote", r.RemoteAddr),
+				logger.String("remote", utils.SanitizeLog(r.RemoteAddr)),
 			)
 		})
 	}

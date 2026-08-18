@@ -133,7 +133,7 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", created.ShortCode))
+	h.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", utils.SanitizeLog(created.ShortCode)))
 
 	response.Success(w, http.StatusCreated, "url created", []any{created})
 }
@@ -148,7 +148,7 @@ func (h *URLHandler) RedirectShortURL(w http.ResponseWriter, r *http.Request) {
 		Referrer:  r.Referer(),
 	})
 	if err != nil {
-		h.log.Error("redirect failed", logger.Error(err), logger.String("shortCode", r.PathValue("shortCode")))
+		h.log.Error("redirect failed", logger.Error(err), logger.String("shortCode", utils.SanitizeLog(r.PathValue("shortCode"))))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
@@ -285,7 +285,7 @@ func (h *URLHandler) DeleteURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("url soft deleted", logger.Int64("id", deleted.ID), logger.String("shortCode", deleted.ShortCode))
+	h.log.Info("url soft deleted", logger.Int64("id", deleted.ID), logger.String("shortCode", utils.SanitizeLog(deleted.ShortCode)))
 
 	response.Success(w, http.StatusOK, "url soft deleted", []any{deleted})
 }

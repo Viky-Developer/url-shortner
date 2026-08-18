@@ -42,6 +42,17 @@ func (t *OptionalTime) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// SanitizeLog strips control characters (0x00-0x1F and 0x7F) from a string
+// to prevent log injection via newlines, carriage returns, tabs, etc.
+func SanitizeLog(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7F {
+			return '_'
+		}
+		return r
+	}, s)
+}
+
 // DerefInt16 safely dereferences an int16 pointer, returning 0 if nil.
 func DerefInt16(p *int16) int16 {
 	if p == nil {

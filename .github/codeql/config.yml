@@ -1,7 +1,0 @@
-name: "CodeQL Config"
-
-queries:
-  - name: Exclude go/request-forgery (SSRF)
-    uses: security-and-quality
-    with:
-      - "-go/request-forgery"

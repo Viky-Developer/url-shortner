@@ -137,11 +137,11 @@ func defaultPort(u *url.URL) string {
 func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
-		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", originalURL))
+		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0
 	}
 	if err := validateRequestURL(parsedURL); err != nil {
-		s.log.Error("rejected URL for health check", logger.Error(err), logger.String("originalURL", originalURL))
+		s.log.Error("rejected URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0
 	}
 
@@ -151,7 +151,7 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	host := parsedURL.Hostname()
 	ips, dnsErr := net.DefaultResolver.LookupIP(context.Background(), "ip", host)
 	if dnsErr != nil {
-		s.log.Error("DNS resolution failed for health check", logger.Error(dnsErr), logger.String("host", host))
+		s.log.Error("DNS resolution failed for health check", logger.Error(dnsErr), logger.String("host", utils.SanitizeLog(host)))
 		return enum.DestinationStatusUnknown, 0
 	}
 	var safeIP net.IP
@@ -162,7 +162,7 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		}
 	}
 	if safeIP == nil {
-		s.log.Error("all resolved IPs are blocked for health check", logger.String("host", host))
+		s.log.Error("all resolved IPs are blocked for health check", logger.String("host", utils.SanitizeLog(host)))
 		return enum.DestinationStatusUnknown, 0
 	}
 
@@ -180,13 +180,13 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	client := s.newSafeHTTPClient()
 	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
 	if err != nil {
-		s.log.Error("failed to build health check request", logger.Error(err), logger.String("originalURL", originalURL))
+		s.log.Error("failed to build health check request", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", originalURL))
+		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -253,7 +253,7 @@ func (s *URLService) withTx(ctx context.Context, fn func(q gen.Querier) error) e
 func (s *URLService) ResolveUserID(ctx context.Context, encodedUserID string) (int64, error) {
 	id, err := utils.DecodeID(encodedUserID, utils.UserIDPrefix, s.secretKey)
 	if err != nil {
-		s.log.Warn("invalid userId", logger.Error(err), logger.String("userId", encodedUserID))
+		s.log.Warn("invalid userId", logger.Error(err), logger.String("userId", utils.SanitizeLog(encodedUserID)))
 		return 0, fmt.Errorf("%w: invalid userId", apperror.ErrNotFound)
 	}
 	return id, nil
@@ -264,18 +264,18 @@ func (s *URLService) ResolveUserID(ctx context.Context, encodedUserID string) (i
 func (s *URLService) checkBlockedDomain(ctx context.Context, originalURL string) error {
 	parsed, err := url.Parse(originalURL)
 	if err != nil || parsed.Hostname() == "" {
-		s.log.Warn("invalid URL provided", logger.Error(err), logger.String("originalURL", originalURL))
+		s.log.Warn("invalid URL provided", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return fmt.Errorf("%w: the URL '%s' is not valid", apperror.ErrInvalidURL, originalURL)
 	}
 	host := strings.ToLower(parsed.Hostname())
 
 	_, err = s.queries.GetBlockedDomain(ctx, host)
 	if err == nil {
-		s.log.Warn("blocked domain rejected", logger.String("host", host))
+		s.log.Warn("blocked domain rejected", logger.String("host", utils.SanitizeLog(host)))
 		return fmt.Errorf("%w: the domain '%s' is not allowed", apperror.ErrBlockedDomain, host)
 	}
 	if err != sql.ErrNoRows {
-		s.log.Error("failed to check blocked domain", logger.Error(err), logger.String("host", host))
+		s.log.Error("failed to check blocked domain", logger.Error(err), logger.String("host", utils.SanitizeLog(host)))
 		return fmt.Errorf("%w: could not validate domain", apperror.ErrInternal)
 	}
 	return nil
@@ -291,7 +291,7 @@ func (s *URLService) findOrCreateDestination(q gen.Querier, ctx context.Context,
 		return dest.ID, nil
 	}
 	if err != sql.ErrNoRows {
-		s.log.Error("failed to lookup destination", logger.Error(err), logger.String("urlHash", urlHash))
+		s.log.Error("failed to lookup destination", logger.Error(err), logger.String("urlHash", utils.SanitizeLog(urlHash)))
 		return 0, fmt.Errorf("%w: could not lookup destination", apperror.ErrInternal)
 	}
 
@@ -300,7 +300,7 @@ func (s *URLService) findOrCreateDestination(q gen.Querier, ctx context.Context,
 		UrlHash:     urlHash,
 	})
 	if err != nil {
-		s.log.Error("failed to create destination", logger.Error(err), logger.String("originalURL", originalURL))
+		s.log.Error("failed to create destination", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return 0, fmt.Errorf("%w: could not create destination", apperror.ErrInternal)
 	}
 	return created.ID, nil
@@ -311,7 +311,7 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 
 	// Validate destination is reachable
 	if err := s.checkBlockedDomain(ctx, req.OriginalURL); err != nil {
-		s.log.Error("url blocked", logger.Error(err), logger.String("originalURL", req.OriginalURL))
+		s.log.Error("url blocked", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(req.OriginalURL)))
 		return nil, err
 	}
 
@@ -332,11 +332,11 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 	if custom {
 		exists, existErr := s.queries.ShortCodeExists(ctx, code)
 		if existErr != nil {
-			s.log.Error("failed to check short code existence", logger.Error(existErr), logger.String("shortCode", code))
+			s.log.Error("failed to check short code existence", logger.Error(existErr), logger.String("shortCode", utils.SanitizeLog(code)))
 			return nil, fmt.Errorf("%w: could not validate short code", apperror.ErrInternal)
 		}
 		if exists {
-			s.log.Warn("custom code already taken", logger.String("shortCode", code))
+			s.log.Warn("custom code already taken", logger.String("shortCode", utils.SanitizeLog(code)))
 			return nil, fmt.Errorf("%w: custom code '%s' is already taken. Please choose a different code", apperror.ErrConflict, code)
 		}
 	}
@@ -359,7 +359,7 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		// Find or create destination
 		destID, err := s.findOrCreateDestination(q, ctx, req.OriginalURL)
 		if err != nil {
-			s.log.Error("failed to find or create destination", logger.Error(err), logger.String("originalURL", req.OriginalURL))
+			s.log.Error("failed to find or create destination", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(req.OriginalURL)))
 			return err
 		}
 
@@ -378,10 +378,10 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		})
 		if err != nil {
 			if isDuplicateKey(err) {
-				s.log.Warn("short code collision on insert", logger.String("shortCode", code))
+				s.log.Warn("short code collision on insert", logger.String("shortCode", utils.SanitizeLog(code)))
 				return fmt.Errorf("%w: short code '%s' is already taken", apperror.ErrConflict, code)
 			}
-			s.log.Error("failed to create url", logger.Error(err), logger.String("shortCode", code))
+			s.log.Error("failed to create url", logger.Error(err), logger.String("shortCode", utils.SanitizeLog(code)))
 			return fmt.Errorf("%w: could not create url", apperror.ErrInternal)
 		}
 
@@ -402,7 +402,7 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		return nil, err
 	}
 
-	s.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", created.ShortCode))
+	s.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", utils.SanitizeLog(created.ShortCode)))
 
 	return s.toResponse(created, req.OriginalURL), nil
 }
@@ -424,15 +424,15 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 		row, err := q.GetURLByShortCodeForUpdate(ctx, shortCode)
 		if err != nil {
 			if err == sql.ErrNoRows {
-				s.log.Error("url not found by shortCode", logger.String("shortCode", shortCode))
+				s.log.Error("url not found by shortCode", logger.String("shortCode", utils.SanitizeLog(shortCode)))
 				return fmt.Errorf("%w: %s", apperror.ErrNotFound, shortCode)
 			}
-			s.log.Error("failed to get url by shortCode", logger.Error(err), logger.String("shortCode", shortCode))
+			s.log.Error("failed to get url by shortCode", logger.Error(err), logger.String("shortCode", utils.SanitizeLog(shortCode)))
 			return fmt.Errorf("%w: could not resolve short link", apperror.ErrInternal)
 		}
 
 		if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now()) {
-			s.log.Warn("url expired", logger.Int64("id", row.ID), logger.String("shortCode", shortCode))
+			s.log.Warn("url expired", logger.Int64("id", row.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
 			return fmt.Errorf("%w: this url has expired", apperror.ErrURLExpired)
 		}
 
@@ -458,7 +458,7 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 		return nil, err
 	}
 
-	s.log.Info("url redirected", logger.String("shortCode", shortCode), logger.Int64("id", resp.ID))
+	s.log.Info("url redirected", logger.String("shortCode", utils.SanitizeLog(shortCode)), logger.Int64("id", resp.ID))
 	return resp, nil
 }
 
@@ -525,7 +525,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 	// Validate blocked domain if original URL is changing
 	if req.OriginalURL != "" {
 		if err := s.checkBlockedDomain(ctx, req.OriginalURL); err != nil {
-			s.log.Error("url blocked", logger.Error(err), logger.String("originalURL", req.OriginalURL))
+			s.log.Error("url blocked", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(req.OriginalURL)))
 			return nil, err
 		}
 	}
@@ -564,7 +564,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 		if req.OriginalURL != "" {
 			did, dErr := s.findOrCreateDestination(q, ctx, req.OriginalURL)
 			if dErr != nil {
-				s.log.Error("failed to find or create destination", logger.Error(dErr), logger.String("originalURL", req.OriginalURL))
+				s.log.Error("failed to find or create destination", logger.Error(dErr), logger.String("originalURL", utils.SanitizeLog(req.OriginalURL)))
 				return dErr
 			}
 			destID = did
@@ -665,7 +665,7 @@ func (s *URLService) SoftDelete(ctx context.Context, userID int64, id int64) (*p
 		return nil, fmt.Errorf("failed to soft delete url: %w", err)
 	}
 
-	s.log.Info("url soft deleted", logger.Int64("id", u.ID), logger.String("shortCode", u.ShortCode))
+	s.log.Info("url soft deleted", logger.Int64("id", u.ID), logger.String("shortCode", utils.SanitizeLog(u.ShortCode)))
 	return &payload.DeleteResponse{
 		ID:        u.ID,
 		ShortCode: u.ShortCode,
