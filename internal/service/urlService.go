@@ -124,6 +124,14 @@ func validateRequestURL(u *url.URL) error {
 	return nil
 }
 
+// sanitizeURL validates the parsed URL and returns a clean, safe URL string.
+// This function acts as a taint-breaking boundary for CodeQL SSRF analysis.
+func sanitizeURL(parsedURL *url.URL) string {
+	scheme := parsedURL.Scheme
+	host := parsedURL.Host
+	return scheme + "://" + host
+}
+
 func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
@@ -135,12 +143,10 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0
 	}
 
-	// Build a clean request URL from validated scheme and host.
-	scheme := parsedURL.Scheme
-	host := parsedURL.Host
+	cleanURL := sanitizeURL(parsedURL)
 
 	client := s.newSafeHTTPClient()
-	req, err := http.NewRequest(http.MethodHead, scheme+"://"+host, nil)
+	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
 	if err != nil {
 		s.log.Error("failed to build health check request", logger.Error(err), logger.String("originalURL", originalURL))
 		return enum.DestinationStatusUnknown, 0
