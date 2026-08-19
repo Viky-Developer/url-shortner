@@ -3,7 +3,6 @@ package handler
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
+	"github.com/vicky/url-shortner/internal/contextutil"
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/response"
 	"github.com/vicky/url-shortner/internal/utils"
@@ -23,7 +23,6 @@ var lookupIP = net.LookupIP
 // URLService is the contract the handlers depend on for URL business logic.
 // It is satisfied by *service.URLService and can be mocked in tests.
 type URLService interface {
-	ResolveUserID(ctx context.Context, encodedUserID string) (int64, error)
 	Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error)
 	Redirect(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, error)
 	GetByID(ctx context.Context, userID int64, id int64) (*payload.URLResponse, error)
@@ -44,29 +43,19 @@ func NewURLHandler(urlService URLService, log logger.Logger) *URLHandler {
 	return &URLHandler{urlService: urlService, log: log}
 }
 
-// resolveUserID decodes the HMAC-signed {userId} path segment into the
-// internal integer user id via the service, so callers can scope URL queries.
-func (h *URLHandler) resolveUserID(r *http.Request) (int64, error) {
-	userID := r.PathValue("userId")
-	if userID == "" {
-		return 0, fmt.Errorf("%w: userId is required", apperror.ErrInvalidPayload)
-	}
-	return h.urlService.ResolveUserID(r.Context(), userID)
+// getUserIDFromContext extracts the authenticated user ID from the request
+// context. This is set by the JWT auth middleware after decoding the token.
+func (h *URLHandler) getUserIDFromContext(r *http.Request) (int64, bool) {
+	userID, ok := r.Context().Value(contextutil.UserIDKey).(int64)
+	return userID, ok
 }
 
-// resolveUserIDOrError is resolveUserID plus HTTP error mapping: unknown users
-// yield 404 and malformed requests yield 400. It reports false when the
-// response has already been written.
-func (h *URLHandler) resolveUserIDOrError(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	userID, err := h.resolveUserID(r)
-	if err != nil {
-		if errors.Is(err, apperror.ErrNotFound) {
-			h.log.Warn("displayUserId not found", logger.Error(err))
-			response.Error(w, http.StatusNotFound, err)
-		} else {
-			h.log.Warn("invalid displayUserId", logger.Error(err))
-			response.Error(w, http.StatusBadRequest, err)
-		}
+// getUserIDOrError is getUserIDFromContext plus HTTP error mapping. It reports
+// false when the response has already been written.
+func (h *URLHandler) getUserIDOrError(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	userID, ok := h.getUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: user not authenticated", apperror.ErrUnauthorized))
 		return 0, false
 	}
 	return userID, true
@@ -94,7 +83,7 @@ func clientIP(r *http.Request) net.IP {
 // CreateShortURL handles POST /shorten and creates a new short URL.
 func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.resolveUserIDOrError(w, r)
+	userID, ok := h.getUserIDOrError(w, r)
 	if !ok {
 		return
 	}
@@ -159,7 +148,7 @@ func (h *URLHandler) RedirectShortURL(w http.ResponseWriter, r *http.Request) {
 // GetURLByID handles GET /urls/{id} and returns the URL details.
 func (h *URLHandler) GetURLByID(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.resolveUserIDOrError(w, r)
+	userID, ok := h.getUserIDOrError(w, r)
 	if !ok {
 		return
 	}
@@ -184,7 +173,7 @@ func (h *URLHandler) GetURLByID(w http.ResponseWriter, r *http.Request) {
 // ListURLs handles GET /urls and returns a paginated list of active URLs.
 func (h *URLHandler) ListURLs(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.resolveUserIDOrError(w, r)
+	userID, ok := h.getUserIDOrError(w, r)
 	if !ok {
 		return
 	}
@@ -217,7 +206,7 @@ func (h *URLHandler) ListURLs(w http.ResponseWriter, r *http.Request) {
 // UpdateURL handles PATCH /urls/{id} and updates the URL details.
 func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.resolveUserIDOrError(w, r)
+	userID, ok := h.getUserIDOrError(w, r)
 	if !ok {
 		return
 	}
@@ -266,7 +255,7 @@ func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 // hard-delete pending approval.
 func (h *URLHandler) DeleteURL(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.resolveUserIDOrError(w, r)
+	userID, ok := h.getUserIDOrError(w, r)
 	if !ok {
 		return
 	}
@@ -294,7 +283,7 @@ func (h *URLHandler) DeleteURL(w http.ResponseWriter, r *http.Request) {
 // a previously soft-deleted URL.
 func (h *URLHandler) ApproveHardDelete(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.resolveUserIDOrError(w, r)
+	userID, ok := h.getUserIDOrError(w, r)
 	if !ok {
 		return
 	}

@@ -8,6 +8,16 @@ require (
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/sqlc-dev/pqtype v0.3.0
 	go.uber.org/zap v1.28.0
+	golang.org/x/crypto v0.54.0
+)
+
+require github.com/golang-jwt/jwt/v5 v5.3.1
+
+require (
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/redis/go-redis/v9 v9.22.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 )
 
 require (

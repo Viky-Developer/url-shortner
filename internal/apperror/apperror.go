@@ -25,4 +25,6 @@ var (
 	ErrURLExpired = errors.New("this URL has expired and is no longer available")
 	// ErrBlockedDomain is returned when the destination domain is blocked.
 	ErrBlockedDomain = errors.New("the destination domain is blocked")
+	// ErrUnauthorized is returned when the user is not authenticated.
+	ErrUnauthorized = errors.New("unauthorized access")
 )

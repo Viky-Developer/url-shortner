@@ -9,29 +9,40 @@ import (
 )
 
 type Querier interface {
+	AddPasswordHistory(ctx context.Context, arg AddPasswordHistoryParams) error
 	CountURLs(ctx context.Context, userID int64) (int64, error)
 	CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error)
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error)
+	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateURL(ctx context.Context, arg CreateURLParams) (Url, error)
 	CreateURLVersion(ctx context.Context, arg CreateURLVersionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	GetBlockedDomain(ctx context.Context, domain string) (GetBlockedDomainRow, error)
 	GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error)
 	GetDestinationByID(ctx context.Context, id int64) (GetDestinationByIDRow, error)
+	GetLastPasswordHistory(ctx context.Context, userID int64) (string, error)
 	GetLatestURLVersion(ctx context.Context, urlID int64) (int32, error)
+	GetSessionByID(ctx context.Context, id int64) (Session, error)
+	GetSessionByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (Session, error)
 	GetURLByID(ctx context.Context, arg GetURLByIDParams) (GetURLByIDRow, error)
 	GetURLByShortCode(ctx context.Context, shortCode string) (GetURLByShortCodeRow, error)
 	GetURLByShortCodeForUpdate(ctx context.Context, shortCode string) (GetURLByShortCodeForUpdateRow, error)
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
+	GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, error)
 	HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error
 	IncrementURLClick(ctx context.Context, id int64) error
+	ListActiveSessionsByUser(ctx context.Context, userID int64) ([]ListActiveSessionsByUserRow, error)
 	ListBlockedIPRanges(ctx context.Context) ([]BlockedIpRange, error)
+	ListSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
 	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
+	RevokeSession(ctx context.Context, arg RevokeSessionParams) error
 	ShortCodeExists(ctx context.Context, shortCode string) (bool, error)
 	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)
+	UpdateSessionLastActive(ctx context.Context, id int64) error
 	UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error)
 	UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error)
 	UpdateUserDisplayID(ctx context.Context, arg UpdateUserDisplayIDParams) (UpdateUserDisplayIDRow, error)
+	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (UpdateUserPasswordRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

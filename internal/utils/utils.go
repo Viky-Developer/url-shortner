@@ -2,6 +2,7 @@
 package utils
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,10 +11,12 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/sqlc-dev/pqtype"
 	"github.com/vicky/url-shortner/internal/apperror"
 )
 
@@ -114,6 +117,63 @@ func ParseID(value string) (int64, error) {
 	return id, nil
 }
 
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+// ValidateEmail validates email format using regex.
+func ValidateEmail(email string) error {
+	if email == "" {
+		return fmt.Errorf("email is required")
+	}
+	if !emailRegex.MatchString(email) {
+		return fmt.Errorf("invalid email format")
+	}
+	return nil
+}
+
+// ValidatePassword validates password strength:
+// - At least 1 lowercase letter
+// - At least 1 uppercase letter
+// - At least 1 number
+// - Maximum 8 characters
+func ValidatePassword(password string) error {
+
+	if len(password) > 8 {
+		return fmt.Errorf("password must be at most 8 characters")
+	}
+
+	hasLower := false
+	hasUpper := false
+	hasNumber := false
+
+	for _, r := range password {
+		switch {
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= '0' && r <= '9':
+			hasNumber = true
+		}
+	}
+
+	var missing []string
+	if !hasLower {
+		missing = append(missing, "lowercase letter")
+	}
+	if !hasUpper {
+		missing = append(missing, "uppercase letter")
+	}
+	if !hasNumber {
+		missing = append(missing, "number")
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("password must contain at least one %s", strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
 // ParsePagination computes page, perPage, and offset from query parameters,
 // clamping values to safe ranges: page >= 1, 1 <= perPage <= 100.
 func ParsePagination(pageStr, perPageStr string) (page, perPage, offset int32) {
@@ -190,4 +250,29 @@ func DecodeBody(r *http.Request, v any) error {
 		return fmt.Errorf("%w: %v", apperror.ErrInvalidPayload, err)
 	}
 	return nil
+}
+
+// NullString returns a sql.NullString with the given value if non-empty,
+// otherwise returns an invalid NullString.
+func NullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{Valid: false}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+// NullIP returns a pqtype.Inet for the given IP address string.
+// An empty or unparseable string returns an invalid pqtype.Inet.
+func NullIP(ipString string) pqtype.Inet {
+	if ipString == "" {
+		return pqtype.Inet{Valid: false}
+	}
+	ip := net.ParseIP(ipString)
+	if ip == nil {
+		return pqtype.Inet{Valid: false}
+	}
+	if ipv4 := ip.To4(); ipv4 != nil {
+		ip = ipv4
+	}
+	return pqtype.Inet{IPNet: net.IPNet{IP: ip, Mask: net.CIDRMask(len(ip)*8, len(ip)*8)}, Valid: true}
 }

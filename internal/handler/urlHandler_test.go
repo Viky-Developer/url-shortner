@@ -13,12 +13,12 @@ import (
 
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
+	"github.com/vicky/url-shortner/internal/contextutil"
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/utils"
 )
 
 type mockService struct {
-	resolveFn    func(context.Context, string) (int64, error)
 	createFn     func(context.Context, int64, payload.CreateURLRequest) (*payload.URLResponse, error)
 	redirectFn   func(context.Context, string, payload.ClickInfo) (*payload.URLResponse, error)
 	byIDFn       func(context.Context, int64, int64) (*payload.URLResponse, error)
@@ -26,10 +26,6 @@ type mockService struct {
 	updateFn     func(context.Context, int64, int64, payload.UpdateURLRequest) (*payload.URLResponse, error)
 	softDeleteFn func(context.Context, int64, int64) (*payload.DeleteResponse, error)
 	hardDeleteFn func(context.Context, int64, int64) error
-}
-
-func (m *mockService) ResolveUserID(ctx context.Context, encodedUserID string) (int64, error) {
-	return m.resolveFn(ctx, encodedUserID)
 }
 
 func (m *mockService) Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error) {
@@ -69,8 +65,10 @@ func testLog(t *testing.T) logger.Logger {
 	return log
 }
 
-func mockResolveUserID(_ context.Context, _ string) (int64, error) {
-	return 1, nil
+// withUserID injects the authenticated user ID into the request context,
+// simulating what the auth middleware does.
+func withUserID(r *http.Request, userID int64) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), contextutil.UserIDKey, userID))
 }
 
 // stubLookupIP replaces DNS resolution with a fixed public IP so tests do not
@@ -101,7 +99,6 @@ func sampleResponse() *payload.URLResponse {
 func TestCreateShortURLHandler(t *testing.T) {
 	stubLookupIP(t)
 	mock := &mockService{
-		resolveFn: mockResolveUserID,
 		createFn: func(_ context.Context, _ int64, _ payload.CreateURLRequest) (*payload.URLResponse, error) {
 			return sampleResponse(), nil
 		},
@@ -110,7 +107,7 @@ func TestCreateShortURLHandler(t *testing.T) {
 
 	body := `{"originalURL": "https://example.com/long-url"}`
 	req := httptest.NewRequest(http.MethodPost, "/shorten", bytes.NewBufferString(body))
-	req.SetPathValue("userId", "USR_test123")
+	req = withUserID(req, 1)
 	w := httptest.NewRecorder()
 
 	h.CreateShortURL(w, req)
@@ -124,11 +121,11 @@ func TestCreateShortURLHandler(t *testing.T) {
 }
 
 func TestCreateShortURLInvalidJSON(t *testing.T) {
-	mock := &mockService{resolveFn: mockResolveUserID}
+	mock := &mockService{}
 	h := NewURLHandler(mock, testLog(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/shorten", bytes.NewBufferString("{invalid"))
-	req.SetPathValue("userId", "USR_test123")
+	req = withUserID(req, 1)
 	w := httptest.NewRecorder()
 
 	h.CreateShortURL(w, req)
@@ -139,11 +136,11 @@ func TestCreateShortURLInvalidJSON(t *testing.T) {
 }
 
 func TestCreateShortURLEmptyBody(t *testing.T) {
-	mock := &mockService{resolveFn: mockResolveUserID}
+	mock := &mockService{}
 	h := NewURLHandler(mock, testLog(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/shorten", bytes.NewBufferString(""))
-	req.SetPathValue("userId", "USR_test123")
+	req = withUserID(req, 1)
 	w := httptest.NewRecorder()
 
 	h.CreateShortURL(w, req)
@@ -167,11 +164,11 @@ func TestCreateShortURLValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockService{resolveFn: mockResolveUserID}
+			mock := &mockService{}
 			h := NewURLHandler(mock, testLog(t))
 
 			req := httptest.NewRequest(http.MethodPost, "/shorten", bytes.NewBufferString(tt.body))
-			req.SetPathValue("userId", "USR_test123")
+			req = withUserID(req, 1)
 			w := httptest.NewRecorder()
 
 			h.CreateShortURL(w, req)
@@ -183,6 +180,21 @@ func TestCreateShortURLValidation(t *testing.T) {
 				t.Errorf("expected validation error, got %s", w.Body.String())
 			}
 		})
+	}
+}
+
+func TestCreateShortURLUnauthorized(t *testing.T) {
+	mock := &mockService{}
+	h := NewURLHandler(mock, testLog(t))
+
+	body := `{"originalURL": "https://example.com/long-url"}`
+	req := httptest.NewRequest(http.MethodPost, "/shorten", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	h.CreateShortURL(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
 	}
 }
 
@@ -298,7 +310,6 @@ func TestRedirectShortURLNotFound(t *testing.T) {
 
 func TestGetURLByID(t *testing.T) {
 	mock := &mockService{
-		resolveFn: mockResolveUserID,
 		byIDFn: func(_ context.Context, _ int64, _ int64) (*payload.URLResponse, error) {
 			return sampleResponse(), nil
 		},
@@ -306,7 +317,7 @@ func TestGetURLByID(t *testing.T) {
 	h := NewURLHandler(mock, testLog(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/urls/1", nil)
-	req.SetPathValue("userId", "USR_test123")
+	req = withUserID(req, 1)
 	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
 
@@ -318,11 +329,11 @@ func TestGetURLByID(t *testing.T) {
 }
 
 func TestGetURLByIDInvalid(t *testing.T) {
-	mock := &mockService{resolveFn: mockResolveUserID}
+	mock := &mockService{}
 	h := NewURLHandler(mock, testLog(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/urls/abc", nil)
-	req.SetPathValue("userId", "USR_test123")
+	req = withUserID(req, 1)
 	req.SetPathValue("id", "abc")
 	w := httptest.NewRecorder()
 
@@ -333,9 +344,23 @@ func TestGetURLByIDInvalid(t *testing.T) {
 	}
 }
 
+func TestGetURLByIDUnauthorized(t *testing.T) {
+	mock := &mockService{}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/1", nil)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h.GetURLByID(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
 func TestListURLsDefaults(t *testing.T) {
 	mock := &mockService{
-		resolveFn: mockResolveUserID,
 		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) (*payload.URLListResponse, error) {
 			if page != 1 {
 				t.Errorf("expected default page 1, got %d", page)
@@ -352,7 +377,7 @@ func TestListURLsDefaults(t *testing.T) {
 	h := NewURLHandler(mock, testLog(t))
 
 	req := httptest.NewRequest(http.MethodGet, "/urls", nil)
-	req.SetPathValue("userId", "USR_test123")
+	req = withUserID(req, 1)
 	w := httptest.NewRecorder()
 
 	h.ListURLs(w, req)
@@ -365,7 +390,6 @@ func TestListURLsDefaults(t *testing.T) {
 func TestUpdateURL(t *testing.T) {
 	stubLookupIP(t)
 	mock := &mockService{
-		resolveFn: mockResolveUserID,
 		updateFn: func(_ context.Context, _ int64, _ int64, _ payload.UpdateURLRequest) (*payload.URLResponse, error) {
 			return sampleResponse(), nil
 		},
@@ -374,7 +398,7 @@ func TestUpdateURL(t *testing.T) {
 
 	body := `{"originalURL": "https://example.com/updated"}`
 	req := httptest.NewRequest(http.MethodPatch, "/urls/1", bytes.NewBufferString(body))
-	req.SetPathValue("userId", "USR_test123")
+	req = withUserID(req, 1)
 	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
 
@@ -387,7 +411,6 @@ func TestUpdateURL(t *testing.T) {
 
 func TestDeleteURLSoftDelete(t *testing.T) {
 	mock := &mockService{
-		resolveFn: mockResolveUserID,
 		softDeleteFn: func(_ context.Context, _ int64, _ int64) (*payload.DeleteResponse, error) {
 			return &payload.DeleteResponse{ID: 1, ShortCode: "abc1234567", Message: "soft deleted"}, nil
 		},
@@ -395,7 +418,7 @@ func TestDeleteURLSoftDelete(t *testing.T) {
 	h := NewURLHandler(mock, testLog(t))
 
 	req := httptest.NewRequest(http.MethodDelete, "/urls/1", nil)
-	req.SetPathValue("userId", "USR_test123")
+	req = withUserID(req, 1)
 	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
 
@@ -411,7 +434,6 @@ func TestDeleteURLSoftDelete(t *testing.T) {
 
 func TestApproveHardDelete(t *testing.T) {
 	mock := &mockService{
-		resolveFn: mockResolveUserID,
 		hardDeleteFn: func(_ context.Context, _ int64, _ int64) error {
 			return nil
 		},
@@ -419,7 +441,7 @@ func TestApproveHardDelete(t *testing.T) {
 	h := NewURLHandler(mock, testLog(t))
 
 	req := httptest.NewRequest(http.MethodDelete, "/urls/1/approve", nil)
-	req.SetPathValue("userId", "USR_test123")
+	req = withUserID(req, 1)
 	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
 

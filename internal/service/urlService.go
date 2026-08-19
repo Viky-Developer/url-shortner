@@ -775,11 +775,6 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 		resp.ExpiresAt = u.ExpiresAt.Time.Format("2006-01-02T15:04:05Z")
 	}
 
-	fmt.Printf("resp.HasBeenAccessed: %v\n", resp.HasBeenAccessed)
-	fmt.Printf("resp.HealthChecked: %v\n", resp.HealthChecked)
-	fmt.Printf("resp.LastAccessedAt: %v\n", resp.LastAccessedAt)
-	fmt.Printf("resp.LastHealthCheck: %v\n", resp.LastHealthCheck)
-
 	return resp
 }
 
