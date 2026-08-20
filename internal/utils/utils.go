@@ -20,22 +20,34 @@ import (
 	"github.com/vicky/url-shortner/internal/apperror"
 )
 
-// OptionalTime is a time that also accepts null or empty-string JSON values,
-// treating them as "not provided". It is used for optional request fields so an
-// omitted or empty expiresAt never triggers a type conversion error.
-type OptionalTime struct {
+// UnixMilliTime is a time.Time that accepts both RFC3339 strings and Unix
+// milliseconds (as JSON numbers) in requests. An omitted, null, or zero value
+// means "not provided".
+type UnixMilliTime struct {
 	Time  time.Time
 	Valid bool
 }
 
-// UnmarshalJSON parses an RFC3339 timestamp. Null and empty strings set the
-// value as invalid instead of raising a conversion error.
-func (t *OptionalTime) UnmarshalJSON(b []byte) error {
+// UnmarshalJSON parses either an RFC3339 string or a Unix millisecond number.
+func (t *UnixMilliTime) UnmarshalJSON(b []byte) error {
 	s := strings.Trim(string(b), `"`)
 	if s == "" || s == "null" {
 		t.Valid = false
 		return nil
 	}
+
+	// Try parsing as Unix milliseconds (number)
+	if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
+		if ms == 0 {
+			t.Valid = false
+			return nil
+		}
+		t.Time = time.UnixMilli(ms)
+		t.Valid = true
+		return nil
+	}
+
+	// Fall back to RFC3339
 	parsed, err := time.Parse(time.RFC3339, s)
 	if err != nil {
 		return err
@@ -43,6 +55,14 @@ func (t *OptionalTime) UnmarshalJSON(b []byte) error {
 	t.Time = parsed
 	t.Valid = true
 	return nil
+}
+
+// MarshalJSON returns null if invalid, otherwise RFC3339 string.
+func (t UnixMilliTime) MarshalJSON() ([]byte, error) {
+	if !t.Valid {
+		return []byte("null"), nil
+	}
+	return []byte(`"` + t.Time.Format(time.RFC3339) + `"`), nil
 }
 
 // SanitizeLog strips control characters (0x00-0x1F and 0x7F) from a string
@@ -98,7 +118,7 @@ func ParsePositiveInt(value string, fallback int32) int32 {
 
 // ValidateExpiresAt ensures that when an expiration time is provided it is not
 // in the past (i.e. it must be the current moment or a future time).
-func ValidateExpiresAt(e OptionalTime) error {
+func ValidateExpiresAt(e UnixMilliTime) error {
 	if !e.Valid {
 		return nil
 	}

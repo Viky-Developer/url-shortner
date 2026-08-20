@@ -6,20 +6,20 @@ import "github.com/vicky/url-shortner/internal/utils"
 
 // CreateURLRequest is the request body for creating a short URL.
 type CreateURLRequest struct {
-	OriginalURL string             `json:"originalURL" binding:"required"` // The long URL to shorten. Required.
-	CustomCode  string             `json:"customCode,omitempty"`           // Optional custom short code. If empty, a random 10-char code is generated.
-	Title       string             `json:"title,omitempty"`                // Optional title for the short URL.
-	Description string             `json:"description,omitempty"`          // Optional description for the short URL.
-	ExpiresAt   utils.OptionalTime `json:"expiresAt,omitzero"`             // Optional expiration time for the short URL.
+	OriginalURL string          `json:"originalURL" binding:"required"` // The long URL to shorten. Required.
+	CustomCode  string          `json:"customCode,omitempty"`           // Optional custom short code. If empty, a random 10-char code is generated.
+	Title       string          `json:"title,omitempty"`                // Optional title for the short URL.
+	Description string          `json:"description,omitempty"`          // Optional description for the short URL.
+	ExpiresAt   utils.UnixMilliTime `json:"expiresAt,omitempty"`        // Optional expiration time (RFC3339 or Unix milliseconds).
 }
 
 // UpdateURLRequest is the request body for updating an existing URL.
 type UpdateURLRequest struct {
-	OriginalURL string             `json:"originalURL"`           // The new long URL value.
-	Title       string             `json:"title,omitempty"`       // The new title value.
-	Description string             `json:"description,omitempty"` // The new description value.
-	Status      *int16             `json:"status,omitempty"`      // New URL status: 0=Disabled, 1=Active, 2=Expired, 3=Deleted.
-	ExpiresAt   utils.OptionalTime `json:"expiresAt,omitempty"`   // Optional new expiration time.
+	OriginalURL string          `json:"originalURL"`           // The new long URL value.
+	Title       string          `json:"title,omitempty"`       // The new title value.
+	Description string          `json:"description,omitempty"` // The new description value.
+	Status      *int16          `json:"status,omitempty"`      // New URL status: 0=Disabled, 1=Active, 2=Expired, 3=Deleted.
+	ExpiresAt   utils.UnixMilliTime `json:"expiresAt,omitempty"`   // Optional new expiration time (RFC3339 or Unix milliseconds).
 }
 
 // URLResponse represents a single URL as returned by the API.

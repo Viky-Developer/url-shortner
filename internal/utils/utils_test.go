@@ -12,8 +12,8 @@ import (
 	"github.com/vicky/url-shortner/internal/apperror"
 )
 
-func TestOptionalTimeUnmarshalValid(t *testing.T) {
-	var ot OptionalTime
+func TestUnixMilliTimeUnmarshalValid(t *testing.T) {
+	var ot UnixMilliTime
 	if err := ot.UnmarshalJSON([]byte(`"2099-01-01T00:00:00Z"`)); err != nil {
 		t.Fatalf("UnmarshalJSON: %v", err)
 	}
@@ -22,8 +22,8 @@ func TestOptionalTimeUnmarshalValid(t *testing.T) {
 	}
 }
 
-func TestOptionalTimeUnmarshalNull(t *testing.T) {
-	var ot OptionalTime
+func TestUnixMilliTimeUnmarshalNull(t *testing.T) {
+	var ot UnixMilliTime
 	if err := ot.UnmarshalJSON([]byte(`null`)); err != nil {
 		t.Fatalf("UnmarshalJSON: %v", err)
 	}
@@ -32,8 +32,8 @@ func TestOptionalTimeUnmarshalNull(t *testing.T) {
 	}
 }
 
-func TestOptionalTimeUnmarshalEmpty(t *testing.T) {
-	var ot OptionalTime
+func TestUnixMilliTimeUnmarshalEmpty(t *testing.T) {
+	var ot UnixMilliTime
 	if err := ot.UnmarshalJSON([]byte(`""`)); err != nil {
 		t.Fatalf("UnmarshalJSON: %v", err)
 	}
@@ -42,11 +42,25 @@ func TestOptionalTimeUnmarshalEmpty(t *testing.T) {
 	}
 }
 
-func TestOptionalTimeUnmarshalInvalid(t *testing.T) {
-	var ot OptionalTime
+func TestUnixMilliTimeUnmarshalInvalid(t *testing.T) {
+	var ot UnixMilliTime
 	err := ot.UnmarshalJSON([]byte(`"not-a-time"`))
 	if err == nil {
 		t.Fatal("expected error for invalid timestamp")
+	}
+}
+
+func TestUnixMilliTimeUnmarshalUnixMilli(t *testing.T) {
+	var ot UnixMilliTime
+	if err := ot.UnmarshalJSON([]byte("1787315572418")); err != nil {
+		t.Fatalf("UnmarshalJSON: %v", err)
+	}
+	if !ot.Valid {
+		t.Fatal("expected Valid=true for unix milli")
+	}
+	expected := time.UnixMilli(1787315572418)
+	if !ot.Time.Equal(expected) {
+		t.Errorf("time = %v, want %v", ot.Time, expected)
 	}
 }
 
@@ -115,21 +129,21 @@ func TestParsePositiveInt(t *testing.T) {
 }
 
 func TestValidateExpiresAtNil(t *testing.T) {
-	if err := ValidateExpiresAt(OptionalTime{}); err != nil {
+	if err := ValidateExpiresAt(UnixMilliTime{}); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateExpiresAtFuture(t *testing.T) {
-	ot := OptionalTime{Time: time.Now().Add(time.Hour), Valid: true}
-	if err := ValidateExpiresAt(ot); err != nil {
+	future := time.Now().Add(time.Hour)
+	if err := ValidateExpiresAt(UnixMilliTime{Time: future, Valid: true}); err != nil {
 		t.Errorf("unexpected error for future time: %v", err)
 	}
 }
 
 func TestValidateExpiresAtPast(t *testing.T) {
-	ot := OptionalTime{Time: time.Now().Add(-time.Hour), Valid: true}
-	if err := ValidateExpiresAt(ot); err == nil {
+	past := time.Now().Add(-time.Hour)
+	if err := ValidateExpiresAt(UnixMilliTime{Time: past, Valid: true}); err == nil {
 		t.Error("expected error for past time")
 	}
 }

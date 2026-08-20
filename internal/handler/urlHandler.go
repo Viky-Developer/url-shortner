@@ -109,12 +109,6 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
-		h.log.Error("invalid expiresAt", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: %s", apperror.ErrInvalidPayload, err))
-		return
-	}
-
 	created, err := h.urlService.Create(r.Context(), userID, req)
 	if err != nil {
 		h.log.Error("failed to create url", logger.Error(err))
@@ -231,12 +225,6 @@ func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: %s", apperror.ErrInvalidURL, err))
 			return
 		}
-	}
-
-	if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
-		h.log.Error("invalid expiresAt", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: %s", apperror.ErrInvalidPayload, err))
-		return
 	}
 
 	updated, err := h.urlService.Update(r.Context(), userID, id, req)
