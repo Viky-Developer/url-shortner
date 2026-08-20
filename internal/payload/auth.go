@@ -9,8 +9,9 @@ type RegisterRequest struct {
 
 // LoginRequest represents the user login request.
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email           string `json:"email"`
+	Password        string `json:"password"`
+	RevokeSessionID *int64 `json:"revokeSessionId,omitempty"`
 }
 
 // RefreshTokenRequest represents the token refresh request.
@@ -56,6 +57,7 @@ type ForgotPasswordRequest struct {
 	Email           string `json:"email"`
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`
+	RevokeSessionID *int64 `json:"revokeSessionId,omitempty"`
 }
 
 // UpdatePasswordResponse represents the password update response.

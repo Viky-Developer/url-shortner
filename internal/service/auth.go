@@ -243,10 +243,16 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 
 	s.log.Info("user logged in", logger.Int64("userID", user.ID), logger.String("email", req.Email))
 
-	// Enforce max 2 devices — returns a revoke task for idle oldest session
-	revokeTask, err := s.enforceMaxDevices(ctx, user.ID)
-	if err != nil {
-		return nil, err
+	// Determine revoke task: user-approved removal or automatic enforcement
+	var revokeTask func()
+	if req.RevokeSessionID != nil && *req.RevokeSessionID > 0 {
+		revokeTask = s.revokeApprovedSession(ctx, user.ID, *req.RevokeSessionID)
+	} else {
+		var err error
+		revokeTask, err = s.enforceMaxDevices(ctx, user.ID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Generate tokens and revoke old session in parallel
@@ -768,9 +774,15 @@ func (s *AuthService) ForgotPassword(ctx context.Context, req payload.ForgotPass
 		return nil, apperror.ErrInternal
 	}
 
-	revokeTask, err := s.enforceMaxDevices(ctx, user.ID)
-	if err != nil {
-		return nil, err
+	var revokeTask func()
+	if req.RevokeSessionID != nil && *req.RevokeSessionID > 0 {
+		revokeTask = s.revokeApprovedSession(ctx, user.ID, *req.RevokeSessionID)
+	} else {
+		var err error
+		revokeTask, err = s.enforceMaxDevices(ctx, user.ID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	displayUserID := ""
@@ -866,6 +878,42 @@ func (s *AuthService) enforceMaxDevices(ctx context.Context, userID int64) (revo
 		logger.Int("activeSessions", len(sessions)),
 	)
 	return nil, &apperror.MaxDeviceError{Devices: s.buildActiveDevices(sessions)}
+}
+
+// revokeApprovedSession builds a fire-and-forget task that revokes the session
+// the user explicitly approved removing. This is used when the client received
+// a 409 MaxDeviceError, showed the device list, and the user picked one —
+// allowing login to complete in a single request.
+func (s *AuthService) revokeApprovedSession(ctx context.Context, userID, sessionID int64) func() {
+	return func() {
+		session, err := s.queries.GetSessionByID(ctx, sessionID)
+		if err != nil {
+			s.log.Warn("revokeApprovedSession: session not found",
+				logger.Error(err),
+				logger.Int64("sessionID", sessionID),
+			)
+			return
+		}
+		if session.UserID != userID {
+			s.log.Warn("revokeApprovedSession: session not owned by user",
+				logger.Int64("sessionID", sessionID),
+				logger.Int64("userID", userID),
+			)
+			return
+		}
+
+		_ = s.cache.HDel(session.RefreshTokenHash, "id", "user_id", "session_status")
+
+		if err := s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
+			ID:     session.ID,
+			UserID: session.UserID,
+		}); err != nil {
+			s.log.Error("revokeApprovedSession: failed to revoke",
+				logger.Error(err),
+				logger.Int64("sessionID", session.ID),
+			)
+		}
+	}
 }
 
 // checkLoginRateLimit checks if the user has exceeded max failed login attempts.
