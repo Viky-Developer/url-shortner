@@ -243,15 +243,30 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 
 	s.log.Info("user logged in", logger.Int64("userID", user.ID), logger.String("email", req.Email))
 
-	// Enforce max 2 devices — auto-revoke idle oldest or return error with session list
-	if err := s.enforceMaxDevices(ctx, user.ID); err != nil {
+	// Enforce max 2 devices — returns a revoke task for idle oldest session
+	revokeTask, err := s.enforceMaxDevices(ctx, user.ID)
+	if err != nil {
 		return nil, err
 	}
 
-	// Generate tokens
-	tokens, err := s.GenerateTokens(ctx, user.ID, displayUserID, deviceType, deviceName, ipAddress, userAgent)
-	if err != nil {
-		return nil, err
+	// Generate tokens and revoke old session in parallel
+	var tokens *Tokens
+	var tokensErr error
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		tokens, tokensErr = s.GenerateTokens(ctx, user.ID, displayUserID, deviceType, deviceName, ipAddress, userAgent)
+	}()
+
+	if revokeTask != nil {
+		revokeTask()
+	}
+
+	<-done
+
+	if tokensErr != nil {
+		return nil, tokensErr
 	}
 
 	// Calculate password age
@@ -753,7 +768,8 @@ func (s *AuthService) ForgotPassword(ctx context.Context, req payload.ForgotPass
 		return nil, apperror.ErrInternal
 	}
 
-	if err := s.enforceMaxDevices(ctx, user.ID); err != nil {
+	revokeTask, err := s.enforceMaxDevices(ctx, user.ID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -762,9 +778,23 @@ func (s *AuthService) ForgotPassword(ctx context.Context, req payload.ForgotPass
 		displayUserID = user.DisplayUserID.String
 	}
 
-	tokens, err := s.GenerateTokens(ctx, user.ID, displayUserID, "", "", ipAddress, userAgent)
-	if err != nil {
-		return nil, err
+	var tokens *Tokens
+	var tokensErr error
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		tokens, tokensErr = s.GenerateTokens(ctx, user.ID, displayUserID, "", "", ipAddress, userAgent)
+	}()
+
+	if revokeTask != nil {
+		revokeTask()
+	}
+
+	<-done
+
+	if tokensErr != nil {
+		return nil, tokensErr
 	}
 
 	s.log.Info("forgot password: success", logger.Int64("userID", user.ID))
@@ -788,51 +818,54 @@ const (
 
 // enforceMaxDevices checks whether the user already has maxDevices active
 // sessions. Behaviour when at capacity:
-//   - If the oldest session has been idle for > maxDeviceIdleTime, it is
-//     auto-revoked and the caller may proceed.
+//   - If the oldest session has been idle for > maxDeviceIdleTime, a revoke
+//     task is returned that can be run in parallel with the sign-in.
 //   - Otherwise an *apperror.MaxDeviceError is returned carrying the active
 //     session list so the client can prompt the user to choose one to remove.
-func (s *AuthService) enforceMaxDevices(ctx context.Context, userID int64) error {
+//
+// The returned revokeTask is always safe to call — it logs errors but never
+// returns them, so it can be fire-and-forget in a goroutine.
+func (s *AuthService) enforceMaxDevices(ctx context.Context, userID int64) (revokeTask func(), err error) {
 	sessions, err := s.queries.ListActiveSessionsByUser(ctx, userID)
 	if err != nil {
 		s.log.Error("enforceMaxDevices: failed to list sessions", logger.Error(err), logger.Int64("userID", userID))
-		return apperror.ErrInternal
+		return nil, apperror.ErrInternal
 	}
 
 	if len(sessions) < maxDevices {
-		return nil
+		return nil, nil
 	}
 
 	// sessions are ordered ASC by last_active_at — oldest first
 	oldest := sessions[0]
 
 	if oldest.LastActiveAt.Valid && time.Since(oldest.LastActiveAt.Time) > maxDeviceIdleTime {
-		s.log.Info("enforceMaxDevices: auto-revoking idle oldest session",
+		s.log.Info("enforceMaxDevices: oldest session idle > 6h, will auto-revoke in parallel",
 			logger.Int64("userID", userID),
 			logger.Int64("sessionID", oldest.ID),
 			logger.String("idle", time.Since(oldest.LastActiveAt.Time).Round(time.Second).String()),
 		)
 
-		_ = s.cache.HDel(oldest.RefreshTokenHash, "id", "user_id", "session_status")
-
-		if err := s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
-			ID:     oldest.ID,
-			UserID: oldest.UserID,
-		}); err != nil {
-			s.log.Error("enforceMaxDevices: failed to revoke oldest session",
-				logger.Error(err),
-				logger.Int64("sessionID", oldest.ID),
-			)
-			return apperror.ErrInternal
+		revoke := func() {
+			_ = s.cache.HDel(oldest.RefreshTokenHash, "id", "user_id", "session_status")
+			if err := s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
+				ID:     oldest.ID,
+				UserID: oldest.UserID,
+			}); err != nil {
+				s.log.Error("enforceMaxDevices: failed to revoke oldest session",
+					logger.Error(err),
+					logger.Int64("sessionID", oldest.ID),
+				)
+			}
 		}
-		return nil
+		return revoke, nil
 	}
 
 	s.log.Warn("enforceMaxDevices: max devices reached",
 		logger.Int64("userID", userID),
 		logger.Int("activeSessions", len(sessions)),
 	)
-	return &apperror.MaxDeviceError{Devices: s.buildActiveDevices(sessions)}
+	return nil, &apperror.MaxDeviceError{Devices: s.buildActiveDevices(sessions)}
 }
 
 // checkLoginRateLimit checks if the user has exceeded max failed login attempts.
