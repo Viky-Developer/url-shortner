@@ -243,8 +243,10 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 
 	s.log.Info("user logged in", logger.Int64("userID", user.ID), logger.String("email", req.Email))
 
-	// Enforce max 2 devices — revoke oldest if a 3rd session exists
-	s.enforceMaxDevices(ctx, user.ID)
+	// Enforce max 2 devices — auto-revoke idle oldest or return error with session list
+	if err := s.enforceMaxDevices(ctx, user.ID); err != nil {
+		return nil, err
+	}
 
 	// Generate tokens
 	tokens, err := s.GenerateTokens(ctx, user.ID, displayUserID, deviceType, deviceName, ipAddress, userAgent)
@@ -509,18 +511,41 @@ func (s *AuthService) ListSessions(ctx context.Context, userID int64) ([]payload
 		return nil, apperror.ErrInternal
 	}
 
+	return s.buildSessionResponses(sessions), nil
+}
+
+func (s *AuthService) buildSessionResponses(sessions []gen.Session) []payload.SessionResponse {
 	resp := make([]payload.SessionResponse, len(sessions))
 	for i, sess := range sessions {
 		resp[i] = payload.SessionResponse{
 			ID:           sess.ID,
 			DeviceType:   sess.DeviceType.String,
 			DeviceName:   sess.DeviceName.String,
-			IPAddress:    sess.IpAddress.IPNet.IP.String(),
 			LoggedInAt:   sess.LoggedInAt.Time.Format(time.RFC3339),
 			LastActiveAt: sess.LastActiveAt.Time.Format(time.RFC3339),
 		}
+		if sess.IpAddress.Valid {
+			resp[i].IPAddress = sess.IpAddress.IPNet.IP.String()
+		}
 	}
-	return resp, nil
+	return resp
+}
+
+func (s *AuthService) buildActiveDevices(sessions []gen.Session) []apperror.ActiveDevice {
+	devices := make([]apperror.ActiveDevice, len(sessions))
+	for i, sess := range sessions {
+		devices[i] = apperror.ActiveDevice{
+			ID:           sess.ID,
+			DeviceType:   sess.DeviceType.String,
+			DeviceName:   sess.DeviceName.String,
+			LoggedInAt:   sess.LoggedInAt.Time.Format(time.RFC3339),
+			LastActiveAt: sess.LastActiveAt.Time.Format(time.RFC3339),
+		}
+		if sess.IpAddress.Valid {
+			devices[i].IPAddress = sess.IpAddress.IPNet.IP.String()
+		}
+	}
+	return devices
 }
 
 func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*payload.AuthResponse, error) {
@@ -728,7 +753,9 @@ func (s *AuthService) ForgotPassword(ctx context.Context, req payload.ForgotPass
 		return nil, apperror.ErrInternal
 	}
 
-	s.enforceMaxDevices(ctx, user.ID)
+	if err := s.enforceMaxDevices(ctx, user.ID); err != nil {
+		return nil, err
+	}
 
 	displayUserID := ""
 	if user.DisplayUserID.Valid {
@@ -754,38 +781,58 @@ func (s *AuthService) ForgotPassword(ctx context.Context, req payload.ForgotPass
 	}, nil
 }
 
-// enforceMaxDevices ensures a user has at most 2 active sessions.
-// If a 3rd session exists, the oldest one is revoked from DB + cache.
-func (s *AuthService) enforceMaxDevices(ctx context.Context, userID int64) {
+const (
+	maxDevices        = 2
+	maxDeviceIdleTime = 6 * time.Hour
+)
+
+// enforceMaxDevices checks whether the user already has maxDevices active
+// sessions. Behaviour when at capacity:
+//   - If the oldest session has been idle for > maxDeviceIdleTime, it is
+//     auto-revoked and the caller may proceed.
+//   - Otherwise an *apperror.MaxDeviceError is returned carrying the active
+//     session list so the client can prompt the user to choose one to remove.
+func (s *AuthService) enforceMaxDevices(ctx context.Context, userID int64) error {
 	sessions, err := s.queries.ListActiveSessionsByUser(ctx, userID)
 	if err != nil {
 		s.log.Error("enforceMaxDevices: failed to list sessions", logger.Error(err), logger.Int64("userID", userID))
-		return
+		return apperror.ErrInternal
 	}
 
-	const maxDevices = 2
-	if len(sessions) <= maxDevices {
-		return
+	if len(sessions) < maxDevices {
+		return nil
 	}
 
-	// sessions are ordered ASC by last_active_at, so the first entry is the oldest
+	// sessions are ordered ASC by last_active_at — oldest first
 	oldest := sessions[0]
-	s.log.Info("enforceMaxDevices: revoking oldest session",
-		logger.Int64("userID", userID),
-		logger.Int64("sessionID", oldest.ID),
-	)
 
-	_ = s.cache.HDel(oldest.RefreshTokenHash, "id", "user_id", "session_status")
-
-	if err := s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
-		ID:     oldest.ID,
-		UserID: oldest.UserID,
-	}); err != nil {
-		s.log.Error("enforceMaxDevices: failed to revoke oldest session",
-			logger.Error(err),
+	if oldest.LastActiveAt.Valid && time.Since(oldest.LastActiveAt.Time) > maxDeviceIdleTime {
+		s.log.Info("enforceMaxDevices: auto-revoking idle oldest session",
+			logger.Int64("userID", userID),
 			logger.Int64("sessionID", oldest.ID),
+			logger.String("idle", time.Since(oldest.LastActiveAt.Time).Round(time.Second).String()),
 		)
+
+		_ = s.cache.HDel(oldest.RefreshTokenHash, "id", "user_id", "session_status")
+
+		if err := s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
+			ID:     oldest.ID,
+			UserID: oldest.UserID,
+		}); err != nil {
+			s.log.Error("enforceMaxDevices: failed to revoke oldest session",
+				logger.Error(err),
+				logger.Int64("sessionID", oldest.ID),
+			)
+			return apperror.ErrInternal
+		}
+		return nil
 	}
+
+	s.log.Warn("enforceMaxDevices: max devices reached",
+		logger.Int64("userID", userID),
+		logger.Int("activeSessions", len(sessions)),
+	)
+	return &apperror.MaxDeviceError{Devices: s.buildActiveDevices(sessions)}
 }
 
 // checkLoginRateLimit checks if the user has exceeded max failed login attempts.

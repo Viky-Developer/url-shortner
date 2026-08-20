@@ -47,7 +47,7 @@ type mockQuerier struct {
 	updateSessionFn      func(context.Context, int64) error
 	addPasswordHistoryFn func(context.Context, gen.AddPasswordHistoryParams) error
 	updateUserPasswordFn func(context.Context, gen.UpdateUserPasswordParams) (gen.UpdateUserPasswordRow, error)
-	listActiveSessionsFn func(context.Context, int64) ([]gen.ListActiveSessionsByUserRow, error)
+	listActiveSessionsFn func(context.Context, int64) ([]gen.Session, error)
 }
 
 func (m *mockQuerier) ExecContext(_ context.Context, _ string, _ ...interface{}) (sql.Result, error) {
@@ -234,7 +234,7 @@ func (m *mockQuerier) GetLastPasswordHistory(_ context.Context, _ int64) (string
 	return "", nil
 }
 
-func (m *mockQuerier) ListActiveSessionsByUser(ctx context.Context, userID int64) ([]gen.ListActiveSessionsByUserRow, error) {
+func (m *mockQuerier) ListActiveSessionsByUser(ctx context.Context, userID int64) ([]gen.Session, error) {
 	if m.listActiveSessionsFn != nil {
 		return m.listActiveSessionsFn(ctx, userID)
 	}

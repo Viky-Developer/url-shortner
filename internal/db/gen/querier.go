@@ -31,7 +31,7 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, error)
 	HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error
 	IncrementURLClick(ctx context.Context, id int64) error
-	ListActiveSessionsByUser(ctx context.Context, userID int64) ([]ListActiveSessionsByUserRow, error)
+	ListActiveSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
 	ListBlockedIPRanges(ctx context.Context) ([]BlockedIpRange, error)
 	ListSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
 	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)

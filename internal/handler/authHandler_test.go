@@ -215,6 +215,33 @@ func TestLoginHandlerServiceError(t *testing.T) {
 	}
 }
 
+func TestLoginHandlerMaxDeviceError(t *testing.T) {
+	mock := &mockAuthService{
+		loginFn: func(_ context.Context, _ payload.LoginRequest, _, _, _, _ string) (*payload.AuthResponse, error) {
+			return nil, &apperror.MaxDeviceError{
+				Devices: []apperror.ActiveDevice{
+					{ID: 1, DeviceType: "web", DeviceName: "Chrome"},
+					{ID: 2, DeviceType: "mobile", DeviceName: "App"},
+				},
+			}
+		},
+	}
+	h := NewAuthHandler(mock, testLog(t))
+
+	body := `{"email":"test@example.com","password":"pass123"}`
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	h.Login(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"sessions"`) {
+		t.Errorf("expected sessions in response, got %s", w.Body.String())
+	}
+}
+
 func TestRefreshTokenHandler(t *testing.T) {
 	mock := &mockAuthService{
 		refreshFn: func(_ context.Context, _ string) (*payload.AuthResponse, error) {

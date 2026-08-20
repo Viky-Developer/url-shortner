@@ -62,3 +62,11 @@ type ForgotPasswordRequest struct {
 type UpdatePasswordResponse struct {
 	Message string `json:"message"`
 }
+
+// MaxDeviceErrorResponse is returned when a user has reached the maximum
+// number of active devices and must revoke one to log in again.
+type MaxDeviceErrorResponse struct {
+	StatusCode int               `json:"statusCode"`
+	Message    string            `json:"message"`
+	Sessions   []SessionResponse `json:"sessions"`
+}

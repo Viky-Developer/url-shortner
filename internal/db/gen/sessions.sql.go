@@ -101,28 +101,33 @@ func (q *Queries) GetSessionByRefreshTokenHash(ctx context.Context, refreshToken
 }
 
 const listActiveSessionsByUser = `-- name: ListActiveSessionsByUser :many
-SELECT id, user_id, refresh_token_hash
+SELECT id, user_id, refresh_token_hash, device_type, device_name, ip_address, user_agent, logged_in_at, last_active_at, session_status
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at ASC
 `
 
-type ListActiveSessionsByUserRow struct {
-	ID               int64  `json:"id"`
-	UserID           int64  `json:"user_id"`
-	RefreshTokenHash string `json:"refresh_token_hash"`
-}
-
-func (q *Queries) ListActiveSessionsByUser(ctx context.Context, userID int64) ([]ListActiveSessionsByUserRow, error) {
+func (q *Queries) ListActiveSessionsByUser(ctx context.Context, userID int64) ([]Session, error) {
 	rows, err := q.db.QueryContext(ctx, listActiveSessionsByUser, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListActiveSessionsByUserRow
+	var items []Session
 	for rows.Next() {
-		var i ListActiveSessionsByUserRow
-		if err := rows.Scan(&i.ID, &i.UserID, &i.RefreshTokenHash); err != nil {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.RefreshTokenHash,
+			&i.DeviceType,
+			&i.DeviceName,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.LoggedInAt,
+			&i.LastActiveAt,
+			&i.SessionStatus,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

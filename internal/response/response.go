@@ -47,6 +47,8 @@ func Error(w http.ResponseWriter, status int, err error) {
 // StatusCodeFromError maps sentinel app errors to HTTP status codes.
 func StatusCodeFromError(err error) int {
 	switch {
+	case errors.As(err, new(*apperror.MaxDeviceError)):
+		return http.StatusConflict
 	case errors.Is(err, apperror.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, apperror.ErrInvalidURL),

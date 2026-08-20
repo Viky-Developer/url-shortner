@@ -3,6 +3,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -90,6 +91,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.authService.Login(r.Context(), req, deviceType, deviceName, ipAddress, userAgent)
 	if err != nil {
+		var maxErr *apperror.MaxDeviceError
+		if errors.As(err, &maxErr) {
+			h.log.Warn("login blocked: max devices reached", logger.String("email", utils.SanitizeLog(req.Email)))
+			sessions := make([]payload.SessionResponse, len(maxErr.Devices))
+			for i, d := range maxErr.Devices {
+				sessions[i] = payload.SessionResponse{
+					ID: d.ID, DeviceType: d.DeviceType, DeviceName: d.DeviceName,
+					IPAddress: d.IPAddress, LoggedInAt: d.LoggedInAt, LastActiveAt: d.LastActiveAt,
+				}
+			}
+			response.JSON(w, http.StatusConflict, payload.MaxDeviceErrorResponse{
+				StatusCode: http.StatusConflict,
+				Message:    maxErr.Error(),
+				Sessions:   sessions,
+			})
+			return
+		}
 		h.log.Error("login failed", logger.Error(err), logger.String("email", utils.SanitizeLog(req.Email)))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
@@ -120,6 +138,23 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.authService.ForgotPassword(r.Context(), req, ipAddress, userAgent)
 	if err != nil {
+		var maxErr *apperror.MaxDeviceError
+		if errors.As(err, &maxErr) {
+			h.log.Warn("forgot password blocked: max devices reached", logger.String("email", utils.SanitizeLog(req.Email)))
+			sessions := make([]payload.SessionResponse, len(maxErr.Devices))
+			for i, d := range maxErr.Devices {
+				sessions[i] = payload.SessionResponse{
+					ID: d.ID, DeviceType: d.DeviceType, DeviceName: d.DeviceName,
+					IPAddress: d.IPAddress, LoggedInAt: d.LoggedInAt, LastActiveAt: d.LastActiveAt,
+				}
+			}
+			response.JSON(w, http.StatusConflict, payload.MaxDeviceErrorResponse{
+				StatusCode: http.StatusConflict,
+				Message:    maxErr.Error(),
+				Sessions:   sessions,
+			})
+			return
+		}
 		h.log.Error("forgot password failed", logger.Error(err), logger.String("email", utils.SanitizeLog(req.Email)))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return

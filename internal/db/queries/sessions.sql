@@ -26,7 +26,7 @@ WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at DESC;
 
 -- name: ListActiveSessionsByUser :many
-SELECT id, user_id, refresh_token_hash
+SELECT id, user_id, refresh_token_hash, device_type, device_name, ip_address, user_agent, logged_in_at, last_active_at, session_status
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at ASC;
