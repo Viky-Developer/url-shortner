@@ -839,7 +839,7 @@ func TestListDefaultsWhenNoQueryParams(t *testing.T) {
 			capturedPerPage = perPage
 			capturedOffset = offset
 			return &payload.URLListResponse{
-				Items:  []payload.URLResponse{},
+				Items: []payload.URLResponse{},
 				Total: 0,
 			}, nil
 		},
@@ -867,7 +867,7 @@ func TestListResponseBody(t *testing.T) {
 	mock := &mockService{
 		listFn: func(_ context.Context, _ int64, _, _, _ int32) (*payload.URLListResponse, error) {
 			return &payload.URLListResponse{
-				Items:  []payload.URLResponse{*sampleResponse()},
+				Items: []payload.URLResponse{*sampleResponse()},
 				Total: 1,
 			}, nil
 		},
