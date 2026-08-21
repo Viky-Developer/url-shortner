@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/config"
 	"github.com/vicky/url-shortner/internal/db"
@@ -55,8 +56,25 @@ func run() error {
 		}
 	}()
 
+	queries := gen.New(database)
+	sessionCache, err := cache.NewRedisCache(cache.RedisConfig{
+		Addr:       cfg.RedisHost + ":" + cfg.RedisPort,
+		UserName:   cfg.RedisUserName,
+		Password:   cfg.RedisPassword,
+		DB:         cfg.RedisDB,
+		MaxRetries: cfg.RedisMaxRetries,
+	})
+	if err != nil {
+		log.Warn("redis unavailable, falling back to no cache", logger.Error(err))
+	} else {
+		log.Info("redis connected", logger.String("addr", cfg.RedisHost+":"+cfg.RedisPort))
+		defer func() { _ = sessionCache.Close() }()
+	}
+
+	authService := service.NewAuthService(queries, database, cfg, sessionCache, log)
 	urlHandler := buildURLHandler(cfg, database, log)
-	app := middleware.Chain(routes.New(urlHandler),
+	authHandler := handler.NewAuthHandler(authService, log)
+	app := middleware.Chain(routes.New(urlHandler, authHandler, authService),
 		middleware.Recovery(log),
 		middleware.Logger(log),
 		middleware.ContentTypeJSON,

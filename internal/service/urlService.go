@@ -309,6 +309,11 @@ func (s *URLService) findOrCreateDestination(q gen.Querier, ctx context.Context,
 // Create stores a new URL with version 1 inside a transaction.
 func (s *URLService) Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error) {
 
+	// Validate expiresAt
+	if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
+		return nil, fmt.Errorf("%w: %s", apperror.ErrInvalidPayload, err)
+	}
+
 	// Validate destination is reachable
 	if err := s.checkBlockedDomain(ctx, req.OriginalURL); err != nil {
 		s.log.Error("url blocked", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(req.OriginalURL)))
@@ -521,6 +526,11 @@ func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offs
 // Update changes the original URL and/or expiry inside a transaction. When
 // the original URL changes, a new url_version row is appended.
 func (s *URLService) Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error) {
+
+	// Validate expiresAt
+	if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
+		return nil, fmt.Errorf("%w: %s", apperror.ErrInvalidPayload, err)
+	}
 
 	// Validate blocked domain if original URL is changing
 	if req.OriginalURL != "" {
@@ -775,11 +785,6 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 		resp.ExpiresAt = u.ExpiresAt.Time.Format("2006-01-02T15:04:05Z")
 	}
 
-	fmt.Printf("resp.HasBeenAccessed: %v\n", resp.HasBeenAccessed)
-	fmt.Printf("resp.HealthChecked: %v\n", resp.HealthChecked)
-	fmt.Printf("resp.LastAccessedAt: %v\n", resp.LastAccessedAt)
-	fmt.Printf("resp.LastHealthCheck: %v\n", resp.LastHealthCheck)
-
 	return resp
 }
 
@@ -837,7 +842,7 @@ func inet(ip net.IP) pqtype.Inet {
 	return pqtype.Inet{IPNet: net.IPNet{IP: ip, Mask: net.CIDRMask(len(ip)*8, len(ip)*8)}, Valid: true}
 }
 
-func nullTime(t utils.OptionalTime) sql.NullTime {
+func nullTime(t utils.UnixMilliTime) sql.NullTime {
 	if !t.Valid {
 		return sql.NullTime{Valid: false}
 	}

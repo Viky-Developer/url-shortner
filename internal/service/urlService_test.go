@@ -15,29 +15,55 @@ import (
 )
 
 type mockQuerier struct {
-	createFn          func(context.Context, gen.CreateURLParams) (gen.Url, error)
-	createUserFn      func(context.Context, gen.CreateUserParams) (gen.CreateUserRow, error)
-	byCodeFn          func(context.Context, string) (gen.GetURLByShortCodeRow, error)
-	byCodeForUpdateFn func(context.Context, string) (gen.GetURLByShortCodeForUpdateRow, error)
-	byIDFn            func(context.Context, gen.GetURLByIDParams) (gen.GetURLByIDRow, error)
-	listFn            func(context.Context, gen.ListURLsParams) ([]gen.ListURLsRow, error)
-	countFn           func(context.Context, int64) (int64, error)
-	emailFn           func(context.Context, string) (gen.GetUserByEmailRow, error)
-	updateUserFn      func(context.Context, gen.UpdateUserDisplayIDParams) (gen.UpdateUserDisplayIDRow, error)
-	updateFn          func(context.Context, gen.UpdateURLParams) (gen.Url, error)
-	softFn            func(context.Context, gen.SoftDeleteURLParams) (gen.Url, error)
-	hardFn            func(context.Context, gen.HardDeleteURLParams) error
-	createDestFn      func(context.Context, gen.CreateDestinationParams) (gen.CreateDestinationRow, error)
-	destByHashFn      func(context.Context, string) (gen.GetDestinationByHashRow, error)
-	destByIDFn        func(context.Context, int64) (gen.GetDestinationByIDRow, error)
-	blockedFn         func(context.Context, string) (gen.GetBlockedDomainRow, error)
-	createVerFn       func(context.Context, gen.CreateURLVersionParams) error
-	latestVerFn       func(context.Context, int64) (int32, error)
-	createClickFn     func(context.Context, gen.CreateClickLogParams) (gen.ClickLog, error)
-	incrementClickFn  func(context.Context, int64) error
-	updateHealthFn    func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
-	shortCodeExistsFn func(context.Context, string) (bool, error)
-	listBlockedIPFn   func(context.Context) ([]gen.BlockedIpRange, error)
+	createFn             func(context.Context, gen.CreateURLParams) (gen.Url, error)
+	createUserFn         func(context.Context, gen.CreateUserParams) (gen.CreateUserRow, error)
+	byCodeFn             func(context.Context, string) (gen.GetURLByShortCodeRow, error)
+	byCodeForUpdateFn    func(context.Context, string) (gen.GetURLByShortCodeForUpdateRow, error)
+	byIDFn               func(context.Context, gen.GetURLByIDParams) (gen.GetURLByIDRow, error)
+	listFn               func(context.Context, gen.ListURLsParams) ([]gen.ListURLsRow, error)
+	countFn              func(context.Context, int64) (int64, error)
+	emailFn              func(context.Context, string) (gen.GetUserByEmailRow, error)
+	updateUserFn         func(context.Context, gen.UpdateUserDisplayIDParams) (gen.UpdateUserDisplayIDRow, error)
+	updateFn             func(context.Context, gen.UpdateURLParams) (gen.Url, error)
+	softFn               func(context.Context, gen.SoftDeleteURLParams) (gen.Url, error)
+	hardFn               func(context.Context, gen.HardDeleteURLParams) error
+	createDestFn         func(context.Context, gen.CreateDestinationParams) (gen.CreateDestinationRow, error)
+	destByHashFn         func(context.Context, string) (gen.GetDestinationByHashRow, error)
+	destByIDFn           func(context.Context, int64) (gen.GetDestinationByIDRow, error)
+	blockedFn            func(context.Context, string) (gen.GetBlockedDomainRow, error)
+	createVerFn          func(context.Context, gen.CreateURLVersionParams) error
+	latestVerFn          func(context.Context, int64) (int32, error)
+	createClickFn        func(context.Context, gen.CreateClickLogParams) (gen.ClickLog, error)
+	incrementClickFn     func(context.Context, int64) error
+	updateHealthFn       func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
+	shortCodeExistsFn    func(context.Context, string) (bool, error)
+	listBlockedIPFn      func(context.Context) ([]gen.BlockedIpRange, error)
+	createSessionFn      func(context.Context, gen.CreateSessionParams) (gen.Session, error)
+	getSessionByHashFn   func(context.Context, string) (gen.Session, error)
+	getSessionByIDFn     func(context.Context, int64) (gen.Session, error)
+	getUserByIDFn        func(context.Context, int64) (gen.GetUserByIDRow, error)
+	listSessionsFn       func(context.Context, int64) ([]gen.Session, error)
+	revokeSessionFn      func(context.Context, gen.RevokeSessionParams) error
+	updateSessionFn      func(context.Context, int64) error
+	addPasswordHistoryFn func(context.Context, gen.AddPasswordHistoryParams) error
+	updateUserPasswordFn func(context.Context, gen.UpdateUserPasswordParams) (gen.UpdateUserPasswordRow, error)
+	listActiveSessionsFn func(context.Context, int64) ([]gen.Session, error)
+}
+
+func (m *mockQuerier) ExecContext(_ context.Context, _ string, _ ...interface{}) (sql.Result, error) {
+	return nil, nil
+}
+
+func (m *mockQuerier) PrepareContext(_ context.Context, _ string) (*sql.Stmt, error) {
+	return nil, nil
+}
+
+func (m *mockQuerier) QueryContext(_ context.Context, _ string, _ ...interface{}) (*sql.Rows, error) {
+	return nil, nil
+}
+
+func (m *mockQuerier) QueryRowContext(_ context.Context, _ string, _ ...interface{}) *sql.Row {
+	return &sql.Row{}
 }
 
 func (m *mockQuerier) GetBlockedDomain(ctx context.Context, domain string) (gen.GetBlockedDomainRow, error) {
@@ -137,6 +163,80 @@ func (m *mockQuerier) ShortCodeExists(ctx context.Context, shortCode string) (bo
 func (m *mockQuerier) ListBlockedIPRanges(ctx context.Context) ([]gen.BlockedIpRange, error) {
 	if m.listBlockedIPFn != nil {
 		return m.listBlockedIPFn(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) CreateSession(ctx context.Context, arg gen.CreateSessionParams) (gen.Session, error) {
+	if m.createSessionFn != nil {
+		return m.createSessionFn(ctx, arg)
+	}
+	return gen.Session{}, nil
+}
+
+func (m *mockQuerier) GetSessionByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (gen.Session, error) {
+	if m.getSessionByHashFn != nil {
+		return m.getSessionByHashFn(ctx, refreshTokenHash)
+	}
+	return gen.Session{}, nil
+}
+
+func (m *mockQuerier) GetSessionByID(ctx context.Context, id int64) (gen.Session, error) {
+	if m.getSessionByIDFn != nil {
+		return m.getSessionByIDFn(ctx, id)
+	}
+	return gen.Session{}, nil
+}
+
+func (m *mockQuerier) GetUserByID(ctx context.Context, id int64) (gen.GetUserByIDRow, error) {
+	if m.getUserByIDFn != nil {
+		return m.getUserByIDFn(ctx, id)
+	}
+	return gen.GetUserByIDRow{}, nil
+}
+
+func (m *mockQuerier) ListSessionsByUser(ctx context.Context, userID int64) ([]gen.Session, error) {
+	if m.listSessionsFn != nil {
+		return m.listSessionsFn(ctx, userID)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) RevokeSession(ctx context.Context, arg gen.RevokeSessionParams) error {
+	if m.revokeSessionFn != nil {
+		return m.revokeSessionFn(ctx, arg)
+	}
+	return nil
+}
+
+func (m *mockQuerier) UpdateSessionLastActive(ctx context.Context, id int64) error {
+	if m.updateSessionFn != nil {
+		return m.updateSessionFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *mockQuerier) AddPasswordHistory(ctx context.Context, arg gen.AddPasswordHistoryParams) error {
+	if m.addPasswordHistoryFn != nil {
+		return m.addPasswordHistoryFn(ctx, arg)
+	}
+	return nil
+}
+
+func (m *mockQuerier) UpdateUserPassword(ctx context.Context, arg gen.UpdateUserPasswordParams) (gen.UpdateUserPasswordRow, error) {
+	if m.updateUserPasswordFn != nil {
+		return m.updateUserPasswordFn(ctx, arg)
+	}
+	return gen.UpdateUserPasswordRow{}, nil
+}
+
+func (m *mockQuerier) GetLastPasswordHistory(_ context.Context, _ int64) (string, error) {
+	return "", nil
+}
+
+func (m *mockQuerier) ListActiveSessionsByUser(ctx context.Context, userID int64) ([]gen.Session, error) {
+	if m.listActiveSessionsFn != nil {
+		return m.listActiveSessionsFn(ctx, userID)
 	}
 	return nil, nil
 }

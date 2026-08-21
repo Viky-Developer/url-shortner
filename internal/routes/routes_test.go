@@ -12,7 +12,8 @@ import (
 func TestNew(t *testing.T) {
 	log, _ := logger.New()
 	h := handler.NewURLHandler(nil, log)
-	mux := New(h)
+	ah := handler.NewAuthHandler(nil, log)
+	mux := New(h, ah, nil)
 
 	if mux == nil {
 		t.Fatal("expected non-nil handler from New()")
@@ -26,19 +27,20 @@ func TestNew(t *testing.T) {
 func TestRoutesRegistered(t *testing.T) {
 	log, _ := logger.New()
 	h := handler.NewURLHandler(nil, log)
-	mux := New(h)
+	ah := handler.NewAuthHandler(nil, log)
+	mux := New(h, ah, nil)
 
 	routes := []struct {
 		method string
 		path   string
 	}{
-		{http.MethodPost, "/api/v1/123/shorten"},
+		{http.MethodPost, "/api/v1/shorten"},
 		{http.MethodGet, "/api/v1/abc"},
-		{http.MethodGet, "/api/v1/123/urls"},
-		{http.MethodGet, "/api/v1/123/urls/456"},
-		{http.MethodPatch, "/api/v1/123/urls/456"},
-		{http.MethodDelete, "/api/v1/123/urls/456"},
-		{http.MethodDelete, "/api/v1/123/urls/456/approve"},
+		{http.MethodGet, "/api/v1/urls"},
+		{http.MethodGet, "/api/v1/urls/456"},
+		{http.MethodPatch, "/api/v1/urls/456"},
+		{http.MethodDelete, "/api/v1/urls/456"},
+		{http.MethodDelete, "/api/v1/urls/456/approve"},
 	}
 
 	for _, rt := range routes {

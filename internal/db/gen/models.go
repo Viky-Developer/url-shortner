@@ -50,6 +50,15 @@ type Destination struct {
 	LastHealthCheck         sql.NullTime  `json:"last_health_check"`
 }
 
+type PasswordHistory struct {
+	ID           int64          `json:"id"`
+	UserID       int64          `json:"user_id"`
+	PasswordHash string         `json:"password_hash"`
+	IpAddress    pqtype.Inet    `json:"ip_address"`
+	UserAgent    sql.NullString `json:"user_agent"`
+	CreatedAt    sql.NullTime   `json:"created_at"`
+}
+
 type Session struct {
 	ID               int64          `json:"id"`
 	UserID           int64          `json:"user_id"`
@@ -93,11 +102,12 @@ type UrlVersion struct {
 }
 
 type User struct {
-	ID            int64          `json:"id"`
-	Email         string         `json:"email"`
-	PasswordHash  string         `json:"password_hash"`
-	DisplayUserID sql.NullString `json:"display_user_id"`
-	CreatedAt     sql.NullTime   `json:"created_at"`
-	UpdatedAt     sql.NullTime   `json:"updated_at"`
-	DeletedAt     sql.NullTime   `json:"deleted_at"`
+	ID                int64          `json:"id"`
+	Email             string         `json:"email"`
+	PasswordHash      string         `json:"password_hash"`
+	DisplayUserID     sql.NullString `json:"display_user_id"`
+	CreatedAt         sql.NullTime   `json:"created_at"`
+	UpdatedAt         sql.NullTime   `json:"updated_at"`
+	DeletedAt         sql.NullTime   `json:"deleted_at"`
+	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
 }

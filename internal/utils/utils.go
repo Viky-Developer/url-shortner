@@ -2,6 +2,7 @@
 package utils
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,29 +11,43 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/sqlc-dev/pqtype"
 	"github.com/vicky/url-shortner/internal/apperror"
 )
 
-// OptionalTime is a time that also accepts null or empty-string JSON values,
-// treating them as "not provided". It is used for optional request fields so an
-// omitted or empty expiresAt never triggers a type conversion error.
-type OptionalTime struct {
+// UnixMilliTime is a time.Time that accepts both RFC3339 strings and Unix
+// milliseconds (as JSON numbers) in requests. An omitted, null, or zero value
+// means "not provided".
+type UnixMilliTime struct {
 	Time  time.Time
 	Valid bool
 }
 
-// UnmarshalJSON parses an RFC3339 timestamp. Null and empty strings set the
-// value as invalid instead of raising a conversion error.
-func (t *OptionalTime) UnmarshalJSON(b []byte) error {
+// UnmarshalJSON parses either an RFC3339 string or a Unix millisecond number.
+func (t *UnixMilliTime) UnmarshalJSON(b []byte) error {
 	s := strings.Trim(string(b), `"`)
 	if s == "" || s == "null" {
 		t.Valid = false
 		return nil
 	}
+
+	// Try parsing as Unix milliseconds (number)
+	if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
+		if ms == 0 {
+			t.Valid = false
+			return nil
+		}
+		t.Time = time.UnixMilli(ms)
+		t.Valid = true
+		return nil
+	}
+
+	// Fall back to RFC3339
 	parsed, err := time.Parse(time.RFC3339, s)
 	if err != nil {
 		return err
@@ -40,6 +55,14 @@ func (t *OptionalTime) UnmarshalJSON(b []byte) error {
 	t.Time = parsed
 	t.Valid = true
 	return nil
+}
+
+// MarshalJSON returns null if invalid, otherwise RFC3339 string.
+func (t UnixMilliTime) MarshalJSON() ([]byte, error) {
+	if !t.Valid {
+		return []byte("null"), nil
+	}
+	return []byte(`"` + t.Time.Format(time.RFC3339) + `"`), nil
 }
 
 // SanitizeLog strips control characters (0x00-0x1F and 0x7F) from a string
@@ -95,7 +118,7 @@ func ParsePositiveInt(value string, fallback int32) int32 {
 
 // ValidateExpiresAt ensures that when an expiration time is provided it is not
 // in the past (i.e. it must be the current moment or a future time).
-func ValidateExpiresAt(e OptionalTime) error {
+func ValidateExpiresAt(e UnixMilliTime) error {
 	if !e.Valid {
 		return nil
 	}
@@ -112,6 +135,63 @@ func ParseID(value string) (int64, error) {
 		return 0, fmt.Errorf("invalid id: %s", value)
 	}
 	return id, nil
+}
+
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+// ValidateEmail validates email format using regex.
+func ValidateEmail(email string) error {
+	if email == "" {
+		return fmt.Errorf("email is required")
+	}
+	if !emailRegex.MatchString(email) {
+		return fmt.Errorf("invalid email format")
+	}
+	return nil
+}
+
+// ValidatePassword validates password strength:
+// - At least 1 lowercase letter
+// - At least 1 uppercase letter
+// - At least 1 number
+// - Maximum 8 characters
+func ValidatePassword(password string) error {
+
+	if len(password) > 8 {
+		return fmt.Errorf("password must be at most 8 characters")
+	}
+
+	hasLower := false
+	hasUpper := false
+	hasNumber := false
+
+	for _, r := range password {
+		switch {
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= '0' && r <= '9':
+			hasNumber = true
+		}
+	}
+
+	var missing []string
+	if !hasLower {
+		missing = append(missing, "lowercase letter")
+	}
+	if !hasUpper {
+		missing = append(missing, "uppercase letter")
+	}
+	if !hasNumber {
+		missing = append(missing, "number")
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("password must contain at least one %s", strings.Join(missing, ", "))
+	}
+
+	return nil
 }
 
 // ParsePagination computes page, perPage, and offset from query parameters,
@@ -190,4 +270,29 @@ func DecodeBody(r *http.Request, v any) error {
 		return fmt.Errorf("%w: %v", apperror.ErrInvalidPayload, err)
 	}
 	return nil
+}
+
+// NullString returns a sql.NullString with the given value if non-empty,
+// otherwise returns an invalid NullString.
+func NullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{Valid: false}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+// NullIP returns a pqtype.Inet for the given IP address string.
+// An empty or unparseable string returns an invalid pqtype.Inet.
+func NullIP(ipString string) pqtype.Inet {
+	if ipString == "" {
+		return pqtype.Inet{Valid: false}
+	}
+	ip := net.ParseIP(ipString)
+	if ip == nil {
+		return pqtype.Inet{Valid: false}
+	}
+	if ipv4 := ip.To4(); ipv4 != nil {
+		ip = ipv4
+	}
+	return pqtype.Inet{IPNet: net.IPNet{IP: ip, Mask: net.CIDRMask(len(ip)*8, len(ip)*8)}, Valid: true}
 }

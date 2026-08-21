@@ -25,4 +25,26 @@ var (
 	ErrURLExpired = errors.New("this URL has expired and is no longer available")
 	// ErrBlockedDomain is returned when the destination domain is blocked.
 	ErrBlockedDomain = errors.New("the destination domain is blocked")
+	// ErrUnauthorized is returned when the user is not authenticated.
+	ErrUnauthorized = errors.New("unauthorized access")
 )
+
+// ActiveDevice represents an active session for the max-device error.
+type ActiveDevice struct {
+	ID           int64
+	DeviceType   string
+	DeviceName   string
+	IPAddress    string
+	LoggedInAt   string
+	LastActiveAt string
+}
+
+// MaxDeviceError is returned when a user already has the maximum number of
+// active devices and must revoke one before a new login is allowed.
+type MaxDeviceError struct {
+	Devices []ActiveDevice
+}
+
+func (e *MaxDeviceError) Error() string {
+	return "maximum active devices reached. please log out from one device and try again"
+}

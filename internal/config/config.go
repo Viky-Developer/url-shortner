@@ -30,6 +30,15 @@ type Config struct {
 	DefaultUserEmail    string        // Email of the default user created at startup.
 	DefaultUserPassword string        // Password of the default user created at startup.
 	UserIDSecretKey     string        // Secret key used to encode/decode display user ids.
+	JWTSecretKey        string        // Secret key for signing JWT tokens.
+	AccessTokenExpiry   time.Duration // Access token expiry duration.
+	RefreshTokenExpiry  time.Duration // Refresh token expiry duration.
+	RedisHost           string        // Redis host.
+	RedisPort           string        // Redis port.
+	RedisUserName       string        // Redis username.
+	RedisPassword       string        // Redis password.
+	RedisDB             int           // Redis database number.
+	RedisMaxRetries     int           // Redis max retries.
 }
 
 // Load reads configuration from the .env file (if present) and the process
@@ -53,6 +62,15 @@ func Load() *Config {
 		DefaultUserEmail:    getEnv("DEFAULT_USER_EMAIL", "default@urlshortner.local"),
 		DefaultUserPassword: getEnv("DEFAULT_USER_PASSWORD", "default123"),
 		UserIDSecretKey:     getEnv("USER_ID_SECRET_KEY", "change-me-in-production"),
+		JWTSecretKey:        getEnv("JWT_SECRET_KEY", "change-me-in-production-jwt-secret"),
+		AccessTokenExpiry:   getEnvDuration("ACCESS_TOKEN_EXPIRY", 15*time.Minute),
+		RefreshTokenExpiry:  getEnvDuration("REFRESH_TOKEN_EXPIRY", 7*24*time.Hour),
+		RedisHost:           getEnv("REDIS_HOST", "localhost"),
+		RedisPort:           getEnv("REDIS_PORT", "6379"),
+		RedisUserName:       getEnv("REDIS_USERNAME", ""),
+		RedisPassword:       getEnv("REDIS_PASSWORD", ""),
+		RedisDB:             getEnvInt("REDIS_DB", 0),
+		RedisMaxRetries:     getEnvInt("REDIS_MAX_RETRIES", 3),
 	}
 }
 
@@ -105,4 +123,18 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// getEnvDuration returns the duration value of the environment variable key, or
+// fallback when the variable is empty or unparsable.
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
