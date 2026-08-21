@@ -134,6 +134,14 @@ func defaultPort(u *url.URL) string {
 	return "80"
 }
 
+func buildCleanURL(ip net.IP, useHTTPS bool, port string) string {
+	scheme := "http"
+	if useHTTPS {
+		scheme = "https"
+	}
+	return scheme + "://" + net.JoinHostPort(ip.String(), port)
+}
+
 func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
@@ -166,16 +174,11 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0
 	}
 
-	var scheme string
-	switch parsedURL.Scheme {
-	case "https":
-		scheme = "https"
-	case "http":
-		scheme = "http"
-	default:
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		return enum.DestinationStatusUnknown, 0
 	}
-	cleanURL := scheme + "://" + net.JoinHostPort(safeIP.String(), defaultPort(parsedURL))
+
+	cleanURL := buildCleanURL(safeIP, parsedURL.Scheme == "https", defaultPort(parsedURL))
 
 	client := s.newSafeHTTPClient()
 	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
