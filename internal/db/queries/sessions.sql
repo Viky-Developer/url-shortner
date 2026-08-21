@@ -30,3 +30,14 @@ SELECT id, user_id, refresh_token_hash, device_type, device_name, ip_address, us
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at ASC;
+
+-- name: PurgeOldRevokedSessions :exec
+DELETE FROM sessions
+WHERE session_status = 0 AND last_active_at < $1;
+
+-- name: PurgeInactiveSessions :exec
+DELETE FROM sessions
+WHERE session_status = 1 AND last_active_at < $1;
+
+-- name: CountRevokedSessions :one
+SELECT COUNT(*) FROM sessions WHERE session_status = 0;

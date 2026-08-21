@@ -10,6 +10,38 @@ import (
 	"database/sql"
 )
 
+const createBlockedDomain = `-- name: CreateBlockedDomain :one
+INSERT INTO blocked_domains (domain, reason)
+VALUES ($1, $2)
+RETURNING id, domain, reason, created_at
+`
+
+type CreateBlockedDomainParams struct {
+	Domain string         `json:"domain"`
+	Reason sql.NullString `json:"reason"`
+}
+
+func (q *Queries) CreateBlockedDomain(ctx context.Context, arg CreateBlockedDomainParams) (BlockedDomain, error) {
+	row := q.db.QueryRowContext(ctx, createBlockedDomain, arg.Domain, arg.Reason)
+	var i BlockedDomain
+	err := row.Scan(
+		&i.ID,
+		&i.Domain,
+		&i.Reason,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const deleteBlockedDomain = `-- name: DeleteBlockedDomain :exec
+DELETE FROM blocked_domains WHERE id = $1
+`
+
+func (q *Queries) DeleteBlockedDomain(ctx context.Context, id int32) error {
+	_, err := q.db.ExecContext(ctx, deleteBlockedDomain, id)
+	return err
+}
+
 const getBlockedDomain = `-- name: GetBlockedDomain :one
 SELECT id, domain, reason FROM blocked_domains WHERE domain = $1
 `
@@ -25,4 +57,36 @@ func (q *Queries) GetBlockedDomain(ctx context.Context, domain string) (GetBlock
 	var i GetBlockedDomainRow
 	err := row.Scan(&i.ID, &i.Domain, &i.Reason)
 	return i, err
+}
+
+const listBlockedDomains = `-- name: ListBlockedDomains :many
+SELECT id, domain, reason, created_at FROM blocked_domains ORDER BY id DESC
+`
+
+func (q *Queries) ListBlockedDomains(ctx context.Context) ([]BlockedDomain, error) {
+	rows, err := q.db.QueryContext(ctx, listBlockedDomains)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BlockedDomain
+	for rows.Next() {
+		var i BlockedDomain
+		if err := rows.Scan(
+			&i.ID,
+			&i.Domain,
+			&i.Reason,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

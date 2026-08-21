@@ -21,6 +21,7 @@ type BlockedDomain struct {
 type BlockedIpRange struct {
 	Cidr        pqtype.CIDR `json:"cidr"`
 	Description string      `json:"description"`
+	ID          int64       `json:"id"`
 }
 
 type ClickLog struct {

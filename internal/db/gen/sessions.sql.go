@@ -12,6 +12,17 @@ import (
 	"github.com/sqlc-dev/pqtype"
 )
 
+const countRevokedSessions = `-- name: CountRevokedSessions :one
+SELECT COUNT(*) FROM sessions WHERE session_status = 0
+`
+
+func (q *Queries) CountRevokedSessions(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRevokedSessions)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (user_id, refresh_token_hash, device_type, device_name, ip_address, user_agent)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -180,6 +191,26 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, userID int64) ([]Sessi
 		return nil, err
 	}
 	return items, nil
+}
+
+const purgeInactiveSessions = `-- name: PurgeInactiveSessions :exec
+DELETE FROM sessions
+WHERE session_status = 1 AND last_active_at < $1
+`
+
+func (q *Queries) PurgeInactiveSessions(ctx context.Context, lastActiveAt sql.NullTime) error {
+	_, err := q.db.ExecContext(ctx, purgeInactiveSessions, lastActiveAt)
+	return err
+}
+
+const purgeOldRevokedSessions = `-- name: PurgeOldRevokedSessions :exec
+DELETE FROM sessions
+WHERE session_status = 0 AND last_active_at < $1
+`
+
+func (q *Queries) PurgeOldRevokedSessions(ctx context.Context, lastActiveAt sql.NullTime) error {
+	_, err := q.db.ExecContext(ctx, purgeOldRevokedSessions, lastActiveAt)
+	return err
 }
 
 const revokeSession = `-- name: RevokeSession :exec

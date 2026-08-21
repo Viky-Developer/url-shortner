@@ -23,3 +23,15 @@ VALUES ($1, $2, $3, $4);
 
 -- name: GetLastPasswordHistory :one
 SELECT password_hash FROM password_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1;
+
+-- name: PurgeOldPasswordHistory :exec
+DELETE FROM password_history WHERE created_at < $1;
+
+-- name: CountPasswordHistory :one
+SELECT COUNT(*) FROM password_history WHERE user_id = $1;
+
+-- name: SoftDeleteUser :exec
+UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: HardDeleteUser :exec
+DELETE FROM users WHERE id = $1 AND deleted_at IS NOT NULL;

@@ -296,3 +296,37 @@ func NullIP(ipString string) pqtype.Inet {
 	}
 	return pqtype.Inet{IPNet: net.IPNet{IP: ip, Mask: net.CIDRMask(len(ip)*8, len(ip)*8)}, Valid: true}
 }
+
+// ParseBrowser extracts the primary browser name from a User-Agent string.
+func ParseBrowser(ua string) string {
+	lower := strings.ToLower(ua)
+	switch {
+	case strings.Contains(lower, "edg/") || strings.Contains(lower, "edge/"):
+		return "Edge"
+	case strings.Contains(lower, "opr/") || strings.Contains(lower, "opera"):
+		return "Opera"
+	case strings.Contains(lower, "chrome") && !strings.Contains(lower, "edg"):
+		return "Chrome"
+	case strings.Contains(lower, "firefox"):
+		return "Firefox"
+	case strings.Contains(lower, "safari") && !strings.Contains(lower, "chrome"):
+		return "Safari"
+	case strings.Contains(lower, "msie") || strings.Contains(lower, "trident"):
+		return "IE"
+	default:
+		return "Other"
+	}
+}
+
+// ParseDeviceType extracts the device type from a User-Agent string.
+func ParseDeviceType(ua string) string {
+	lower := strings.ToLower(ua)
+	switch {
+	case strings.Contains(lower, "mobile") || strings.Contains(lower, "android") && !strings.Contains(lower, "tablet"):
+		return "Mobile"
+	case strings.Contains(lower, "tablet") || strings.Contains(lower, "ipad"):
+		return "Tablet"
+	default:
+		return "Desktop"
+	}
+}

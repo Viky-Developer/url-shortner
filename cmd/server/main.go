@@ -74,7 +74,9 @@ func run() error {
 	authService := service.NewAuthService(queries, database, cfg, sessionCache, log)
 	urlHandler := buildURLHandler(cfg, database, log)
 	authHandler := handler.NewAuthHandler(authService, log)
-	app := middleware.Chain(routes.New(urlHandler, authHandler, authService),
+	adminService := service.NewAdminService(queries)
+	adminHandler := handler.NewAdminHandler(adminService, log)
+	app := middleware.Chain(routes.New(urlHandler, authHandler, adminHandler, authService),
 		middleware.Recovery(log),
 		middleware.Logger(log),
 		middleware.ContentTypeJSON,

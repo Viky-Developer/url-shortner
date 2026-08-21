@@ -223,8 +223,9 @@ func buildMux(t *testing.T, auth handler.AuthService, url handler.URLService) ht
 	l := newLog(t)
 	ah := handler.NewAuthHandler(auth, l)
 	uh := handler.NewURLHandler(url, l)
+	adH := handler.NewAdminHandler(nil, l)
 	realAuth := service.NewAuthService(nil, nil, testCfg(), alwaysActiveCache{}, l)
-	return routes.New(uh, ah, realAuth)
+	return routes.New(uh, ah, adH, realAuth)
 }
 
 type apiCase struct {

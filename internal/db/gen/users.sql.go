@@ -34,6 +34,17 @@ func (q *Queries) AddPasswordHistory(ctx context.Context, arg AddPasswordHistory
 	return err
 }
 
+const countPasswordHistory = `-- name: CountPasswordHistory :one
+SELECT COUNT(*) FROM password_history WHERE user_id = $1
+`
+
+func (q *Queries) CountPasswordHistory(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPasswordHistory, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, password_hash, display_user_id, password_changed_at)
 VALUES ($1, $2, $3, NOW())
@@ -124,6 +135,33 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, er
 		&i.PasswordChangedAt,
 	)
 	return i, err
+}
+
+const hardDeleteUser = `-- name: HardDeleteUser :exec
+DELETE FROM users WHERE id = $1 AND deleted_at IS NOT NULL
+`
+
+func (q *Queries) HardDeleteUser(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, hardDeleteUser, id)
+	return err
+}
+
+const purgeOldPasswordHistory = `-- name: PurgeOldPasswordHistory :exec
+DELETE FROM password_history WHERE created_at < $1
+`
+
+func (q *Queries) PurgeOldPasswordHistory(ctx context.Context, createdAt sql.NullTime) error {
+	_, err := q.db.ExecContext(ctx, purgeOldPasswordHistory, createdAt)
+	return err
+}
+
+const softDeleteUser = `-- name: SoftDeleteUser :exec
+UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) SoftDeleteUser(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, softDeleteUser, id)
+	return err
 }
 
 const updateUserDisplayID = `-- name: UpdateUserDisplayID :one

@@ -7,22 +7,63 @@ package db
 
 import (
 	"context"
+
+	"github.com/sqlc-dev/pqtype"
 )
 
-const listBlockedIPRanges = `-- name: ListBlockedIPRanges :many
-SELECT cidr, description FROM blocked_ip_ranges
+const createBlockedIPRange = `-- name: CreateBlockedIPRange :one
+INSERT INTO blocked_ip_ranges (cidr, description)
+VALUES ($1, $2)
+RETURNING id, cidr, description
 `
 
-func (q *Queries) ListBlockedIPRanges(ctx context.Context) ([]BlockedIpRange, error) {
+type CreateBlockedIPRangeParams struct {
+	Cidr        pqtype.CIDR `json:"cidr"`
+	Description string      `json:"description"`
+}
+
+type CreateBlockedIPRangeRow struct {
+	ID          int64       `json:"id"`
+	Cidr        pqtype.CIDR `json:"cidr"`
+	Description string      `json:"description"`
+}
+
+func (q *Queries) CreateBlockedIPRange(ctx context.Context, arg CreateBlockedIPRangeParams) (CreateBlockedIPRangeRow, error) {
+	row := q.db.QueryRowContext(ctx, createBlockedIPRange, arg.Cidr, arg.Description)
+	var i CreateBlockedIPRangeRow
+	err := row.Scan(&i.ID, &i.Cidr, &i.Description)
+	return i, err
+}
+
+const deleteBlockedIPRange = `-- name: DeleteBlockedIPRange :exec
+DELETE FROM blocked_ip_ranges WHERE id = $1
+`
+
+func (q *Queries) DeleteBlockedIPRange(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteBlockedIPRange, id)
+	return err
+}
+
+const listBlockedIPRanges = `-- name: ListBlockedIPRanges :many
+SELECT id, cidr, description FROM blocked_ip_ranges ORDER BY id DESC
+`
+
+type ListBlockedIPRangesRow struct {
+	ID          int64       `json:"id"`
+	Cidr        pqtype.CIDR `json:"cidr"`
+	Description string      `json:"description"`
+}
+
+func (q *Queries) ListBlockedIPRanges(ctx context.Context) ([]ListBlockedIPRangesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listBlockedIPRanges)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []BlockedIpRange
+	var items []ListBlockedIPRangesRow
 	for rows.Next() {
-		var i BlockedIpRange
-		if err := rows.Scan(&i.Cidr, &i.Description); err != nil {
+		var i ListBlockedIPRangesRow
+		if err := rows.Scan(&i.ID, &i.Cidr, &i.Description); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
