@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -78,6 +79,10 @@ func (h *AdminHandler) DeleteBlockedDomain(w http.ResponseWriter, r *http.Reques
 	id, err := utils.ParseID(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: invalid id", apperror.ErrInvalidPayload))
+		return
+	}
+	if id < 0 || id > math.MaxInt32 {
+		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: id out of range", apperror.ErrInvalidPayload))
 		return
 	}
 
