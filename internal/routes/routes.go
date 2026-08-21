@@ -11,7 +11,7 @@ import (
 
 // New builds a new ServeMux with every application route wired to the given
 // URL handler and returns it as an http.Handler.
-func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, authService *service.AuthService) http.Handler {
+func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, adminHandler *handler.AdminHandler, authService *service.AuthService) http.Handler {
 	mux := http.NewServeMux()
 
 	// Auth routes (public)
@@ -36,6 +36,18 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, authS
 	mux.Handle("DELETE /api/v1/urls/{id}/approve", authMiddleware(http.HandlerFunc(urlHandler.ApproveHardDelete)))
 	mux.Handle("GET /api/v1/urls/{id}/clicks", authMiddleware(http.HandlerFunc(urlHandler.ListClickLogs)))
 	mux.Handle("GET /api/v1/urls/{id}/analytics", authMiddleware(http.HandlerFunc(urlHandler.GetAnalytics)))
+
+	// Admin routes (protected) — all require authentication
+	mux.Handle("GET /api/v1/admin/blocked-domains", authMiddleware(http.HandlerFunc(adminHandler.ListBlockedDomains)))
+	mux.Handle("POST /api/v1/admin/blocked-domains", authMiddleware(http.HandlerFunc(adminHandler.CreateBlockedDomain)))
+	mux.Handle("DELETE /api/v1/admin/blocked-domains/{id}", authMiddleware(http.HandlerFunc(adminHandler.DeleteBlockedDomain)))
+	mux.Handle("GET /api/v1/admin/blocked-ip-ranges", authMiddleware(http.HandlerFunc(adminHandler.ListBlockedIPRanges)))
+	mux.Handle("POST /api/v1/admin/blocked-ip-ranges", authMiddleware(http.HandlerFunc(adminHandler.CreateBlockedIPRange)))
+	mux.Handle("DELETE /api/v1/admin/blocked-ip-ranges/{id}", authMiddleware(http.HandlerFunc(adminHandler.DeleteBlockedIPRange)))
+	mux.Handle("DELETE /api/v1/admin/users/{id}/soft-delete", authMiddleware(http.HandlerFunc(adminHandler.SoftDeleteUser)))
+	mux.Handle("DELETE /api/v1/admin/users/{id}/hard-delete", authMiddleware(http.HandlerFunc(adminHandler.HardDeleteUser)))
+	mux.Handle("POST /api/v1/admin/maintenance/purge-sessions", authMiddleware(http.HandlerFunc(adminHandler.PurgeSessions)))
+	mux.Handle("POST /api/v1/admin/maintenance/purge-password-history", authMiddleware(http.HandlerFunc(adminHandler.PurgePasswordHistory)))
 
 	// Public redirect (no auth needed)
 	mux.HandleFunc("GET /api/v1/{shortCode}", urlHandler.RedirectShortURL)

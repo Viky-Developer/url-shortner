@@ -64,11 +64,13 @@ type DeleteResponse struct {
 
 // ClickLogEntry represents a single click log record.
 type ClickLogEntry struct {
-	ID        int64  `json:"id"`
-	ClickedAt string `json:"clickedAt"` // RFC3339 timestamp.
-	IPAddress string `json:"ipAddress"`
-	UserAgent string `json:"userAgent"`
-	Referrer  string `json:"referrer"`
+	ID         int64  `json:"id"`
+	ClickedAt  string `json:"clickedAt"` // RFC3339 timestamp.
+	IPAddress  string `json:"ipAddress"`
+	UserAgent  string `json:"userAgent"`
+	Referrer   string `json:"referrer"`
+	Browser    string `json:"browser"`
+	DeviceType string `json:"deviceType"`
 }
 
 // ClickStats represents aggregate click statistics for a URL.

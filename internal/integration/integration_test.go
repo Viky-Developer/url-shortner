@@ -218,7 +218,8 @@ func newTestMux(t *testing.T, authSvc *mockAuthService, urlSvc *mockURLService) 
 		urlHandler = handler.NewURLHandler(nil, log)
 	}
 	authHandler := handler.NewAuthHandler(authSvc, log)
-	return routes.New(urlHandler, authHandler, realAuthService)
+	adminHandler := handler.NewAdminHandler(nil, log)
+	return routes.New(urlHandler, authHandler, adminHandler, realAuthService)
 }
 
 func doRequest(t *testing.T, mux http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -905,7 +906,8 @@ func TestAllRoutesRegistered(t *testing.T) {
 	realAuthService := service.NewAuthService(nil, nil, cfg, alwaysActiveCache{}, testLog(t))
 	urlHandler := handler.NewURLHandler(nil, testLog(t))
 	authHandler := handler.NewAuthHandler(nil, testLog(t))
-	mux := routes.New(urlHandler, authHandler, realAuthService)
+	adminHandler := handler.NewAdminHandler(nil, testLog(t))
+	mux := routes.New(urlHandler, authHandler, adminHandler, realAuthService)
 
 	serveMux, ok := mux.(*http.ServeMux)
 	if !ok {

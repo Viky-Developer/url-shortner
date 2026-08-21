@@ -37,7 +37,7 @@ type mockQuerier struct {
 	incrementClickFn     func(context.Context, int64) error
 	updateHealthFn       func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
 	shortCodeExistsFn    func(context.Context, string) (bool, error)
-	listBlockedIPFn      func(context.Context) ([]gen.BlockedIpRange, error)
+	listBlockedIPFn      func(context.Context) ([]gen.ListBlockedIPRangesRow, error)
 	createSessionFn      func(context.Context, gen.CreateSessionParams) (gen.Session, error)
 	getSessionByHashFn   func(context.Context, string) (gen.Session, error)
 	getSessionByIDFn     func(context.Context, int64) (gen.Session, error)
@@ -165,7 +165,7 @@ func (m *mockQuerier) ShortCodeExists(ctx context.Context, shortCode string) (bo
 	return false, nil
 }
 
-func (m *mockQuerier) ListBlockedIPRanges(ctx context.Context) ([]gen.BlockedIpRange, error) {
+func (m *mockQuerier) ListBlockedIPRanges(ctx context.Context) ([]gen.ListBlockedIPRangesRow, error) {
 	if m.listBlockedIPFn != nil {
 		return m.listBlockedIPFn(ctx)
 	}
@@ -279,6 +279,74 @@ func (m *mockQuerier) ClicksByDateRange(ctx context.Context, arg gen.ClicksByDat
 		return m.clicksByDateRangeFn(ctx, arg)
 	}
 	return nil, nil
+}
+
+func (m *mockQuerier) CreateBlockedDomain(_ context.Context, _ gen.CreateBlockedDomainParams) (gen.BlockedDomain, error) {
+	return gen.BlockedDomain{}, nil
+}
+
+func (m *mockQuerier) ListBlockedDomains(_ context.Context) ([]gen.BlockedDomain, error) {
+	return nil, nil
+}
+
+func (m *mockQuerier) DeleteBlockedDomain(_ context.Context, _ int32) error {
+	return nil
+}
+
+func (m *mockQuerier) CreateBlockedIPRange(_ context.Context, _ gen.CreateBlockedIPRangeParams) (gen.CreateBlockedIPRangeRow, error) {
+	return gen.CreateBlockedIPRangeRow{}, nil
+}
+
+func (m *mockQuerier) DeleteBlockedIPRange(_ context.Context, _ int64) error {
+	return nil
+}
+
+func (m *mockQuerier) GetDailyStatsByURL(_ context.Context, _ gen.GetDailyStatsByURLParams) ([]gen.GetDailyStatsByURLRow, error) {
+	return nil, nil
+}
+
+func (m *mockQuerier) UpsertDailyStats(_ context.Context, _ gen.UpsertDailyStatsParams) error {
+	return nil
+}
+
+func (m *mockQuerier) RefreshDailyStats(_ context.Context, _ gen.RefreshDailyStatsParams) error {
+	return nil
+}
+
+func (m *mockQuerier) TopBrowsersByURL(_ context.Context, _ gen.TopBrowsersByURLParams) ([]gen.TopBrowsersByURLRow, error) {
+	return nil, nil
+}
+
+func (m *mockQuerier) TopDeviceTypesByURL(_ context.Context, _ gen.TopDeviceTypesByURLParams) ([]gen.TopDeviceTypesByURLRow, error) {
+	return nil, nil
+}
+
+func (m *mockQuerier) PurgeOldRevokedSessions(_ context.Context, _ sql.NullTime) error {
+	return nil
+}
+
+func (m *mockQuerier) PurgeInactiveSessions(_ context.Context, _ sql.NullTime) error {
+	return nil
+}
+
+func (m *mockQuerier) CountPasswordHistory(_ context.Context, _ int64) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockQuerier) PurgeOldPasswordHistory(_ context.Context, _ sql.NullTime) error {
+	return nil
+}
+
+func (m *mockQuerier) SoftDeleteUser(_ context.Context, _ int64) error {
+	return nil
+}
+
+func (m *mockQuerier) HardDeleteUser(_ context.Context, _ int64) error {
+	return nil
+}
+
+func (m *mockQuerier) CountRevokedSessions(_ context.Context) (int64, error) {
+	return 0, nil
 }
 
 func testLog(t *testing.T) logger.Logger {

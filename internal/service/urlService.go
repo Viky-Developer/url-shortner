@@ -134,6 +134,14 @@ func defaultPort(u *url.URL) string {
 	return "80"
 }
 
+func buildCleanURL(ip net.IP, useHTTPS bool, port string) string {
+	scheme := "http"
+	if useHTTPS {
+		scheme = "https"
+	}
+	return scheme + "://" + net.JoinHostPort(ip.String(), port)
+}
+
 func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
@@ -166,16 +174,11 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0
 	}
 
-	var scheme string
-	switch parsedURL.Scheme {
-	case "https":
-		scheme = "https"
-	case "http":
-		scheme = "http"
-	default:
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		return enum.DestinationStatusUnknown, 0
 	}
-	cleanURL := scheme + "://" + net.JoinHostPort(safeIP.String(), defaultPort(parsedURL))
+
+	cleanURL := buildCleanURL(safeIP, parsedURL.Scheme == "https", defaultPort(parsedURL))
 
 	client := s.newSafeHTTPClient()
 	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
@@ -442,10 +445,12 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 		}
 
 		if _, err := q.CreateClickLog(ctx, gen.CreateClickLogParams{
-			UrlID:     row.ID,
-			IpAddress: inet(click.IP),
-			UserAgent: nullString(click.UserAgent),
-			Referrer:  nullString(click.Referrer),
+			UrlID:      row.ID,
+			IpAddress:  inet(click.IP),
+			UserAgent:  nullString(click.UserAgent),
+			Referrer:   nullString(click.Referrer),
+			Browser:    nullString(utils.ParseBrowser(click.UserAgent)),
+			DeviceType: nullString(utils.ParseDeviceType(click.UserAgent)),
 		}); err != nil {
 			s.log.Error("failed to create click log", logger.Error(err), logger.Int64("urlID", row.ID))
 			return fmt.Errorf("%w: could not record click", apperror.ErrInternal)
@@ -455,6 +460,12 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 			s.log.Error("failed to increment click count", logger.Error(err), logger.Int64("urlID", row.ID))
 			return fmt.Errorf("%w: could not update click count", apperror.ErrInternal)
 		}
+
+		_ = q.UpsertDailyStats(ctx, gen.UpsertDailyStatsParams{
+			UrlID:       row.ID,
+			StatDate:    time.Now().Truncate(24 * time.Hour),
+			TotalClicks: sql.NullInt64{Int64: 1, Valid: true},
+		})
 
 		resp = s.toResponse(rowToUrlForUpdate(row), row.OriginalUrl)
 		return nil
@@ -727,11 +738,13 @@ func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, fro
 	items := make([]payload.ClickLogEntry, len(rows))
 	for i, r := range rows {
 		items[i] = payload.ClickLogEntry{
-			ID:        r.ID,
-			ClickedAt: formatNullTime(r.ClickedAt),
-			IPAddress: r.IpAddress.IPNet.IP.String(),
-			UserAgent: r.UserAgent.String,
-			Referrer:  r.Referrer.String,
+			ID:         r.ID,
+			ClickedAt:  formatNullTime(r.ClickedAt),
+			IPAddress:  r.IpAddress.IPNet.IP.String(),
+			UserAgent:  r.UserAgent.String,
+			Referrer:   r.Referrer.String,
+			Browser:    r.Browser.String,
+			DeviceType: r.DeviceType.String,
 		}
 	}
 

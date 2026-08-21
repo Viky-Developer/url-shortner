@@ -118,16 +118,18 @@ func (q *Queries) CountClickLogsByURL(ctx context.Context, arg CountClickLogsByU
 }
 
 const createClickLog = `-- name: CreateClickLog :one
-INSERT INTO click_logs (url_id, ip_address, user_agent, referrer)
-VALUES ($1, $2, $3, $4)
+INSERT INTO click_logs (url_id, ip_address, user_agent, referrer, browser, device_type)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, url_id, clicked_at, ip_address, country, city, browser, device_type, referrer, user_agent
 `
 
 type CreateClickLogParams struct {
-	UrlID     int64          `json:"url_id"`
-	IpAddress pqtype.Inet    `json:"ip_address"`
-	UserAgent sql.NullString `json:"user_agent"`
-	Referrer  sql.NullString `json:"referrer"`
+	UrlID      int64          `json:"url_id"`
+	IpAddress  pqtype.Inet    `json:"ip_address"`
+	UserAgent  sql.NullString `json:"user_agent"`
+	Referrer   sql.NullString `json:"referrer"`
+	Browser    sql.NullString `json:"browser"`
+	DeviceType sql.NullString `json:"device_type"`
 }
 
 func (q *Queries) CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error) {
@@ -136,6 +138,8 @@ func (q *Queries) CreateClickLog(ctx context.Context, arg CreateClickLogParams) 
 		arg.IpAddress,
 		arg.UserAgent,
 		arg.Referrer,
+		arg.Browser,
+		arg.DeviceType,
 	)
 	var i ClickLog
 	err := row.Scan(
@@ -153,9 +157,52 @@ func (q *Queries) CreateClickLog(ctx context.Context, arg CreateClickLogParams) 
 	return i, err
 }
 
+const getDailyStatsByURL = `-- name: GetDailyStatsByURL :many
+SELECT stat_date, total_clicks
+FROM daily_url_stats
+WHERE url_id = $1
+  AND ($2::date IS NULL OR stat_date >= $2)
+  AND ($3::date IS NULL OR stat_date <= $3)
+ORDER BY stat_date ASC
+`
+
+type GetDailyStatsByURLParams struct {
+	UrlID   int64     `json:"url_id"`
+	Column2 time.Time `json:"column_2"`
+	Column3 time.Time `json:"column_3"`
+}
+
+type GetDailyStatsByURLRow struct {
+	StatDate    time.Time     `json:"stat_date"`
+	TotalClicks sql.NullInt64 `json:"total_clicks"`
+}
+
+func (q *Queries) GetDailyStatsByURL(ctx context.Context, arg GetDailyStatsByURLParams) ([]GetDailyStatsByURLRow, error) {
+	rows, err := q.db.QueryContext(ctx, getDailyStatsByURL, arg.UrlID, arg.Column2, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetDailyStatsByURLRow
+	for rows.Next() {
+		var i GetDailyStatsByURLRow
+		if err := rows.Scan(&i.StatDate, &i.TotalClicks); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listClickLogsByURL = `-- name: ListClickLogsByURL :many
 SELECT
-  id, url_id, clicked_at, ip_address, user_agent, referrer
+  id, url_id, clicked_at, ip_address, user_agent, referrer, browser, device_type
 FROM click_logs
 WHERE url_id = $1
   AND ($4::timestamptz IS NULL OR clicked_at >= $4)
@@ -173,12 +220,14 @@ type ListClickLogsByURLParams struct {
 }
 
 type ListClickLogsByURLRow struct {
-	ID        int64          `json:"id"`
-	UrlID     int64          `json:"url_id"`
-	ClickedAt sql.NullTime   `json:"clicked_at"`
-	IpAddress pqtype.Inet    `json:"ip_address"`
-	UserAgent sql.NullString `json:"user_agent"`
-	Referrer  sql.NullString `json:"referrer"`
+	ID         int64          `json:"id"`
+	UrlID      int64          `json:"url_id"`
+	ClickedAt  sql.NullTime   `json:"clicked_at"`
+	IpAddress  pqtype.Inet    `json:"ip_address"`
+	UserAgent  sql.NullString `json:"user_agent"`
+	Referrer   sql.NullString `json:"referrer"`
+	Browser    sql.NullString `json:"browser"`
+	DeviceType sql.NullString `json:"device_type"`
 }
 
 func (q *Queries) ListClickLogsByURL(ctx context.Context, arg ListClickLogsByURLParams) ([]ListClickLogsByURLRow, error) {
@@ -203,7 +252,120 @@ func (q *Queries) ListClickLogsByURL(ctx context.Context, arg ListClickLogsByURL
 			&i.IpAddress,
 			&i.UserAgent,
 			&i.Referrer,
+			&i.Browser,
+			&i.DeviceType,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const refreshDailyStats = `-- name: RefreshDailyStats :exec
+INSERT INTO daily_url_stats (url_id, stat_date, total_clicks)
+SELECT
+  url_id,
+  DATE(clicked_at) AS stat_date,
+  COUNT(*) AS total_clicks
+FROM click_logs
+WHERE clicked_at >= $1 AND clicked_at < $2
+GROUP BY url_id, DATE(clicked_at)
+ON CONFLICT (url_id, stat_date) DO UPDATE
+SET total_clicks = EXCLUDED.total_clicks
+`
+
+type RefreshDailyStatsParams struct {
+	ClickedAt   sql.NullTime `json:"clicked_at"`
+	ClickedAt_2 sql.NullTime `json:"clicked_at_2"`
+}
+
+func (q *Queries) RefreshDailyStats(ctx context.Context, arg RefreshDailyStatsParams) error {
+	_, err := q.db.ExecContext(ctx, refreshDailyStats, arg.ClickedAt, arg.ClickedAt_2)
+	return err
+}
+
+const topBrowsersByURL = `-- name: TopBrowsersByURL :many
+SELECT
+  COALESCE(browser, 'Unknown') AS browser,
+  COUNT(*) AS count
+FROM click_logs
+WHERE url_id = $1
+GROUP BY browser
+ORDER BY count DESC
+LIMIT $2
+`
+
+type TopBrowsersByURLParams struct {
+	UrlID int64 `json:"url_id"`
+	Limit int32 `json:"limit"`
+}
+
+type TopBrowsersByURLRow struct {
+	Browser string `json:"browser"`
+	Count   int64  `json:"count"`
+}
+
+func (q *Queries) TopBrowsersByURL(ctx context.Context, arg TopBrowsersByURLParams) ([]TopBrowsersByURLRow, error) {
+	rows, err := q.db.QueryContext(ctx, topBrowsersByURL, arg.UrlID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TopBrowsersByURLRow
+	for rows.Next() {
+		var i TopBrowsersByURLRow
+		if err := rows.Scan(&i.Browser, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const topDeviceTypesByURL = `-- name: TopDeviceTypesByURL :many
+SELECT
+  COALESCE(device_type, 'Unknown') AS device_type,
+  COUNT(*) AS count
+FROM click_logs
+WHERE url_id = $1
+GROUP BY device_type
+ORDER BY count DESC
+LIMIT $2
+`
+
+type TopDeviceTypesByURLParams struct {
+	UrlID int64 `json:"url_id"`
+	Limit int32 `json:"limit"`
+}
+
+type TopDeviceTypesByURLRow struct {
+	DeviceType string `json:"device_type"`
+	Count      int64  `json:"count"`
+}
+
+func (q *Queries) TopDeviceTypesByURL(ctx context.Context, arg TopDeviceTypesByURLParams) ([]TopDeviceTypesByURLRow, error) {
+	rows, err := q.db.QueryContext(ctx, topDeviceTypesByURL, arg.UrlID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TopDeviceTypesByURLRow
+	for rows.Next() {
+		var i TopDeviceTypesByURLRow
+		if err := rows.Scan(&i.DeviceType, &i.Count); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -270,4 +432,22 @@ func (q *Queries) TopReferrersByURL(ctx context.Context, arg TopReferrersByURLPa
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertDailyStats = `-- name: UpsertDailyStats :exec
+INSERT INTO daily_url_stats (url_id, stat_date, total_clicks)
+VALUES ($1, $2, $3)
+ON CONFLICT (url_id, stat_date) DO UPDATE
+SET total_clicks = daily_url_stats.total_clicks + EXCLUDED.total_clicks
+`
+
+type UpsertDailyStatsParams struct {
+	UrlID       int64         `json:"url_id"`
+	StatDate    time.Time     `json:"stat_date"`
+	TotalClicks sql.NullInt64 `json:"total_clicks"`
+}
+
+func (q *Queries) UpsertDailyStats(ctx context.Context, arg UpsertDailyStatsParams) error {
+	_, err := q.db.ExecContext(ctx, upsertDailyStats, arg.UrlID, arg.StatDate, arg.TotalClicks)
+	return err
 }

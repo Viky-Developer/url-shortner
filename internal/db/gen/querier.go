@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
@@ -13,14 +14,21 @@ type Querier interface {
 	ClickStatsByURL(ctx context.Context, arg ClickStatsByURLParams) (ClickStatsByURLRow, error)
 	ClicksByDateRange(ctx context.Context, arg ClicksByDateRangeParams) ([]ClicksByDateRangeRow, error)
 	CountClickLogsByURL(ctx context.Context, arg CountClickLogsByURLParams) (int64, error)
+	CountPasswordHistory(ctx context.Context, userID int64) (int64, error)
+	CountRevokedSessions(ctx context.Context) (int64, error)
 	CountURLs(ctx context.Context, userID int64) (int64, error)
+	CreateBlockedDomain(ctx context.Context, arg CreateBlockedDomainParams) (BlockedDomain, error)
+	CreateBlockedIPRange(ctx context.Context, arg CreateBlockedIPRangeParams) (CreateBlockedIPRangeRow, error)
 	CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error)
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateURL(ctx context.Context, arg CreateURLParams) (Url, error)
 	CreateURLVersion(ctx context.Context, arg CreateURLVersionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	DeleteBlockedDomain(ctx context.Context, id int32) error
+	DeleteBlockedIPRange(ctx context.Context, id int64) error
 	GetBlockedDomain(ctx context.Context, domain string) (GetBlockedDomainRow, error)
+	GetDailyStatsByURL(ctx context.Context, arg GetDailyStatsByURLParams) ([]GetDailyStatsByURLRow, error)
 	GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error)
 	GetDestinationByID(ctx context.Context, id int64) (GetDestinationByIDRow, error)
 	GetLastPasswordHistory(ctx context.Context, userID int64) (string, error)
@@ -33,21 +41,31 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, error)
 	HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error
+	HardDeleteUser(ctx context.Context, id int64) error
 	IncrementURLClick(ctx context.Context, id int64) error
 	ListActiveSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
-	ListBlockedIPRanges(ctx context.Context) ([]BlockedIpRange, error)
+	ListBlockedDomains(ctx context.Context) ([]BlockedDomain, error)
+	ListBlockedIPRanges(ctx context.Context) ([]ListBlockedIPRangesRow, error)
 	ListClickLogsByURL(ctx context.Context, arg ListClickLogsByURLParams) ([]ListClickLogsByURLRow, error)
 	ListSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
 	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
+	PurgeInactiveSessions(ctx context.Context, lastActiveAt sql.NullTime) error
+	PurgeOldPasswordHistory(ctx context.Context, createdAt sql.NullTime) error
+	PurgeOldRevokedSessions(ctx context.Context, lastActiveAt sql.NullTime) error
+	RefreshDailyStats(ctx context.Context, arg RefreshDailyStatsParams) error
 	RevokeSession(ctx context.Context, arg RevokeSessionParams) error
 	ShortCodeExists(ctx context.Context, shortCode string) (bool, error)
 	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)
+	SoftDeleteUser(ctx context.Context, id int64) error
+	TopBrowsersByURL(ctx context.Context, arg TopBrowsersByURLParams) ([]TopBrowsersByURLRow, error)
+	TopDeviceTypesByURL(ctx context.Context, arg TopDeviceTypesByURLParams) ([]TopDeviceTypesByURLRow, error)
 	TopReferrersByURL(ctx context.Context, arg TopReferrersByURLParams) ([]TopReferrersByURLRow, error)
 	UpdateSessionLastActive(ctx context.Context, id int64) error
 	UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error)
 	UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error)
 	UpdateUserDisplayID(ctx context.Context, arg UpdateUserDisplayIDParams) (UpdateUserDisplayIDRow, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (UpdateUserPasswordRow, error)
+	UpsertDailyStats(ctx context.Context, arg UpsertDailyStatsParams) error
 }
 
 var _ Querier = (*Queries)(nil)
