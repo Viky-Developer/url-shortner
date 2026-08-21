@@ -26,6 +26,8 @@ type mockService struct {
 	updateFn     func(context.Context, int64, int64, payload.UpdateURLRequest) (*payload.URLResponse, error)
 	softDeleteFn func(context.Context, int64, int64) (*payload.DeleteResponse, error)
 	hardDeleteFn func(context.Context, int64, int64) error
+	listClicksFn func(context.Context, int64, int64, *time.Time, *time.Time, int32, int32, int32) (*payload.ClickLogsResponse, error)
+	analyticsFn  func(context.Context, int64, int64, *time.Time, *time.Time) (*payload.AnalyticsResponse, error)
 }
 
 func (m *mockService) Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error) {
@@ -54,6 +56,14 @@ func (m *mockService) SoftDelete(ctx context.Context, userID int64, id int64) (*
 
 func (m *mockService) HardDelete(ctx context.Context, userID int64, id int64) error {
 	return m.hardDeleteFn(ctx, userID, id)
+}
+
+func (m *mockService) ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) (*payload.ClickLogsResponse, error) {
+	return m.listClicksFn(ctx, userID, urlID, from, to, page, perPage, offset)
+}
+
+func (m *mockService) GetAnalytics(ctx context.Context, userID, urlID int64, from, to *time.Time) (*payload.AnalyticsResponse, error) {
+	return m.analyticsFn(ctx, userID, urlID, from, to)
 }
 
 func testLog(t *testing.T) logger.Logger {
@@ -1269,5 +1279,165 @@ func TestRedirectXForwardedForMultiple(t *testing.T) {
 	}
 	if capturedIP.String() != "1.2.3.4" {
 		t.Errorf("IP = %q, want first IP from X-Forwarded-For", capturedIP.String())
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LIST CLICK LOGS
+// ═══════════════════════════════════════════════════════════════
+
+func TestListClickLogsSuccess(t *testing.T) {
+	var capturedURLID int64
+	mock := &mockService{
+		listClicksFn: func(_ context.Context, _, urlID int64, _, _ *time.Time, _, _, _ int32) (*payload.ClickLogsResponse, error) {
+			capturedURLID = urlID
+			return &payload.ClickLogsResponse{
+				Items:      []payload.ClickLogEntry{{ID: 1, IPAddress: "1.2.3.4"}},
+				Total:      1,
+				Page:       1,
+				PerPage:    10,
+				TotalPages: 1,
+			}, nil
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/1/clicks?page=1&perPage=10", nil)
+	req = withUserID(req, 1)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h.ListClickLogs(w, req)
+
+	if capturedURLID != 1 {
+		t.Errorf("urlID = %d, want 1", capturedURLID)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestListClickLogsInvalidID(t *testing.T) {
+	mock := &mockService{}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/abc/clicks", nil)
+	req = withUserID(req, 1)
+	req.SetPathValue("id", "abc")
+	w := httptest.NewRecorder()
+
+	h.ListClickLogs(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestListClickLogsServiceError(t *testing.T) {
+	mock := &mockService{
+		listClicksFn: func(_ context.Context, _, _ int64, _, _ *time.Time, _, _, _ int32) (*payload.ClickLogsResponse, error) {
+			return nil, fmt.Errorf("%w: url not found", apperror.ErrNotFound)
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/1/clicks", nil)
+	req = withUserID(req, 1)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h.ListClickLogs(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GET ANALYTICS
+// ═══════════════════════════════════════════════════════════════
+
+func TestGetAnalyticsSuccess(t *testing.T) {
+	var capturedURLID int64
+	mock := &mockService{
+		analyticsFn: func(_ context.Context, _, urlID int64, _, _ *time.Time) (*payload.AnalyticsResponse, error) {
+			capturedURLID = urlID
+			return &payload.AnalyticsResponse{
+				Stats: payload.ClickStats{
+					TotalClicks:    100,
+					UniqueVisitors: 50,
+				},
+				Referrers: []payload.ReferrerStat{{Referrer: "https://google.com", Count: 30}},
+			}, nil
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/1/analytics", nil)
+	req = withUserID(req, 1)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h.GetAnalytics(w, req)
+
+	if capturedURLID != 1 {
+		t.Errorf("urlID = %d, want 1", capturedURLID)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestGetAnalyticsInvalidID(t *testing.T) {
+	mock := &mockService{}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/abc/analytics", nil)
+	req = withUserID(req, 1)
+	req.SetPathValue("id", "abc")
+	w := httptest.NewRecorder()
+
+	h.GetAnalytics(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestGetAnalyticsServiceError(t *testing.T) {
+	mock := &mockService{
+		analyticsFn: func(_ context.Context, _, _ int64, _, _ *time.Time) (*payload.AnalyticsResponse, error) {
+			return nil, fmt.Errorf("%w: url not found", apperror.ErrNotFound)
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/1/analytics", nil)
+	req = withUserID(req, 1)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	h.GetAnalytics(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestParseTimeRange(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/urls/1/analytics?from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z", nil)
+	from, to := parseTimeRange(req)
+
+	if from == nil || from.Year() != 2026 {
+		t.Errorf("from = %v, want 2026", from)
+	}
+	if to == nil || to.Month() != 12 {
+		t.Errorf("to = %v, want December", to)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/urls/1/analytics", nil)
+	from2, to2 := parseTimeRange(req2)
+	if from2 != nil || to2 != nil {
+		t.Error("expected nil from/to for empty params")
 	}
 }

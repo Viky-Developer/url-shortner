@@ -1712,3 +1712,164 @@ func TestIsDuplicateKey(t *testing.T) {
 		t.Error("expected false for non-unique error")
 	}
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  CLICK LOGS — analytics
+// ═══════════════════════════════════════════════════════════════
+
+func TestListClickLogsSuccess(t *testing.T) {
+	now := time.Now()
+	mock := &mockQuerier{
+		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
+			return gen.GetURLByIDRow{
+				ID:        1,
+				UserID:    1,
+				ShortCode: "abc",
+			}, nil
+		},
+		countClicksFn: func(_ context.Context, _ gen.CountClickLogsByURLParams) (int64, error) {
+			return 2, nil
+		},
+		listClicksFn: func(_ context.Context, _ gen.ListClickLogsByURLParams) ([]gen.ListClickLogsByURLRow, error) {
+			return []gen.ListClickLogsByURLRow{
+				{ID: 1, ClickedAt: sql.NullTime{Time: now, Valid: true}, IpAddress: inet(net.ParseIP("1.2.3.4"))},
+				{ID: 2, ClickedAt: sql.NullTime{Time: now.Add(-time.Hour), Valid: true}, IpAddress: inet(net.ParseIP("5.6.7.8"))},
+			}, nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	resp, err := svc.ListClickLogs(context.Background(), 1, 1, nil, nil, 1, 10, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Total != 2 {
+		t.Errorf("total = %d, want 2", resp.Total)
+	}
+	if len(resp.Items) != 2 {
+		t.Errorf("items = %d, want 2", len(resp.Items))
+	}
+	if resp.Items[0].IPAddress != "1.2.3.4" {
+		t.Errorf("ip = %q, want 1.2.3.4", resp.Items[0].IPAddress)
+	}
+}
+
+func TestListClickLogsOwnershipDenied(t *testing.T) {
+	mock := &mockQuerier{
+		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
+			return gen.GetURLByIDRow{}, sql.ErrNoRows
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	_, err := svc.ListClickLogs(context.Background(), 1, 999, nil, nil, 1, 10, 0)
+	if err == nil {
+		t.Fatal("expected error for wrong ownership")
+	}
+}
+
+func TestGetAnalyticsSuccess(t *testing.T) {
+	now := time.Now()
+	mock := &mockQuerier{
+		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
+			return gen.GetURLByIDRow{
+				ID:        1,
+				UserID:    1,
+				ShortCode: "abc",
+			}, nil
+		},
+		clickStatsFn: func(_ context.Context, _ gen.ClickStatsByURLParams) (gen.ClickStatsByURLRow, error) {
+			return gen.ClickStatsByURLRow{
+				TotalClicks:    100,
+				UniqueVisitors: 50,
+				FirstClickedAt: now.Add(-24 * time.Hour),
+				LastClickedAt:  now,
+			}, nil
+		},
+		topReferrersFn: func(_ context.Context, _ gen.TopReferrersByURLParams) ([]gen.TopReferrersByURLRow, error) {
+			return []gen.TopReferrersByURLRow{
+				{Referrer: "https://google.com", Count: 30},
+				{Referrer: "https://twitter.com", Count: 20},
+			}, nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	resp, err := svc.GetAnalytics(context.Background(), 1, 1, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Stats.TotalClicks != 100 {
+		t.Errorf("totalClicks = %d, want 100", resp.Stats.TotalClicks)
+	}
+	if resp.Stats.UniqueVisitors != 50 {
+		t.Errorf("uniqueVisitors = %d, want 50", resp.Stats.UniqueVisitors)
+	}
+	if len(resp.Referrers) != 2 {
+		t.Errorf("referrers = %d, want 2", len(resp.Referrers))
+	}
+}
+
+func TestGetAnalyticsOwnershipDenied(t *testing.T) {
+	mock := &mockQuerier{
+		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
+			return gen.GetURLByIDRow{}, sql.ErrNoRows
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	_, err := svc.GetAnalytics(context.Background(), 1, 999, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for wrong ownership")
+	}
+}
+
+func TestGetAnalyticsWithDailyStats(t *testing.T) {
+	now := time.Now()
+	from := now.AddDate(0, 0, -7)
+	to := now
+	mock := &mockQuerier{
+		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
+			return gen.GetURLByIDRow{
+				ID:        1,
+				UserID:    1,
+				ShortCode: "abc",
+			}, nil
+		},
+		clickStatsFn: func(_ context.Context, _ gen.ClickStatsByURLParams) (gen.ClickStatsByURLRow, error) {
+			return gen.ClickStatsByURLRow{
+				TotalClicks:    50,
+				UniqueVisitors: 25,
+			}, nil
+		},
+		topReferrersFn: func(_ context.Context, _ gen.TopReferrersByURLParams) ([]gen.TopReferrersByURLRow, error) {
+			return []gen.TopReferrersByURLRow{}, nil
+		},
+		clicksByDateRangeFn: func(_ context.Context, _ gen.ClicksByDateRangeParams) ([]gen.ClicksByDateRangeRow, error) {
+			return []gen.ClicksByDateRangeRow{
+				{Date: now.AddDate(0, 0, -2).Truncate(24 * time.Hour), Clicks: 10},
+				{Date: now.Truncate(24 * time.Hour), Clicks: 15},
+			}, nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	resp, err := svc.GetAnalytics(context.Background(), 1, 1, &from, &to)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.DailyStats) != 2 {
+		t.Errorf("dailyStats = %d, want 2", len(resp.DailyStats))
+	}
+}
+
+func TestInetHelper(t *testing.T) {
+	ip := net.ParseIP("192.168.1.1")
+	result := inet(ip)
+	if !result.Valid {
+		t.Error("expected valid inet")
+	}
+	if result.IPNet.IP.String() != "192.168.1.1" {
+		t.Errorf("ip = %q, want 192.168.1.1", result.IPNet.IP.String())
+	}
+}

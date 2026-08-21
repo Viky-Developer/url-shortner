@@ -48,6 +48,11 @@ type mockQuerier struct {
 	addPasswordHistoryFn func(context.Context, gen.AddPasswordHistoryParams) error
 	updateUserPasswordFn func(context.Context, gen.UpdateUserPasswordParams) (gen.UpdateUserPasswordRow, error)
 	listActiveSessionsFn func(context.Context, int64) ([]gen.Session, error)
+	countClicksFn        func(context.Context, gen.CountClickLogsByURLParams) (int64, error)
+	listClicksFn         func(context.Context, gen.ListClickLogsByURLParams) ([]gen.ListClickLogsByURLRow, error)
+	clickStatsFn         func(context.Context, gen.ClickStatsByURLParams) (gen.ClickStatsByURLRow, error)
+	topReferrersFn       func(context.Context, gen.TopReferrersByURLParams) ([]gen.TopReferrersByURLRow, error)
+	clicksByDateRangeFn  func(context.Context, gen.ClicksByDateRangeParams) ([]gen.ClicksByDateRangeRow, error)
 }
 
 func (m *mockQuerier) ExecContext(_ context.Context, _ string, _ ...interface{}) (sql.Result, error) {
@@ -237,6 +242,41 @@ func (m *mockQuerier) GetLastPasswordHistory(_ context.Context, _ int64) (string
 func (m *mockQuerier) ListActiveSessionsByUser(ctx context.Context, userID int64) ([]gen.Session, error) {
 	if m.listActiveSessionsFn != nil {
 		return m.listActiveSessionsFn(ctx, userID)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) CountClickLogsByURL(ctx context.Context, arg gen.CountClickLogsByURLParams) (int64, error) {
+	if m.countClicksFn != nil {
+		return m.countClicksFn(ctx, arg)
+	}
+	return 0, nil
+}
+
+func (m *mockQuerier) ListClickLogsByURL(ctx context.Context, arg gen.ListClickLogsByURLParams) ([]gen.ListClickLogsByURLRow, error) {
+	if m.listClicksFn != nil {
+		return m.listClicksFn(ctx, arg)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) ClickStatsByURL(ctx context.Context, arg gen.ClickStatsByURLParams) (gen.ClickStatsByURLRow, error) {
+	if m.clickStatsFn != nil {
+		return m.clickStatsFn(ctx, arg)
+	}
+	return gen.ClickStatsByURLRow{}, nil
+}
+
+func (m *mockQuerier) TopReferrersByURL(ctx context.Context, arg gen.TopReferrersByURLParams) ([]gen.TopReferrersByURLRow, error) {
+	if m.topReferrersFn != nil {
+		return m.topReferrersFn(ctx, arg)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) ClicksByDateRange(ctx context.Context, arg gen.ClicksByDateRangeParams) ([]gen.ClicksByDateRangeRow, error) {
+	if m.clicksByDateRangeFn != nil {
+		return m.clicksByDateRangeFn(ctx, arg)
 	}
 	return nil, nil
 }

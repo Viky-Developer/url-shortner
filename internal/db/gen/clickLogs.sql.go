@@ -8,9 +8,114 @@ package db
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/sqlc-dev/pqtype"
 )
+
+const clickStatsByURL = `-- name: ClickStatsByURL :one
+SELECT
+  COUNT(*) AS total_clicks,
+  COUNT(DISTINCT ip_address) AS unique_visitors,
+  MIN(clicked_at) AS first_clicked_at,
+  MAX(clicked_at) AS last_clicked_at
+FROM click_logs
+WHERE url_id = $1
+  AND ($2::timestamptz IS NULL OR clicked_at >= $2)
+  AND ($3::timestamptz IS NULL OR clicked_at <= $3)
+`
+
+type ClickStatsByURLParams struct {
+	UrlID int64        `json:"url_id"`
+	From  sql.NullTime `json:"from"`
+	To    sql.NullTime `json:"to"`
+}
+
+type ClickStatsByURLRow struct {
+	TotalClicks    int64       `json:"total_clicks"`
+	UniqueVisitors int64       `json:"unique_visitors"`
+	FirstClickedAt interface{} `json:"first_clicked_at"`
+	LastClickedAt  interface{} `json:"last_clicked_at"`
+}
+
+func (q *Queries) ClickStatsByURL(ctx context.Context, arg ClickStatsByURLParams) (ClickStatsByURLRow, error) {
+	row := q.db.QueryRowContext(ctx, clickStatsByURL, arg.UrlID, arg.From, arg.To)
+	var i ClickStatsByURLRow
+	err := row.Scan(
+		&i.TotalClicks,
+		&i.UniqueVisitors,
+		&i.FirstClickedAt,
+		&i.LastClickedAt,
+	)
+	return i, err
+}
+
+const clicksByDateRange = `-- name: ClicksByDateRange :many
+SELECT
+  DATE(clicked_at) AS date,
+  COUNT(*) AS clicks
+FROM click_logs
+WHERE url_id = $1
+  AND clicked_at >= $2
+  AND clicked_at <= $3
+GROUP BY DATE(clicked_at)
+ORDER BY date ASC
+`
+
+type ClicksByDateRangeParams struct {
+	UrlID       int64        `json:"url_id"`
+	ClickedAt   sql.NullTime `json:"clicked_at"`
+	ClickedAt_2 sql.NullTime `json:"clicked_at_2"`
+}
+
+type ClicksByDateRangeRow struct {
+	Date   time.Time `json:"date"`
+	Clicks int64     `json:"clicks"`
+}
+
+func (q *Queries) ClicksByDateRange(ctx context.Context, arg ClicksByDateRangeParams) ([]ClicksByDateRangeRow, error) {
+	rows, err := q.db.QueryContext(ctx, clicksByDateRange, arg.UrlID, arg.ClickedAt, arg.ClickedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClicksByDateRangeRow
+	for rows.Next() {
+		var i ClicksByDateRangeRow
+		if err := rows.Scan(&i.Date, &i.Clicks); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const countClickLogsByURL = `-- name: CountClickLogsByURL :one
+SELECT COUNT(*)
+FROM click_logs
+WHERE url_id = $1
+  AND ($2::timestamptz IS NULL OR clicked_at >= $2)
+  AND ($3::timestamptz IS NULL OR clicked_at <= $3)
+`
+
+type CountClickLogsByURLParams struct {
+	UrlID int64        `json:"url_id"`
+	From  sql.NullTime `json:"from"`
+	To    sql.NullTime `json:"to"`
+}
+
+func (q *Queries) CountClickLogsByURL(ctx context.Context, arg CountClickLogsByURLParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countClickLogsByURL, arg.UrlID, arg.From, arg.To)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const createClickLog = `-- name: CreateClickLog :one
 INSERT INTO click_logs (url_id, ip_address, user_agent, referrer)
@@ -46,4 +151,123 @@ func (q *Queries) CreateClickLog(ctx context.Context, arg CreateClickLogParams) 
 		&i.UserAgent,
 	)
 	return i, err
+}
+
+const listClickLogsByURL = `-- name: ListClickLogsByURL :many
+SELECT
+  id, url_id, clicked_at, ip_address, user_agent, referrer
+FROM click_logs
+WHERE url_id = $1
+  AND ($4::timestamptz IS NULL OR clicked_at >= $4)
+  AND ($5::timestamptz IS NULL OR clicked_at <= $5)
+ORDER BY clicked_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListClickLogsByURLParams struct {
+	UrlID  int64        `json:"url_id"`
+	Limit  int32        `json:"limit"`
+	Offset int32        `json:"offset"`
+	From   sql.NullTime `json:"from"`
+	To     sql.NullTime `json:"to"`
+}
+
+type ListClickLogsByURLRow struct {
+	ID        int64          `json:"id"`
+	UrlID     int64          `json:"url_id"`
+	ClickedAt sql.NullTime   `json:"clicked_at"`
+	IpAddress pqtype.Inet    `json:"ip_address"`
+	UserAgent sql.NullString `json:"user_agent"`
+	Referrer  sql.NullString `json:"referrer"`
+}
+
+func (q *Queries) ListClickLogsByURL(ctx context.Context, arg ListClickLogsByURLParams) ([]ListClickLogsByURLRow, error) {
+	rows, err := q.db.QueryContext(ctx, listClickLogsByURL,
+		arg.UrlID,
+		arg.Limit,
+		arg.Offset,
+		arg.From,
+		arg.To,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListClickLogsByURLRow
+	for rows.Next() {
+		var i ListClickLogsByURLRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UrlID,
+			&i.ClickedAt,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.Referrer,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const topReferrersByURL = `-- name: TopReferrersByURL :many
+SELECT
+  COALESCE(referrer, '') AS referrer,
+  COUNT(*) AS count
+FROM click_logs
+WHERE url_id = $1
+  AND ($3::timestamptz IS NULL OR clicked_at >= $3)
+  AND ($4::timestamptz IS NULL OR clicked_at <= $4)
+  AND referrer IS NOT NULL
+  AND referrer != ''
+GROUP BY referrer
+ORDER BY count DESC
+LIMIT $2
+`
+
+type TopReferrersByURLParams struct {
+	UrlID int64        `json:"url_id"`
+	Limit int32        `json:"limit"`
+	From  sql.NullTime `json:"from"`
+	To    sql.NullTime `json:"to"`
+}
+
+type TopReferrersByURLRow struct {
+	Referrer string `json:"referrer"`
+	Count    int64  `json:"count"`
+}
+
+func (q *Queries) TopReferrersByURL(ctx context.Context, arg TopReferrersByURLParams) ([]TopReferrersByURLRow, error) {
+	rows, err := q.db.QueryContext(ctx, topReferrersByURL,
+		arg.UrlID,
+		arg.Limit,
+		arg.From,
+		arg.To,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TopReferrersByURLRow
+	for rows.Next() {
+		var i TopReferrersByURLRow
+		if err := rows.Scan(&i.Referrer, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

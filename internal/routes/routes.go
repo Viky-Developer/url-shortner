@@ -34,6 +34,8 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, authS
 	mux.Handle("PATCH /api/v1/urls/{id}", authMiddleware(http.HandlerFunc(urlHandler.UpdateURL)))
 	mux.Handle("DELETE /api/v1/urls/{id}", authMiddleware(http.HandlerFunc(urlHandler.DeleteURL)))
 	mux.Handle("DELETE /api/v1/urls/{id}/approve", authMiddleware(http.HandlerFunc(urlHandler.ApproveHardDelete)))
+	mux.Handle("GET /api/v1/urls/{id}/clicks", authMiddleware(http.HandlerFunc(urlHandler.ListClickLogs)))
+	mux.Handle("GET /api/v1/urls/{id}/analytics", authMiddleware(http.HandlerFunc(urlHandler.GetAnalytics)))
 
 	// Public redirect (no auth needed)
 	mux.HandleFunc("GET /api/v1/{shortCode}", urlHandler.RedirectShortURL)

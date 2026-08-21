@@ -195,6 +195,14 @@ func (m *mockURL) HardDelete(_ context.Context, _ int64, _ int64) error {
 	return nil
 }
 
+func (m *mockURL) ListClickLogs(_ context.Context, _, _ int64, _, _ *time.Time, _, _, _ int32) (*payload.ClickLogsResponse, error) {
+	return &payload.ClickLogsResponse{Items: []payload.ClickLogEntry{}, Total: 0}, nil
+}
+
+func (m *mockURL) GetAnalytics(_ context.Context, _, _ int64, _, _ *time.Time) (*payload.AnalyticsResponse, error) {
+	return &payload.AnalyticsResponse{Stats: payload.ClickStats{}}, nil
+}
+
 // alwaysActiveCache returns "1" for session_status so ValidateSession
 // always sees the session as active without hitting DB.
 type alwaysActiveCache struct{}

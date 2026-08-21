@@ -61,3 +61,48 @@ type DeleteResponse struct {
 	Message   string `json:"message"`   // Human-readable outcome message.
 	DeletedAt string `json:"deletedAt"` // Timestamp of the soft delete (RFC3339).
 }
+
+// ClickLogEntry represents a single click log record.
+type ClickLogEntry struct {
+	ID        int64  `json:"id"`
+	ClickedAt string `json:"clickedAt"` // RFC3339 timestamp.
+	IPAddress string `json:"ipAddress"`
+	UserAgent string `json:"userAgent"`
+	Referrer  string `json:"referrer"`
+}
+
+// ClickStats represents aggregate click statistics for a URL.
+type ClickStats struct {
+	TotalClicks    int64  `json:"totalClicks"`
+	UniqueVisitors int64  `json:"uniqueVisitors"`
+	FirstClickedAt string `json:"firstClickedAt"` // RFC3339 or empty.
+	LastClickedAt  string `json:"lastClickedAt"`  // RFC3339 or empty.
+}
+
+// ReferrerStat represents a referrer with its click count.
+type ReferrerStat struct {
+	Referrer string `json:"referrer"`
+	Count    int64  `json:"count"`
+}
+
+// DailyClickStat represents click count per day.
+type DailyClickStat struct {
+	Date   string `json:"date"` // YYYY-MM-DD.
+	Clicks int64  `json:"clicks"`
+}
+
+// ClickLogsResponse is the paginated list of click logs for a URL.
+type ClickLogsResponse struct {
+	Items      []ClickLogEntry `json:"items"`
+	Total      int64           `json:"total"`
+	Page       int             `json:"page"`
+	PerPage    int             `json:"perPage"`
+	TotalPages int             `json:"totalPages"`
+}
+
+// AnalyticsResponse contains all analytics data for a URL.
+type AnalyticsResponse struct {
+	Stats      ClickStats       `json:"stats"`
+	Referrers  []ReferrerStat   `json:"referrers"`
+	DailyStats []DailyClickStat `json:"dailyStats"`
+}
