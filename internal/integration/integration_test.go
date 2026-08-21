@@ -195,6 +195,14 @@ func (m *mockURLService) HardDelete(ctx context.Context, userID int64, id int64)
 	return nil
 }
 
+func (m *mockURLService) ListClickLogs(_ context.Context, _, _ int64, _, _ *time.Time, _, _, _ int32) (*payload.ClickLogsResponse, error) {
+	return &payload.ClickLogsResponse{Items: []payload.ClickLogEntry{}, Total: 0}, nil
+}
+
+func (m *mockURLService) GetAnalytics(_ context.Context, _, _ int64, _, _ *time.Time) (*payload.AnalyticsResponse, error) {
+	return &payload.AnalyticsResponse{Stats: payload.ClickStats{}}, nil
+}
+
 func newTestMux(t *testing.T, authSvc *mockAuthService, urlSvc *mockURLService) http.Handler {
 	t.Helper()
 	log := testLog(t)

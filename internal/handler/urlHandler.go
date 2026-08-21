@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
@@ -30,6 +31,8 @@ type URLService interface {
 	Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error)
 	SoftDelete(ctx context.Context, userID int64, id int64) (*payload.DeleteResponse, error)
 	HardDelete(ctx context.Context, userID int64, id int64) error
+	ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) (*payload.ClickLogsResponse, error)
+	GetAnalytics(ctx context.Context, userID, urlID int64, from, to *time.Time) (*payload.AnalyticsResponse, error)
 }
 
 // URLHandler holds the dependencies required by the URL HTTP handlers.
@@ -292,4 +295,74 @@ func (h *URLHandler) ApproveHardDelete(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("url hard deleted", logger.Int64("id", id))
 
 	response.Success(w, http.StatusOK, "url permanently deleted", []any{})
+}
+
+// ListClickLogs handles GET /urls/{id}/clicks and returns paginated click logs
+// for a specific URL, optionally filtered by from/to query parameters.
+func (h *URLHandler) ListClickLogs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.getUserIDOrError(w, r)
+	if !ok {
+		return
+	}
+
+	id, err := utils.ParseID(r.PathValue("id"))
+	if err != nil {
+		h.log.Error("invalid url id", logger.Error(err))
+		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: the provided URL id is not valid", apperror.ErrInvalidPayload))
+		return
+	}
+
+	from, to := parseTimeRange(r)
+	page, perPage, offset := utils.ParsePagination(r.URL.Query().Get("page"), r.URL.Query().Get("perPage"))
+
+	clicks, err := h.urlService.ListClickLogs(r.Context(), userID, id, from, to, page, perPage, offset)
+	if err != nil {
+		h.log.Error("failed to list click logs", logger.Error(err), logger.Int64("id", id))
+		response.Error(w, response.StatusCodeFromError(err), err)
+		return
+	}
+
+	response.Success(w, http.StatusOK, "click logs retrieved", []any{clicks})
+}
+
+// GetAnalytics handles GET /urls/{id}/analytics and returns aggregate click
+// analytics for a specific URL, optionally filtered by from/to query parameters.
+func (h *URLHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.getUserIDOrError(w, r)
+	if !ok {
+		return
+	}
+
+	id, err := utils.ParseID(r.PathValue("id"))
+	if err != nil {
+		h.log.Error("invalid url id", logger.Error(err))
+		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: the provided URL id is not valid", apperror.ErrInvalidPayload))
+		return
+	}
+
+	from, to := parseTimeRange(r)
+
+	analytics, err := h.urlService.GetAnalytics(r.Context(), userID, id, from, to)
+	if err != nil {
+		h.log.Error("failed to get analytics", logger.Error(err), logger.Int64("id", id))
+		response.Error(w, response.StatusCodeFromError(err), err)
+		return
+	}
+
+	response.Success(w, http.StatusOK, "analytics retrieved", []any{analytics})
+}
+
+// parseTimeRange extracts optional "from" and "to" RFC3339 query parameters.
+func parseTimeRange(r *http.Request) (from, to *time.Time) {
+	if s := r.URL.Query().Get("from"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			from = &t
+		}
+	}
+	if s := r.URL.Query().Get("to"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			to = &t
+		}
+	}
+	return
 }

@@ -695,6 +695,163 @@ func (s *URLService) HardDelete(ctx context.Context, userID int64, id int64) err
 	return nil
 }
 
+// ListClickLogs returns a paginated list of click logs for a URL, optionally
+// filtered by a time range. The URL must belong to the given user.
+func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) (*payload.ClickLogsResponse, error) {
+	if err := s.ensureOwnership(ctx, userID, urlID); err != nil {
+		return nil, err
+	}
+
+	total, err := s.queries.CountClickLogsByURL(ctx, gen.CountClickLogsByURLParams{
+		UrlID: urlID,
+		From:  nullableTime(from),
+		To:    nullableTime(to),
+	})
+	if err != nil {
+		s.log.Error("failed to count click logs", logger.Error(err), logger.Int64("urlID", urlID))
+		return nil, fmt.Errorf("%w: could not count clicks", apperror.ErrInternal)
+	}
+
+	rows, err := s.queries.ListClickLogsByURL(ctx, gen.ListClickLogsByURLParams{
+		UrlID:  urlID,
+		From:   nullableTime(from),
+		To:     nullableTime(to),
+		Limit:  perPage,
+		Offset: offset,
+	})
+	if err != nil {
+		s.log.Error("failed to list click logs", logger.Error(err), logger.Int64("urlID", urlID))
+		return nil, fmt.Errorf("%w: could not list clicks", apperror.ErrInternal)
+	}
+
+	items := make([]payload.ClickLogEntry, len(rows))
+	for i, r := range rows {
+		items[i] = payload.ClickLogEntry{
+			ID:        r.ID,
+			ClickedAt: formatNullTime(r.ClickedAt),
+			IPAddress: r.IpAddress.IPNet.IP.String(),
+			UserAgent: r.UserAgent.String,
+			Referrer:  r.Referrer.String,
+		}
+	}
+
+	totalPages := int(total) / int(perPage)
+	if int(total)%int(perPage) > 0 {
+		totalPages++
+	}
+
+	return &payload.ClickLogsResponse{
+		Items:      items,
+		Total:      total,
+		Page:       int(page),
+		PerPage:    int(perPage),
+		TotalPages: totalPages,
+	}, nil
+}
+
+// GetAnalytics returns aggregate analytics for a URL including stats,
+// top referrers, and daily click breakdown.
+func (s *URLService) GetAnalytics(ctx context.Context, userID, urlID int64, from, to *time.Time) (*payload.AnalyticsResponse, error) {
+	if err := s.ensureOwnership(ctx, userID, urlID); err != nil {
+		return nil, err
+	}
+
+	stats, err := s.queries.ClickStatsByURL(ctx, gen.ClickStatsByURLParams{
+		UrlID: urlID,
+		From:  nullableTime(from),
+		To:    nullableTime(to),
+	})
+	if err != nil {
+		s.log.Error("failed to get click stats", logger.Error(err), logger.Int64("urlID", urlID))
+		return nil, fmt.Errorf("%w: could not get stats", apperror.ErrInternal)
+	}
+
+	refRows, err := s.queries.TopReferrersByURL(ctx, gen.TopReferrersByURLParams{
+		UrlID: urlID,
+		From:  nullableTime(from),
+		To:    nullableTime(to),
+		Limit: 10,
+	})
+	if err != nil {
+		s.log.Error("failed to get top referrers", logger.Error(err), logger.Int64("urlID", urlID))
+		return nil, fmt.Errorf("%w: could not get referrers", apperror.ErrInternal)
+	}
+
+	referrers := make([]payload.ReferrerStat, len(refRows))
+	for i, r := range refRows {
+		referrers[i] = payload.ReferrerStat{
+			Referrer: r.Referrer,
+			Count:    r.Count,
+		}
+	}
+
+	var dailyStats []payload.DailyClickStat
+	if from != nil && to != nil {
+		dailyRows, dErr := s.queries.ClicksByDateRange(ctx, gen.ClicksByDateRangeParams{
+			UrlID:       urlID,
+			ClickedAt:   nullableTime(from),
+			ClickedAt_2: nullableTime(to),
+		})
+		if dErr != nil {
+			s.log.Error("failed to get daily clicks", logger.Error(dErr), logger.Int64("urlID", urlID))
+			return nil, fmt.Errorf("%w: could not get daily stats", apperror.ErrInternal)
+		}
+		dailyStats = make([]payload.DailyClickStat, len(dailyRows))
+		for i, r := range dailyRows {
+			dailyStats[i] = payload.DailyClickStat{
+				Date:   r.Date.Format("2006-01-02"),
+				Clicks: r.Clicks,
+			}
+		}
+	}
+
+	return &payload.AnalyticsResponse{
+		Stats: payload.ClickStats{
+			TotalClicks:    stats.TotalClicks,
+			UniqueVisitors: stats.UniqueVisitors,
+			FirstClickedAt: formatInterfaceTime(stats.FirstClickedAt),
+			LastClickedAt:  formatInterfaceTime(stats.LastClickedAt),
+		},
+		Referrers:  referrers,
+		DailyStats: dailyStats,
+	}, nil
+}
+
+// ensureOwnership verifies the URL belongs to the user. Returns nil on success.
+func (s *URLService) ensureOwnership(ctx context.Context, userID, urlID int64) error {
+	_, err := s.queries.GetURLByID(ctx, gen.GetURLByIDParams{ID: urlID, UserID: userID})
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("%w: url with id %d not found", apperror.ErrNotFound, urlID)
+		}
+		return fmt.Errorf("%w: could not verify url ownership", apperror.ErrInternal)
+	}
+	return nil
+}
+
+func nullableTime(t *time.Time) sql.NullTime {
+	if t == nil {
+		return sql.NullTime{Valid: false}
+	}
+	return sql.NullTime{Time: *t, Valid: true}
+}
+
+func formatNullTime(t sql.NullTime) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.Time.Format("2006-01-02T15:04:05Z")
+}
+
+func formatInterfaceTime(v interface{}) string {
+	switch t := v.(type) {
+	case time.Time:
+		return t.Format("2006-01-02T15:04:05Z")
+	default:
+		return ""
+	}
+}
+
 func (s *URLService) generateShortCode() (string, error) {
 	bytes := make([]byte, 5)
 	if _, err := rand.Read(bytes); err != nil {

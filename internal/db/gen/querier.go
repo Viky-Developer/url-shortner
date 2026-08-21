@@ -10,6 +10,9 @@ import (
 
 type Querier interface {
 	AddPasswordHistory(ctx context.Context, arg AddPasswordHistoryParams) error
+	ClickStatsByURL(ctx context.Context, arg ClickStatsByURLParams) (ClickStatsByURLRow, error)
+	ClicksByDateRange(ctx context.Context, arg ClicksByDateRangeParams) ([]ClicksByDateRangeRow, error)
+	CountClickLogsByURL(ctx context.Context, arg CountClickLogsByURLParams) (int64, error)
 	CountURLs(ctx context.Context, userID int64) (int64, error)
 	CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error)
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error)
@@ -33,11 +36,13 @@ type Querier interface {
 	IncrementURLClick(ctx context.Context, id int64) error
 	ListActiveSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
 	ListBlockedIPRanges(ctx context.Context) ([]BlockedIpRange, error)
+	ListClickLogsByURL(ctx context.Context, arg ListClickLogsByURLParams) ([]ListClickLogsByURLRow, error)
 	ListSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
 	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
 	RevokeSession(ctx context.Context, arg RevokeSessionParams) error
 	ShortCodeExists(ctx context.Context, shortCode string) (bool, error)
 	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)
+	TopReferrersByURL(ctx context.Context, arg TopReferrersByURLParams) ([]TopReferrersByURLRow, error)
 	UpdateSessionLastActive(ctx context.Context, id int64) error
 	UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error)
 	UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error)
