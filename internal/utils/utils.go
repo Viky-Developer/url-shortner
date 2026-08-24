@@ -157,8 +157,8 @@ func ValidateEmail(email string) error {
 // - Maximum 8 characters
 func ValidatePassword(password string) error {
 
-	if len(password) > 8 {
-		return fmt.Errorf("password must be at most 8 characters")
+	if len(password) < 8 {
+		return fmt.Errorf("%w: password must be at most 8 characters", apperror.ErrInvalidPayload)
 	}
 
 	hasLower := false
@@ -188,7 +188,7 @@ func ValidatePassword(password string) error {
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("password must contain at least one %s", strings.Join(missing, ", "))
+		return fmt.Errorf("%w: password must contain at least one %s", apperror.ErrInvalidPayload, strings.Join(missing, ", "))
 	}
 
 	return nil

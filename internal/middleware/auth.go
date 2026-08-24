@@ -71,7 +71,7 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 			}
 
 			// Decode the HMAC-encoded display user ID to the internal int64
-			userID, err := authService.DecodeUserID(claims.EncodedUserID)
+			userID, err := authService.DecodeUserID(claims.UserID)
 			if err != nil {
 				log.Warn("invalid encoded user ID in token", logger.Error(err))
 				writeJSONError(w, http.StatusUnauthorized, "invalid token claims")

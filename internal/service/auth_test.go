@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestGenerateAccessToken(t *testing.T) {
 	cfg := testConfig()
 	svc := NewAuthService(nil, nil, cfg, NoopCache{}, testLog(t))
 
-	token, err := svc.generateAccessToken("USR_abc123")
+	token, err := svc.generateAccessToken("USR_abc123", "test@example.com", "Test User")
 	if err != nil {
 		t.Fatalf("generateAccessToken: %v", err)
 	}
@@ -40,7 +41,7 @@ func TestValidateAccessToken(t *testing.T) {
 	cfg := testConfig()
 	svc := NewAuthService(nil, nil, cfg, NoopCache{}, testLog(t))
 
-	token, err := svc.generateAccessToken("USR_abc123")
+	token, err := svc.generateAccessToken("USR_abc123", "test@example.com", "Test User")
 	if err != nil {
 		t.Fatalf("generateAccessToken: %v", err)
 	}
@@ -49,8 +50,8 @@ func TestValidateAccessToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateAccessToken: %v", err)
 	}
-	if claims.EncodedUserID != "USR_abc123" {
-		t.Errorf("expected encodedUserID 'USR_abc123', got %q", claims.EncodedUserID)
+	if claims.UserID != "USR_abc123" {
+		t.Errorf("expected encodedUserID 'USR_abc123', got %q", claims.UserID)
 	}
 }
 
@@ -72,7 +73,7 @@ func TestValidateAccessTokenWrongKey(t *testing.T) {
 	svc1 := NewAuthService(nil, nil, cfg1, NoopCache{}, testLog(t))
 	svc2 := NewAuthService(nil, nil, cfg2, NoopCache{}, testLog(t))
 
-	token, err := svc1.generateAccessToken("USR_abc123")
+	token, err := svc1.generateAccessToken("USR_abc123", "test@example.com", "Test User")
 	if err != nil {
 		t.Fatalf("generateAccessToken: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestRegisterUserAlreadyExists(t *testing.T) {
 	_, err := svc.Register(context.Background(), payload.RegisterRequest{
 		Email:    "existing@example.com",
 		Password: "Passw0rd",
-	}, "127.0.0.1", "test-agent")
+	}, "web", "test-device", "127.0.0.1", "", "", "test-agent")
 	if err == nil {
 		t.Fatal("expected error for existing email")
 	}
@@ -180,7 +181,7 @@ func TestRegisterUserDBError(t *testing.T) {
 	_, err := svc.Register(context.Background(), payload.RegisterRequest{
 		Email:    "test@example.com",
 		Password: "Passw0rd",
-	}, "127.0.0.1", "test-agent")
+	}, "web", "test-device", "127.0.0.1", "", "", "test-agent")
 	if err == nil {
 		t.Fatal("expected error for DB failure")
 	}
@@ -218,7 +219,7 @@ func TestRegisterUserCreatesAccount(t *testing.T) {
 	resp, err := svc.Register(context.Background(), payload.RegisterRequest{
 		Email:    "new@example.com",
 		Password: "Passw0rd",
-	}, "127.0.0.1", "test-agent")
+	}, "web", "test-device", "127.0.0.1", "", "", "test-agent")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -261,7 +262,7 @@ func TestRegisterGeneratesDisplayUserID(t *testing.T) {
 	_, err := svc.Register(context.Background(), payload.RegisterRequest{
 		Email:    "test@example.com",
 		Password: "Passw0rd",
-	}, "127.0.0.1", "test-agent")
+	}, "web", "test-device", "127.0.0.1", "", "", "test-agent")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -284,12 +285,12 @@ func TestLoginUserNotFound(t *testing.T) {
 	_, err := svc.Login(context.Background(), payload.LoginRequest{
 		Email:    "notfound@example.com",
 		Password: "password123",
-	}, "", "", "", "")
+	}, "", "", "", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for non-existent user")
 	}
-	if err.Error() != "invalid credentials" {
-		t.Errorf("expected 'invalid credentials', got %q", err.Error())
+	if !errors.Is(err, errInvalidCredentials) {
+		t.Errorf("expected errInvalidCredentials, got %q", err.Error())
 	}
 }
 
@@ -305,7 +306,7 @@ func TestLoginDBError(t *testing.T) {
 	_, err := svc.Login(context.Background(), payload.LoginRequest{
 		Email:    "test@example.com",
 		Password: "password123",
-	}, "", "", "", "")
+	}, "", "", "", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for DB failure")
 	}
@@ -329,12 +330,12 @@ func TestLoginInvalidPassword(t *testing.T) {
 	_, err := svc.Login(context.Background(), payload.LoginRequest{
 		Email:    "test@example.com",
 		Password: "wrong-password",
-	}, "", "", "", "")
+	}, "", "", "", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for wrong password")
 	}
-	if err.Error() != "invalid credentials" {
-		t.Errorf("expected 'invalid credentials', got %q", err.Error())
+	if !errors.Is(err, errInvalidCredentials) {
+		t.Errorf("expected errInvalidCredentials, got %q", err.Error())
 	}
 }
 
@@ -360,7 +361,7 @@ func TestLoginSuccess(t *testing.T) {
 	resp, err := svc.Login(context.Background(), payload.LoginRequest{
 		Email:    "test@example.com",
 		Password: "password123",
-	}, "web", "Chrome", "127.0.0.1", "Mozilla/5.0")
+	}, "web", "Chrome", "127.0.0.1", "", "", "Mozilla/5.0")
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -390,7 +391,7 @@ func TestGenerateTokensCreatesSession(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "web", "Chrome", "127.0.0.1", "Mozilla/5.0")
+	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
 	if err != nil {
 		t.Fatalf("GenerateTokens: %v", err)
 	}
@@ -463,26 +464,27 @@ func TestRefreshAccessTokenSuccess(t *testing.T) {
 		},
 		getUserByIDFn: func(_ context.Context, _ int64) (gen.GetUserByIDRow, error) {
 			return gen.GetUserByIDRow{
-				ID:            42,
-				Email:         "user@example.com",
-				DisplayUserID: utils.NullString("USR_42"),
+				ID:              42,
+				Email:           "user@example.com",
+				DisplayUserID:   utils.NullString("USR_42"),
+				DisplayUserName: utils.NullString("Test User"),
 			}, nil
-		},
-		createSessionFn: func(_ context.Context, _ gen.CreateSessionParams) (gen.Session, error) {
-			return gen.Session{ID: 2}, nil
 		},
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	tokens, err := svc.RefreshAccessToken(context.Background(), "valid-refresh-token")
+	resp, err := svc.RefreshAccessToken(context.Background(), "valid-refresh-token")
 	if err != nil {
 		t.Fatalf("RefreshAccessToken: %v", err)
 	}
-	if tokens == nil {
-		t.Fatal("expected non-nil tokens")
+	if resp == nil {
+		t.Fatal("expected non-nil response")
 	}
-	if tokens.AccessToken == "" {
+	if resp.AccessToken == "" {
 		t.Error("expected non-empty access token")
+	}
+	if resp.RefreshToken != "valid-refresh-token" {
+		t.Errorf("expected same refresh token returned, got %q", resp.RefreshToken)
 	}
 }
 
@@ -627,10 +629,10 @@ func TestLogoutInvalidToken(t *testing.T) {
 
 func TestClaimsStruct(t *testing.T) {
 	claims := Claims{
-		EncodedUserID: "USR_abc123",
+		UserID: "USR_abc123",
 	}
-	if claims.EncodedUserID != "USR_abc123" {
-		t.Errorf("expected EncodedUserID 'USR_abc123', got %q", claims.EncodedUserID)
+	if claims.UserID != "USR_abc123" {
+		t.Errorf("expected EncodedUserID 'USR_abc123', got %q", claims.UserID)
 	}
 }
 
@@ -689,9 +691,9 @@ func TestGetSessionCacheHit(t *testing.T) {
 	mock := &mockQuerier{}
 
 	// Pre-populate cache hash fields
-	_ = cache.HSet("hash123", "id", 10)
-	_ = cache.HSet("hash123", "user_id", 42)
-	_ = cache.HSet("hash123", "session_status", 1)
+	_ = cache.HSet("refresh:hash123", "id", 10)
+	_ = cache.HSet("refresh:hash123", "user_id", 42)
+	_ = cache.HSet("refresh:hash123", "session_status", 1)
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
@@ -738,7 +740,7 @@ func TestGetSessionCacheMiss(t *testing.T) {
 	}
 
 	// Verify cache was populated
-	if _, err := cache.HGet("hash456", "id"); err != nil {
+	if _, err := cache.HGet("refresh:hash456", "id"); err != nil {
 		t.Error("expected session to be cached after DB lookup")
 	}
 }
@@ -810,7 +812,7 @@ func TestGenerateTokensPopulatesCache(t *testing.T) {
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
-	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "web", "Chrome", "127.0.0.1", "Mozilla/5.0")
+	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
 	if err != nil {
 		t.Fatalf("GenerateTokens: %v", err)
 	}
@@ -854,7 +856,7 @@ func TestLogoutClearsCache(t *testing.T) {
 	}
 
 	// Verify cache was cleared
-	if _, err := cache.HGet(refreshTokenHash, "id"); err == nil {
+	if _, err := cache.HGet("refresh:"+refreshTokenHash, "id"); err == nil {
 		t.Error("expected cache to be cleared after logout")
 	}
 }
@@ -866,9 +868,9 @@ func TestRefreshAccessTokenUsesCache(t *testing.T) {
 
 	// Pre-populate cache with an active session
 	refreshTokenHash := (&AuthService{}).hashToken("cached-refresh-token")
-	_ = cache.HSet(refreshTokenHash, "id", 10)
-	_ = cache.HSet(refreshTokenHash, "user_id", 42)
-	_ = cache.HSet(refreshTokenHash, "session_status", 1)
+	_ = cache.HSet("refresh:"+refreshTokenHash, "id", 10)
+	_ = cache.HSet("refresh:"+refreshTokenHash, "user_id", 42)
+	_ = cache.HSet("refresh:"+refreshTokenHash, "session_status", 1)
 
 	mock := &mockQuerier{
 		getSessionByHashFn: func(_ context.Context, _ string) (gen.Session, error) {
@@ -880,19 +882,17 @@ func TestRefreshAccessTokenUsesCache(t *testing.T) {
 		},
 		getUserByIDFn: func(_ context.Context, _ int64) (gen.GetUserByIDRow, error) {
 			return gen.GetUserByIDRow{
-				ID:            42,
-				Email:         "user@example.com",
-				DisplayUserID: utils.NullString("USR_42"),
+				ID:              42,
+				Email:           "user@example.com",
+				DisplayUserID:   utils.NullString("USR_42"),
+				DisplayUserName: utils.NullString("Test User"),
 			}, nil
-		},
-		createSessionFn: func(_ context.Context, _ gen.CreateSessionParams) (gen.Session, error) {
-			return gen.Session{ID: 11}, nil
 		},
 	}
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
-	tokens, err := svc.RefreshAccessToken(context.Background(), "cached-refresh-token")
+	resp, err := svc.RefreshAccessToken(context.Background(), "cached-refresh-token")
 	if err != nil {
 		t.Fatalf("RefreshAccessToken: %v", err)
 	}
@@ -902,8 +902,11 @@ func TestRefreshAccessTokenUsesCache(t *testing.T) {
 		t.Errorf("expected 0 DB calls for session lookup on cache hit, got %d", dbCallCount)
 	}
 
-	if tokens.AccessToken == "" {
+	if resp.AccessToken == "" {
 		t.Error("expected non-empty access token")
+	}
+	if resp.RefreshToken != "cached-refresh-token" {
+		t.Errorf("expected same refresh token returned, got %q", resp.RefreshToken)
 	}
 }
 

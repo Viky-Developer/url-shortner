@@ -24,9 +24,9 @@ func (q *Queries) CountRevokedSessions(ctx context.Context) (int64, error) {
 }
 
 const createSession = `-- name: CreateSession :one
-INSERT INTO sessions (user_id, refresh_token_hash, device_type, device_name, ip_address, user_agent)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, refresh_token_hash, device_type, device_name, ip_address, user_agent, logged_in_at, last_active_at, session_status
+INSERT INTO sessions (user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
 `
 
 type CreateSessionParams struct {
@@ -34,6 +34,8 @@ type CreateSessionParams struct {
 	RefreshTokenHash string         `json:"refresh_token_hash"`
 	DeviceType       sql.NullString `json:"device_type"`
 	DeviceName       sql.NullString `json:"device_name"`
+	Country          sql.NullString `json:"country"`
+	City             sql.NullString `json:"city"`
 	IpAddress        pqtype.Inet    `json:"ip_address"`
 	UserAgent        sql.NullString `json:"user_agent"`
 }
@@ -44,6 +46,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.RefreshTokenHash,
 		arg.DeviceType,
 		arg.DeviceName,
+		arg.Country,
+		arg.City,
 		arg.IpAddress,
 		arg.UserAgent,
 	)
@@ -54,6 +58,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.RefreshTokenHash,
 		&i.DeviceType,
 		&i.DeviceName,
+		&i.Country,
+		&i.City,
 		&i.IpAddress,
 		&i.UserAgent,
 		&i.LoggedInAt,
@@ -64,7 +70,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, ip_address, user_agent, logged_in_at, last_active_at, session_status
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
 FROM sessions
 WHERE id = $1
 `
@@ -78,6 +84,8 @@ func (q *Queries) GetSessionByID(ctx context.Context, id int64) (Session, error)
 		&i.RefreshTokenHash,
 		&i.DeviceType,
 		&i.DeviceName,
+		&i.Country,
+		&i.City,
 		&i.IpAddress,
 		&i.UserAgent,
 		&i.LoggedInAt,
@@ -88,7 +96,7 @@ func (q *Queries) GetSessionByID(ctx context.Context, id int64) (Session, error)
 }
 
 const getSessionByRefreshTokenHash = `-- name: GetSessionByRefreshTokenHash :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, ip_address, user_agent, logged_in_at, last_active_at, session_status
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
 FROM sessions
 WHERE refresh_token_hash = $1 AND session_status = 1
 `
@@ -102,6 +110,8 @@ func (q *Queries) GetSessionByRefreshTokenHash(ctx context.Context, refreshToken
 		&i.RefreshTokenHash,
 		&i.DeviceType,
 		&i.DeviceName,
+		&i.Country,
+		&i.City,
 		&i.IpAddress,
 		&i.UserAgent,
 		&i.LoggedInAt,
@@ -112,7 +122,7 @@ func (q *Queries) GetSessionByRefreshTokenHash(ctx context.Context, refreshToken
 }
 
 const listActiveSessionsByUser = `-- name: ListActiveSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, ip_address, user_agent, logged_in_at, last_active_at, session_status
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at ASC
@@ -133,6 +143,8 @@ func (q *Queries) ListActiveSessionsByUser(ctx context.Context, userID int64) ([
 			&i.RefreshTokenHash,
 			&i.DeviceType,
 			&i.DeviceName,
+			&i.Country,
+			&i.City,
 			&i.IpAddress,
 			&i.UserAgent,
 			&i.LoggedInAt,
@@ -153,7 +165,7 @@ func (q *Queries) ListActiveSessionsByUser(ctx context.Context, userID int64) ([
 }
 
 const listSessionsByUser = `-- name: ListSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, ip_address, user_agent, logged_in_at, last_active_at, session_status
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at DESC
@@ -174,6 +186,8 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, userID int64) ([]Sessi
 			&i.RefreshTokenHash,
 			&i.DeviceType,
 			&i.DeviceName,
+			&i.Country,
+			&i.City,
 			&i.IpAddress,
 			&i.UserAgent,
 			&i.LoggedInAt,

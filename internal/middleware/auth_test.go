@@ -32,12 +32,12 @@ func createTestJWT(t *testing.T, jwtKey, encodedUserID string) string {
 	t.Helper()
 
 	type claims struct {
-		EncodedUserID string `json:"encoded_user_id"`
+		UserID string `json:"user_id"`
 		jwt.RegisteredClaims
 	}
 
 	c := claims{
-		EncodedUserID: encodedUserID,
+		UserID: encodedUserID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

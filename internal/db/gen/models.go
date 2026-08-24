@@ -66,6 +66,8 @@ type Session struct {
 	RefreshTokenHash string         `json:"refresh_token_hash"`
 	DeviceType       sql.NullString `json:"device_type"`
 	DeviceName       sql.NullString `json:"device_name"`
+	Country          sql.NullString `json:"country"`
+	City             sql.NullString `json:"city"`
 	IpAddress        pqtype.Inet    `json:"ip_address"`
 	UserAgent        sql.NullString `json:"user_agent"`
 	LoggedInAt       sql.NullTime   `json:"logged_in_at"`
@@ -107,6 +109,7 @@ type User struct {
 	Email             string         `json:"email"`
 	PasswordHash      string         `json:"password_hash"`
 	DisplayUserID     sql.NullString `json:"display_user_id"`
+	DisplayUserName   sql.NullString `json:"display_user_name"`
 	CreatedAt         sql.NullTime   `json:"created_at"`
 	UpdatedAt         sql.NullTime   `json:"updated_at"`
 	DeletedAt         sql.NullTime   `json:"deleted_at"`

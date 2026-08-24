@@ -61,6 +61,8 @@ func StatusCodeFromError(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, apperror.ErrURLDeleted):
 		return http.StatusGone
+	case errors.Is(err, apperror.ErrUnauthorized):
+		return http.StatusUnauthorized
 	default:
 		return http.StatusInternalServerError
 	}

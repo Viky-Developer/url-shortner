@@ -1,13 +1,13 @@
 -- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_user_id, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL;
+SELECT id, email, password_hash, display_user_id, display_user_name, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL;
 
 -- name: GetUserByID :one
-SELECT id, email, display_user_id, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL;
+SELECT id, email, display_user_id, display_user_name, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: CreateUser :one
-INSERT INTO users (email, password_hash, display_user_id, password_changed_at)
-VALUES ($1, $2, $3, NOW())
-RETURNING id, email, display_user_id, created_at, password_changed_at;
+INSERT INTO users (email, password_hash, display_user_id, display_user_name, password_changed_at)
+VALUES ($1, $2, $3, $4, NOW())
+RETURNING id, email, display_user_id, display_user_name, created_at, password_changed_at;
 
 -- name: UpdateUserDisplayID :one
 UPDATE users SET display_user_id = $2 WHERE id = $1 AND deleted_at IS NULL

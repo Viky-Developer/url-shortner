@@ -15,32 +15,31 @@ import (
 )
 
 type mockAuthService struct {
-	registerFn     func(context.Context, payload.RegisterRequest, string, string) (*payload.AuthResponse, error)
-	loginFn        func(context.Context, payload.LoginRequest, string, string, string, string) (*payload.AuthResponse, error)
-	forgotPassFn   func(context.Context, payload.ForgotPasswordRequest, string, string) (*payload.AuthResponse, error)
-	refreshFn      func(context.Context, string) (*payload.AuthResponse, error)
+	registerFn     func(context.Context, payload.RegisterRequest, string, string, string, string, string, string) (*payload.AuthResponse, error)
+	loginFn        func(context.Context, payload.LoginRequest, string, string, string, string, string, string) (*payload.AuthResponse, error)
+	forgotPassFn   func(context.Context, payload.ForgotPasswordRequest, string, string) error
+	refreshFn      func(context.Context, string) (*payload.RefreshTokenResponse, error)
 	logoutFn       func(context.Context, string) error
 	listSessionsFn func(context.Context, int64) ([]payload.SessionResponse, error)
 	revokeFn       func(context.Context, int64, int64) error
-	updatePassFn   func(context.Context, int64, payload.UpdatePasswordRequest, string, string) (*payload.UpdatePasswordResponse, error)
 }
 
-func (m *mockAuthService) Register(ctx context.Context, req payload.RegisterRequest, ipAddress, userAgent string) (*payload.AuthResponse, error) {
-	return m.registerFn(ctx, req, ipAddress, userAgent)
+func (m *mockAuthService) Register(ctx context.Context, req payload.RegisterRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error) {
+	return m.registerFn(ctx, req, deviceType, deviceName, ipAddress, country, city, userAgent)
 }
 
-func (m *mockAuthService) Login(ctx context.Context, req payload.LoginRequest, deviceType, deviceName, ipAddress, userAgent string) (*payload.AuthResponse, error) {
-	return m.loginFn(ctx, req, deviceType, deviceName, ipAddress, userAgent)
+func (m *mockAuthService) Login(ctx context.Context, req payload.LoginRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error) {
+	return m.loginFn(ctx, req, deviceType, deviceName, ipAddress, country, city, userAgent)
 }
 
-func (m *mockAuthService) ForgotPassword(ctx context.Context, req payload.ForgotPasswordRequest, ipAddress, userAgent string) (*payload.AuthResponse, error) {
+func (m *mockAuthService) ForgotPassword(ctx context.Context, req payload.ForgotPasswordRequest, ipAddress, userAgent string) error {
 	if m.forgotPassFn != nil {
 		return m.forgotPassFn(ctx, req, ipAddress, userAgent)
 	}
-	return sampleAuthResponse(), nil
+	return nil
 }
 
-func (m *mockAuthService) RefreshToken(ctx context.Context, refreshToken string) (*payload.AuthResponse, error) {
+func (m *mockAuthService) RefreshToken(ctx context.Context, refreshToken string) (*payload.RefreshTokenResponse, error) {
 	return m.refreshFn(ctx, refreshToken)
 }
 
@@ -54,13 +53,6 @@ func (m *mockAuthService) ListSessions(ctx context.Context, userID int64) ([]pay
 
 func (m *mockAuthService) RevokeSession(ctx context.Context, sessionID, userID int64) error {
 	return m.revokeFn(ctx, sessionID, userID)
-}
-
-func (m *mockAuthService) UpdatePassword(ctx context.Context, userID int64, req payload.UpdatePasswordRequest, ipAddress, userAgent string) (*payload.UpdatePasswordResponse, error) {
-	if m.updatePassFn != nil {
-		return m.updatePassFn(ctx, userID, req, ipAddress, userAgent)
-	}
-	return &payload.UpdatePasswordResponse{Message: "password updated successfully"}, nil
 }
 
 func sampleAuthResponse() *payload.AuthResponse {
@@ -77,7 +69,7 @@ func sampleAuthResponse() *payload.AuthResponse {
 
 func TestRegisterHandler(t *testing.T) {
 	mock := &mockAuthService{
-		registerFn: func(_ context.Context, _ payload.RegisterRequest, _, _ string) (*payload.AuthResponse, error) {
+		registerFn: func(_ context.Context, _ payload.RegisterRequest, _, _, _, _, _, _ string) (*payload.AuthResponse, error) {
 			return sampleAuthResponse(), nil
 		},
 	}
@@ -131,7 +123,7 @@ func TestRegisterHandlerMissingFields(t *testing.T) {
 
 func TestRegisterHandlerServiceError(t *testing.T) {
 	mock := &mockAuthService{
-		registerFn: func(_ context.Context, _ payload.RegisterRequest, _, _ string) (*payload.AuthResponse, error) {
+		registerFn: func(_ context.Context, _ payload.RegisterRequest, _, _, _, _, _, _ string) (*payload.AuthResponse, error) {
 			return nil, apperror.ErrConflict
 		},
 	}
@@ -150,7 +142,7 @@ func TestRegisterHandlerServiceError(t *testing.T) {
 
 func TestLoginHandler(t *testing.T) {
 	mock := &mockAuthService{
-		loginFn: func(_ context.Context, _ payload.LoginRequest, _, _, _, _ string) (*payload.AuthResponse, error) {
+		loginFn: func(_ context.Context, _ payload.LoginRequest, _, _, _, _, _, _ string) (*payload.AuthResponse, error) {
 			return sampleAuthResponse(), nil
 		},
 	}
@@ -198,7 +190,7 @@ func TestLoginHandlerMissingFields(t *testing.T) {
 
 func TestLoginHandlerServiceError(t *testing.T) {
 	mock := &mockAuthService{
-		loginFn: func(_ context.Context, _ payload.LoginRequest, _, _, _, _ string) (*payload.AuthResponse, error) {
+		loginFn: func(_ context.Context, _ payload.LoginRequest, _, _, _, _, _, _ string) (*payload.AuthResponse, error) {
 			return nil, apperror.ErrNotFound
 		},
 	}
@@ -217,7 +209,7 @@ func TestLoginHandlerServiceError(t *testing.T) {
 
 func TestLoginHandlerMaxDeviceError(t *testing.T) {
 	mock := &mockAuthService{
-		loginFn: func(_ context.Context, _ payload.LoginRequest, _, _, _, _ string) (*payload.AuthResponse, error) {
+		loginFn: func(_ context.Context, _ payload.LoginRequest, _, _, _, _, _, _ string) (*payload.AuthResponse, error) {
 			return nil, &apperror.MaxDeviceError{
 				Devices: []apperror.ActiveDevice{
 					{ID: 1, DeviceType: "web", DeviceName: "Chrome"},
@@ -244,8 +236,11 @@ func TestLoginHandlerMaxDeviceError(t *testing.T) {
 
 func TestRefreshTokenHandler(t *testing.T) {
 	mock := &mockAuthService{
-		refreshFn: func(_ context.Context, _ string) (*payload.AuthResponse, error) {
-			return sampleAuthResponse(), nil
+		refreshFn: func(_ context.Context, _ string) (*payload.RefreshTokenResponse, error) {
+			return &payload.RefreshTokenResponse{
+				AccessToken:  "new-access-token",
+				RefreshToken: "same-refresh-token",
+			}, nil
 		},
 	}
 	h := NewAuthHandler(mock, testLog(t))
@@ -278,7 +273,7 @@ func TestRefreshTokenHandlerMissingToken(t *testing.T) {
 
 func TestRefreshTokenHandlerServiceError(t *testing.T) {
 	mock := &mockAuthService{
-		refreshFn: func(_ context.Context, _ string) (*payload.AuthResponse, error) {
+		refreshFn: func(_ context.Context, _ string) (*payload.RefreshTokenResponse, error) {
 			return nil, apperror.ErrUnauthorized
 		},
 	}
@@ -290,9 +285,9 @@ func TestRefreshTokenHandlerServiceError(t *testing.T) {
 
 	h.RefreshToken(w, req)
 
-	// ErrUnauthorized is not mapped in StatusCodeFromError, defaults to 500
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	// ErrUnauthorized maps to 401 in StatusCodeFromError
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -480,7 +475,7 @@ func TestRevokeSessionHandlerServiceError(t *testing.T) {
 
 func TestRegisterHandlerJSONResponse(t *testing.T) {
 	mock := &mockAuthService{
-		registerFn: func(_ context.Context, _ payload.RegisterRequest, _, _ string) (*payload.AuthResponse, error) {
+		registerFn: func(_ context.Context, _ payload.RegisterRequest, _, _, _, _, _, _ string) (*payload.AuthResponse, error) {
 			return sampleAuthResponse(), nil
 		},
 	}
@@ -506,7 +501,7 @@ func TestRegisterHandlerJSONResponse(t *testing.T) {
 func TestLoginHandlerPassesDeviceInfo(t *testing.T) {
 	var capturedDeviceType, capturedDeviceName, capturedIP, capturedUA string
 	mock := &mockAuthService{
-		loginFn: func(_ context.Context, _ payload.LoginRequest, deviceType, deviceName, ipAddress, userAgent string) (*payload.AuthResponse, error) {
+		loginFn: func(_ context.Context, _ payload.LoginRequest, deviceType, deviceName, ipAddress, _, _, userAgent string) (*payload.AuthResponse, error) {
 			capturedDeviceType = deviceType
 			capturedDeviceName = deviceName
 			capturedIP = ipAddress
@@ -550,8 +545,8 @@ func TestForgotPasswordHandler(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), `"accessToken":"access-token"`) {
-		t.Errorf("expected accessToken in body, got %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "password updated successfully") {
+		t.Errorf("expected success message, got %s", w.Body.String())
 	}
 }
 
@@ -572,8 +567,8 @@ func TestForgotPasswordHandlerMissingFields(t *testing.T) {
 
 func TestForgotPasswordHandlerServiceError(t *testing.T) {
 	mock := &mockAuthService{
-		forgotPassFn: func(_ context.Context, _ payload.ForgotPasswordRequest, _, _ string) (*payload.AuthResponse, error) {
-			return nil, apperror.ErrNotFound
+		forgotPassFn: func(_ context.Context, _ payload.ForgotPasswordRequest, _, _ string) error {
+			return apperror.ErrInternal
 		},
 	}
 	h := NewAuthHandler(mock, testLog(t))
@@ -584,7 +579,7 @@ func TestForgotPasswordHandlerServiceError(t *testing.T) {
 
 	h.ForgotPassword(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 }

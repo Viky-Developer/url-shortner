@@ -15,8 +15,8 @@ func TestLoad(t *testing.T) {
 		if cfg.DBPort != "5432" {
 			t.Fatalf("expected DBPort 5432, got %s", cfg.DBPort)
 		}
-		if cfg.ServerPort != "8080" {
-			t.Fatalf("expected ServerPort 8080, got %s", cfg.ServerPort)
+		if cfg.ServerPort != "8085" {
+			t.Fatalf("expected ServerPort 8085, got %s", cfg.ServerPort)
 		}
 		if cfg.DBMaxOpen != 25 {
 			t.Fatalf("expected DBMaxOpen 25, got %d", cfg.DBMaxOpen)

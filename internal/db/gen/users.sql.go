@@ -46,32 +46,40 @@ func (q *Queries) CountPasswordHistory(ctx context.Context, userID int64) (int64
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (email, password_hash, display_user_id, password_changed_at)
-VALUES ($1, $2, $3, NOW())
-RETURNING id, email, display_user_id, created_at, password_changed_at
+INSERT INTO users (email, password_hash, display_user_id, display_user_name, password_changed_at)
+VALUES ($1, $2, $3, $4, NOW())
+RETURNING id, email, display_user_id, display_user_name, created_at, password_changed_at
 `
 
 type CreateUserParams struct {
-	Email         string         `json:"email"`
-	PasswordHash  string         `json:"password_hash"`
-	DisplayUserID sql.NullString `json:"display_user_id"`
+	Email           string         `json:"email"`
+	PasswordHash    string         `json:"password_hash"`
+	DisplayUserID   sql.NullString `json:"display_user_id"`
+	DisplayUserName sql.NullString `json:"display_user_name"`
 }
 
 type CreateUserRow struct {
 	ID                int64          `json:"id"`
 	Email             string         `json:"email"`
 	DisplayUserID     sql.NullString `json:"display_user_id"`
+	DisplayUserName   sql.NullString `json:"display_user_name"`
 	CreatedAt         sql.NullTime   `json:"created_at"`
 	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
-	row := q.db.QueryRowContext(ctx, createUser, arg.Email, arg.PasswordHash, arg.DisplayUserID)
+	row := q.db.QueryRowContext(ctx, createUser,
+		arg.Email,
+		arg.PasswordHash,
+		arg.DisplayUserID,
+		arg.DisplayUserName,
+	)
 	var i CreateUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,
 		&i.DisplayUserID,
+		&i.DisplayUserName,
 		&i.CreatedAt,
 		&i.PasswordChangedAt,
 	)
@@ -90,7 +98,7 @@ func (q *Queries) GetLastPasswordHistory(ctx context.Context, userID int64) (str
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_user_id, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL
+SELECT id, email, password_hash, display_user_id, display_user_name, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL
 `
 
 type GetUserByEmailRow struct {
@@ -98,6 +106,7 @@ type GetUserByEmailRow struct {
 	Email             string         `json:"email"`
 	PasswordHash      string         `json:"password_hash"`
 	DisplayUserID     sql.NullString `json:"display_user_id"`
+	DisplayUserName   sql.NullString `json:"display_user_name"`
 	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
 }
 
@@ -109,19 +118,21 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 		&i.Email,
 		&i.PasswordHash,
 		&i.DisplayUserID,
+		&i.DisplayUserName,
 		&i.PasswordChangedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, display_user_id, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL
+SELECT id, email, display_user_id, display_user_name, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserByIDRow struct {
 	ID                int64          `json:"id"`
 	Email             string         `json:"email"`
 	DisplayUserID     sql.NullString `json:"display_user_id"`
+	DisplayUserName   sql.NullString `json:"display_user_name"`
 	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
 }
 
@@ -132,6 +143,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, er
 		&i.ID,
 		&i.Email,
 		&i.DisplayUserID,
+		&i.DisplayUserName,
 		&i.PasswordChangedAt,
 	)
 	return i, err

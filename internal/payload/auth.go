@@ -19,11 +19,19 @@ type RefreshTokenRequest struct {
 	RefreshToken string `json:"refreshToken"`
 }
 
-// AuthResponse represents the authentication response with tokens.
+// AuthResponse represents the authentication response with tokens and user info.
 type AuthResponse struct {
 	AccessToken  string       `json:"accessToken"`
 	RefreshToken string       `json:"refreshToken"`
 	User         UserResponse `json:"user"`
+}
+
+// RefreshTokenResponse represents the token refresh response — only new
+// access token and the existing refresh token, no user details (those are
+// already in the JWT claims).
+type RefreshTokenResponse struct {
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
 }
 
 // UserResponse represents the user in API responses.
@@ -41,28 +49,18 @@ type SessionResponse struct {
 	DeviceType   string `json:"deviceType,omitempty"`
 	DeviceName   string `json:"deviceName,omitempty"`
 	IPAddress    string `json:"ipAddress,omitempty"`
+	Country      string `json:"country,omitempty"`
+	City         string `json:"city,omitempty"`
 	LoggedInAt   string `json:"loggedInAt"`
 	LastActiveAt string `json:"lastActiveAt"`
 }
 
-// UpdatePasswordRequest represents the password update request.
-type UpdatePasswordRequest struct {
-	CurrentPassword string `json:"currentPassword"`
-	NewPassword     string `json:"newPassword"`
-}
-
 // ForgotPasswordRequest represents the forgot-password request.
-// Validates the previous password, updates to the new one, and returns tokens.
+// Validates the previous password, updates to the new one, and revokes all sessions.
 type ForgotPasswordRequest struct {
 	Email           string `json:"email"`
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`
-	RevokeSessionID *int64 `json:"revokeSessionId,omitempty"`
-}
-
-// UpdatePasswordResponse represents the password update response.
-type UpdatePasswordResponse struct {
-	Message string `json:"message"`
 }
 
 // MaxDeviceErrorResponse is returned when a user has reached the maximum

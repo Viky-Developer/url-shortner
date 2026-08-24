@@ -17,14 +17,13 @@ import (
 
 // AuthService is the contract the handlers depend on for auth business logic.
 type AuthService interface {
-	Register(ctx context.Context, req payload.RegisterRequest, ipAddress, userAgent string) (*payload.AuthResponse, error)
-	Login(ctx context.Context, req payload.LoginRequest, deviceType, deviceName, ipAddress, userAgent string) (*payload.AuthResponse, error)
-	ForgotPassword(ctx context.Context, req payload.ForgotPasswordRequest, ipAddress, userAgent string) (*payload.AuthResponse, error)
-	RefreshToken(ctx context.Context, refreshToken string) (*payload.AuthResponse, error)
+	Register(ctx context.Context, req payload.RegisterRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error)
+	Login(ctx context.Context, req payload.LoginRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error)
+	ForgotPassword(ctx context.Context, req payload.ForgotPasswordRequest, ipAddress, userAgent string) error
+	RefreshToken(ctx context.Context, refreshToken string) (*payload.RefreshTokenResponse, error)
 	Logout(ctx context.Context, refreshToken string) error
 	ListSessions(ctx context.Context, userID int64) ([]payload.SessionResponse, error)
 	RevokeSession(ctx context.Context, sessionID, userID int64) error
-	UpdatePassword(ctx context.Context, userID int64, req payload.UpdatePasswordRequest, ipAddress, userAgent string) (*payload.UpdatePasswordResponse, error)
 }
 
 // AuthHandler holds the dependencies required by the auth HTTP handlers.
@@ -56,8 +55,12 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	ipAddress := clientIP(r).String()
 	userAgent := r.UserAgent()
+	deviceType := r.Header.Get("X-Device-Type")
+	deviceName := r.Header.Get("X-Device-Name")
+	country := r.Header.Get("X-Country")
+	city := r.Header.Get("X-City")
 
-	resp, err := h.authService.Register(r.Context(), req, ipAddress, userAgent)
+	resp, err := h.authService.Register(r.Context(), req, deviceType, deviceName, ipAddress, country, city, userAgent)
 	if err != nil {
 		h.log.Error("registration failed", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
@@ -88,8 +91,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	deviceName := r.Header.Get("X-Device-Name")
 	ipAddress := clientIP(r).String()
 	userAgent := r.UserAgent()
+	country := r.Header.Get("X-Country")
+	city := r.Header.Get("X-City")
 
-	resp, err := h.authService.Login(r.Context(), req, deviceType, deviceName, ipAddress, userAgent)
+	resp, err := h.authService.Login(r.Context(), req, deviceType, deviceName, ipAddress, country, city, userAgent)
 	if err != nil {
 		var maxErr *apperror.MaxDeviceError
 		if errors.As(err, &maxErr) {
@@ -136,32 +141,15 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	ipAddress := clientIP(r).String()
 	userAgent := r.UserAgent()
 
-	resp, err := h.authService.ForgotPassword(r.Context(), req, ipAddress, userAgent)
+	err := h.authService.ForgotPassword(r.Context(), req, ipAddress, userAgent)
 	if err != nil {
-		var maxErr *apperror.MaxDeviceError
-		if errors.As(err, &maxErr) {
-			h.log.Warn("forgot password blocked: max devices reached", logger.String("email", utils.SanitizeLog(req.Email)))
-			sessions := make([]payload.SessionResponse, len(maxErr.Devices))
-			for i, d := range maxErr.Devices {
-				sessions[i] = payload.SessionResponse{
-					ID: d.ID, DeviceType: d.DeviceType, DeviceName: d.DeviceName,
-					IPAddress: d.IPAddress, LoggedInAt: d.LoggedInAt, LastActiveAt: d.LastActiveAt,
-				}
-			}
-			response.JSON(w, http.StatusConflict, payload.MaxDeviceErrorResponse{
-				StatusCode: http.StatusConflict,
-				Message:    maxErr.Error(),
-				Sessions:   sessions,
-			})
-			return
-		}
 		h.log.Error("forgot password failed", logger.Error(err), logger.String("email", utils.SanitizeLog(req.Email)))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
 
 	h.log.Info("password reset via forgot-password", logger.String("email", utils.SanitizeLog(req.Email)))
-	response.Success(w, http.StatusOK, "password updated successfully", []any{resp})
+	response.Success(w, http.StatusOK, "password updated successfully", nil)
 }
 
 // RefreshToken handles POST /api/v1/auth/refresh
@@ -263,49 +251,6 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Success(w, http.StatusOK, "session revoked", []any{})
-}
-
-// UpdatePassword handles PATCH /api/v1/auth/password
-func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.getUserIDFromContext(r)
-	if !ok {
-		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
-		return
-	}
-
-	var req payload.UpdatePasswordRequest
-	if err := utils.DecodeBody(r, &req); err != nil {
-		h.log.Error("invalid request body", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	if req.CurrentPassword == "" || req.NewPassword == "" {
-		err := fmt.Errorf("%w: current password and new password are required", apperror.ErrInvalidPayload)
-		h.log.Error("missing required fields", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	// Validate new password
-	if err := utils.ValidatePassword(req.NewPassword); err != nil {
-		h.log.Error("invalid new password", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	ipAddress := clientIP(r).String()
-	userAgent := r.UserAgent()
-
-	resp, err := h.authService.UpdatePassword(r.Context(), userID, req, ipAddress, userAgent)
-	if err != nil {
-		h.log.Error("update password failed", logger.Error(err))
-		response.Error(w, response.StatusCodeFromError(err), err)
-		return
-	}
-
-	h.log.Info("password updated", logger.Int64("userID", userID))
-	response.Success(w, http.StatusOK, resp.Message, []any{resp})
 }
 
 // getUserIDFromContext extracts the user ID from the request context.
