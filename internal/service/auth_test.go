@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/config"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
@@ -451,16 +452,26 @@ func TestRefreshAccessTokenRevokedSession(t *testing.T) {
 
 func TestRefreshAccessTokenSuccess(t *testing.T) {
 	cfg := testConfig()
+	now := time.Now()
 	mock := &mockQuerier{
 		getSessionByHashFn: func(_ context.Context, _ string) (gen.Session, error) {
 			return gen.Session{
 				ID:            1,
 				UserID:        42,
 				SessionStatus: sql.NullInt16{Int16: 1, Valid: true},
+				LastActiveAt:  sql.NullTime{Time: now.Add(-1 * time.Hour), Valid: true},
 			}, nil
 		},
 		updateSessionFn: func(_ context.Context, _ int64) error {
 			return nil
+		},
+		getSessionByIDFn: func(_ context.Context, _ int64) (gen.Session, error) {
+			return gen.Session{
+				ID:            1,
+				UserID:        42,
+				SessionStatus: sql.NullInt16{Int16: 1, Valid: true},
+				LastActiveAt:  sql.NullTime{Time: now, Valid: true},
+			}, nil
 		},
 		getUserByIDFn: func(_ context.Context, _ int64) (gen.GetUserByIDRow, error) {
 			return gen.GetUserByIDRow{
@@ -488,7 +499,7 @@ func TestRefreshAccessTokenSuccess(t *testing.T) {
 	}
 }
 
-func TestRefreshAccessTokenUpdateSessionError(t *testing.T) {
+func TestRefreshAccessTokenRevokeError(t *testing.T) {
 	cfg := testConfig()
 	mock := &mockQuerier{
 		getSessionByHashFn: func(_ context.Context, _ string) (gen.Session, error) {
@@ -514,6 +525,9 @@ func TestRevokeSession(t *testing.T) {
 	cfg := testConfig()
 	var capturedParams gen.RevokeSessionParams
 	mock := &mockQuerier{
+		getSessionByIDFn: func(_ context.Context, id int64) (gen.Session, error) {
+			return gen.Session{ID: id, UserID: 42, RefreshTokenHash: "some-hash"}, nil
+		},
 		revokeSessionFn: func(_ context.Context, arg gen.RevokeSessionParams) error {
 			capturedParams = arg
 			return nil
@@ -587,9 +601,6 @@ func TestLogoutSuccess(t *testing.T) {
 	cfg := testConfig()
 	var capturedParams gen.RevokeSessionParams
 	mock := &mockQuerier{
-		getSessionByHashFn: func(_ context.Context, _ string) (gen.Session, error) {
-			return gen.Session{ID: 1, UserID: 42}, nil
-		},
 		revokeSessionFn: func(_ context.Context, arg gen.RevokeSessionParams) error {
 			capturedParams = arg
 			return nil
@@ -597,7 +608,7 @@ func TestLogoutSuccess(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	err := svc.Logout(context.Background(), "refresh-token")
+	err := svc.Logout(context.Background(), "refresh-token", 42, 1)
 	if err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
@@ -609,21 +620,18 @@ func TestLogoutSuccess(t *testing.T) {
 	}
 }
 
-func TestLogoutInvalidToken(t *testing.T) {
+func TestLogoutRevokeError(t *testing.T) {
 	cfg := testConfig()
 	mock := &mockQuerier{
-		getSessionByHashFn: func(_ context.Context, _ string) (gen.Session, error) {
-			return gen.Session{}, sql.ErrNoRows
+		revokeSessionFn: func(_ context.Context, _ gen.RevokeSessionParams) error {
+			return sql.ErrConnDone
 		},
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	err := svc.Logout(context.Background(), "invalid-token")
+	err := svc.Logout(context.Background(), "refresh-token", 42, 1)
 	if err == nil {
-		t.Fatal("expected error for invalid refresh token")
-	}
-	if err.Error() != "invalid refresh token" {
-		t.Errorf("expected 'invalid refresh token', got %q", err.Error())
+		t.Fatal("expected error when revoke fails")
 	}
 }
 
@@ -646,22 +654,14 @@ func newMockCache() *mockCache {
 	return &mockCache{hashes: make(map[string]map[string]string)}
 }
 
-func (m *mockCache) HGet(key, field string) (string, error) {
+func (m *mockCache) HGet(_ context.Context, key, field string) (string, error) {
 	if f, ok := m.hashes[key][field]; ok {
 		return f, nil
 	}
 	return "", fmt.Errorf("redis: nil")
 }
 
-func (m *mockCache) HSet(key, field string, value any) error {
-	if m.hashes[key] == nil {
-		m.hashes[key] = make(map[string]string)
-	}
-	m.hashes[key][field] = fmt.Sprintf("%v", value)
-	return nil
-}
-
-func (m *mockCache) HSetFields(key string, fields map[string]any) error {
+func (m *mockCache) HSet(_ context.Context, key string, fields map[string]any, _ ...cache.CacheOption) error {
 	if m.hashes[key] == nil {
 		m.hashes[key] = make(map[string]string)
 	}
@@ -671,11 +671,7 @@ func (m *mockCache) HSetFields(key string, fields map[string]any) error {
 	return nil
 }
 
-func (m *mockCache) HSetWithTTL(key, field string, value any, _ time.Duration) error {
-	return m.HSet(key, field, value)
-}
-
-func (m *mockCache) HDel(key string, fields ...string) error {
+func (m *mockCache) HDel(_ context.Context, key string, fields ...string) error {
 	if m.hashes[key] == nil {
 		return nil
 	}
@@ -691,9 +687,26 @@ func TestGetSessionCacheHit(t *testing.T) {
 	mock := &mockQuerier{}
 
 	// Pre-populate cache hash fields
-	_ = cache.HSet("refresh:hash123", "id", 10)
-	_ = cache.HSet("refresh:hash123", "user_id", 42)
-	_ = cache.HSet("refresh:hash123", "session_status", 1)
+	// refresh cache has only session_id pointer
+	_ = cache.HSet(context.Background(), "refresh:hash123", map[string]any{
+		"session_id": 10,
+	})
+	// session cache has full data
+	_ = cache.HSet(context.Background(), "session:10", map[string]any{
+		"id":               10,
+		"user_id":          42,
+		"refresh_token":    "refresh_token_hash",
+		"device_type":      "web",
+		"device_name":      "Chrome",
+		"country":          "US",
+		"city":             "San Francisco",
+		"ip_address":       "127.0.0.1",
+		"user_agent":       "Mozilla/5.0",
+		"logged_in_at":     1609459200,
+		"last_active_at":   1609459200,
+		"session_status":   1,
+		"expires_at":       1612137600,
+	})
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
@@ -739,9 +752,13 @@ func TestGetSessionCacheMiss(t *testing.T) {
 		t.Errorf("expected session ID 20, got %d", got.ID)
 	}
 
-	// Verify cache was populated
-	if _, err := cache.HGet("refresh:hash456", "id"); err != nil {
-		t.Error("expected session to be cached after DB lookup")
+	// Verify refresh cache was populated with session_id pointer
+	if _, err := cache.HGet(context.Background(), "refresh:hash456", "session_id"); err != nil {
+		t.Error("expected refresh cache to have session_id after DB lookup")
+	}
+	// Verify session cache was populated with full data
+	if _, err := cache.HGet(context.Background(), "session:20", "id"); err != nil {
+		t.Error("expected session cache to have full data after DB lookup")
 	}
 }
 
@@ -832,32 +849,51 @@ func TestLogoutClearsCache(t *testing.T) {
 	cfg := testConfig()
 	cache := newMockCache()
 
-	// Pre-populate cache hash fields
-	_ = cache.HSet("hash_logout", "id", 1)
-	_ = cache.HSet("hash_logout", "user_id", 42)
+	// Manually hash the token to get the cache keys
+	svc := NewAuthService(nil, nil, cfg, cache, testLog(t))
+	refreshTokenHash := svc.hashToken("refresh-token-to-logout")
+
+	// Pre-populate both cache keys (new structure)
+	_ = cache.HSet(context.Background(), "refresh:"+refreshTokenHash, map[string]any{
+		"session_id": 5,
+	})
+	_ = cache.HSet(context.Background(), "session:5", map[string]any{
+		"id":               5,
+		"user_id":          42,
+		"refresh_token":    "refresh_token_hash",
+		"device_type":      "web",
+		"device_name":      "Chrome",
+		"country":          "US",
+		"city":             "San Francisco",
+		"ip_address":       "127.0.0.1",
+		"user_agent":       "Mozilla/5.0",
+		"logged_in_at":     1609459200,
+		"last_active_at":   1609459200,
+		"session_status":   1,
+		"expires_at":       1612137600,
+	})
 
 	mock := &mockQuerier{
-		getSessionByHashFn: func(_ context.Context, _ string) (gen.Session, error) {
-			return gen.Session{ID: 1, UserID: 42}, nil
-		},
 		revokeSessionFn: func(_ context.Context, _ gen.RevokeSessionParams) error {
 			return nil
 		},
 	}
 
-	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
+	svc = NewAuthService(mock, nil, cfg, cache, testLog(t))
 
-	// Manually hash the token to get the cache key
-	refreshTokenHash := svc.hashToken("refresh-token-to-logout")
-
-	err := svc.Logout(context.Background(), "refresh-token-to-logout")
+	err := svc.Logout(context.Background(), "refresh-token-to-logout", 42, 5)
 	if err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
 
-	// Verify cache was cleared
-	if _, err := cache.HGet("refresh:"+refreshTokenHash, "id"); err == nil {
-		t.Error("expected cache to be cleared after logout")
+	// Verify refresh cache was cleared
+	if _, err := cache.HGet(context.Background(), "refresh:"+refreshTokenHash, "session_id"); err == nil {
+		t.Error("expected refresh cache to be cleared after logout")
+	}
+
+	// Verify session cache was cleared
+	if _, err := cache.HGet(context.Background(), "session:5", "id"); err == nil {
+		t.Error("expected session cache to be cleared after logout")
 	}
 }
 
@@ -866,11 +902,26 @@ func TestRefreshAccessTokenUsesCache(t *testing.T) {
 	cache := newMockCache()
 	dbCallCount := 0
 
-	// Pre-populate cache with an active session
+	// Pre-populate cache with an active session (new structure)
 	refreshTokenHash := (&AuthService{}).hashToken("cached-refresh-token")
-	_ = cache.HSet("refresh:"+refreshTokenHash, "id", 10)
-	_ = cache.HSet("refresh:"+refreshTokenHash, "user_id", 42)
-	_ = cache.HSet("refresh:"+refreshTokenHash, "session_status", 1)
+	_ = cache.HSet(context.Background(), "refresh:"+refreshTokenHash, map[string]any{
+		"session_id": 10,
+	})
+	_ = cache.HSet(context.Background(), "session:10", map[string]any{
+		"id":               10,
+		"user_id":          42,
+		"refresh_token":    "refresh_token_hash",
+		"device_type":      "web",
+		"device_name":      "Chrome",
+		"country":          "US",
+		"city":             "San Francisco",
+		"ip_address":       "127.0.0.1",
+		"user_agent":       "Mozilla/5.0",
+		"logged_in_at":     1609459200,
+		"last_active_at":   1609459200,
+		"session_status":   1,
+		"expires_at":       1612137600,
+	})
 
 	mock := &mockQuerier{
 		getSessionByHashFn: func(_ context.Context, _ string) (gen.Session, error) {
@@ -879,6 +930,14 @@ func TestRefreshAccessTokenUsesCache(t *testing.T) {
 		},
 		updateSessionFn: func(_ context.Context, _ int64) error {
 			return nil
+		},
+		getSessionByIDFn: func(_ context.Context, _ int64) (gen.Session, error) {
+			return gen.Session{
+				ID:            10,
+				UserID:        42,
+				SessionStatus: sql.NullInt16{Int16: 1, Valid: true},
+				LastActiveAt:  sql.NullTime{Time: time.Now(), Valid: true},
+			}, nil
 		},
 		getUserByIDFn: func(_ context.Context, _ int64) (gen.GetUserByIDRow, error) {
 			return gen.GetUserByIDRow{
@@ -906,7 +965,7 @@ func TestRefreshAccessTokenUsesCache(t *testing.T) {
 		t.Error("expected non-empty access token")
 	}
 	if resp.RefreshToken != "cached-refresh-token" {
-		t.Errorf("expected same refresh token returned, got %q", resp.RefreshToken)
+		t.Errorf("expected same refresh token, got %q", resp.RefreshToken)
 	}
 }
 

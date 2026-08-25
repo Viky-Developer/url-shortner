@@ -142,15 +142,21 @@ func buildCleanURL(ip net.IP, useHTTPS bool, port string) string {
 	return scheme + "://" + net.JoinHostPort(ip.String(), port)
 }
 
-func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
+// checkDestinationHealth performs a HEAD request against the destination URL
+// and returns the health status, HTTP status code, and whether a valid HTTP
+// response was received. When the HEAD request fails entirely (DNS error,
+// connection refused, timeout, etc.) statusCode is 0 and responded is false.
+// A non-zero statusCode is only returned when the server actually responded
+// with an HTTP status code, regardless of whether it was a success or error.
+func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32, bool) {
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
 		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 	if err := validateRequestURL(parsedURL); err != nil {
 		s.log.Error("rejected URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 
 	// Resolve DNS and validate every IP before building the request URL.
@@ -160,7 +166,7 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	ips, dnsErr := net.DefaultResolver.LookupIP(context.Background(), "ip", host)
 	if dnsErr != nil {
 		s.log.Error("DNS resolution failed for health check", logger.Error(dnsErr), logger.String("host", utils.SanitizeLog(host)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 	var safeIP net.IP
 	for _, ip := range ips {
@@ -171,11 +177,11 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	}
 	if safeIP == nil {
 		s.log.Error("all resolved IPs are blocked for health check", logger.String("host", utils.SanitizeLog(host)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 
 	cleanURL := buildCleanURL(safeIP, parsedURL.Scheme == "https", defaultPort(parsedURL))
@@ -184,21 +190,21 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
 	if err != nil {
 		s.log.Error("failed to build health check request", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	statusCode := int32(resp.StatusCode)
 	if statusCode >= 200 && statusCode < 400 {
-		return enum.DestinationStatusHealthy, statusCode
+		return enum.DestinationStatusHealthy, statusCode, true
 	}
-	return enum.DestinationStatusUnhealthy, statusCode
+	return enum.DestinationStatusUnhealthy, statusCode, true
 }
 
 // URLService implements the URL shortening business logic.
@@ -356,8 +362,10 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		healthCheckedAt sql.NullTime
 	)
 
-	healthStatus, httpCode = s.checkDestinationHealth(req.OriginalURL)
-	healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+	healthStatus, httpCode, responded := s.checkDestinationHealth(req.OriginalURL)
+	if responded {
+		healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+	}
 
 	// Create URL in a single transaction
 	var created gen.Url
@@ -383,6 +391,7 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 			DestinationHealthStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
 			DestinationLastHttpStatus: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
 			LastHealthCheck:           healthCheckedAt,
+			LastAccessedAt:            healthCheckedAt,
 		})
 		if err != nil {
 			if isDuplicateKey(err) {
@@ -561,8 +570,11 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 	)
 
 	if req.OriginalURL != "" {
-		healthStatus, httpCode = s.checkDestinationHealth(req.OriginalURL)
-		healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+		var responded bool
+		healthStatus, httpCode, responded = s.checkDestinationHealth(req.OriginalURL)
+		if responded {
+			healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+		}
 	}
 
 	// Update URL in a single transaction

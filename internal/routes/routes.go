@@ -25,6 +25,8 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 	mux.Handle("GET /api/v1/auth/sessions", authMiddleware(http.HandlerFunc(authHandler.ListSessions)))
 	mux.Handle("DELETE /api/v1/auth/sessions/{id}", authMiddleware(http.HandlerFunc(authHandler.RevokeSession)))
+	mux.Handle("POST /api/v1/auth/sessions/revoke-others", authMiddleware(http.HandlerFunc(authHandler.RevokeOtherDevices)))
+	mux.Handle("POST /api/v1/auth/sessions/revoke-all", authMiddleware(http.HandlerFunc(authHandler.RevokeAllSessions)))
 
 	// URL routes (protected) — userId is derived from the JWT access token
 	mux.Handle("POST /api/v1/shorten", authMiddleware(http.HandlerFunc(urlHandler.CreateShortURL)))

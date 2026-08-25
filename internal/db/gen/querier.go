@@ -27,6 +27,8 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	DeleteBlockedDomain(ctx context.Context, id int32) error
 	DeleteBlockedIPRange(ctx context.Context, id int64) error
+	ExpireSession(ctx context.Context, id int64) error
+	ExpireSessionsByUser(ctx context.Context, userID int64) error
 	GetBlockedDomain(ctx context.Context, domain string) (GetBlockedDomainRow, error)
 	GetDailyStatsByURL(ctx context.Context, arg GetDailyStatsByURLParams) ([]GetDailyStatsByURLRow, error)
 	GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error)
@@ -53,7 +55,10 @@ type Querier interface {
 	PurgeOldPasswordHistory(ctx context.Context, createdAt sql.NullTime) error
 	PurgeOldRevokedSessions(ctx context.Context, lastActiveAt sql.NullTime) error
 	RefreshDailyStats(ctx context.Context, arg RefreshDailyStatsParams) error
+	RevokeAllSessionsByUser(ctx context.Context, userID int64) error
+	RevokeOtherSessionsByUser(ctx context.Context, arg RevokeOtherSessionsByUserParams) error
 	RevokeSession(ctx context.Context, arg RevokeSessionParams) error
+	RevokeSessionsByUserExcept(ctx context.Context, arg RevokeSessionsByUserExceptParams) error
 	ShortCodeExists(ctx context.Context, shortCode string) (bool, error)
 	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)
 	SoftDeleteUser(ctx context.Context, id int64) error

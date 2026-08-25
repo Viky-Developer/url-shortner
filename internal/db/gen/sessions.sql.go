@@ -24,9 +24,9 @@ func (q *Queries) CountRevokedSessions(ctx context.Context) (int64, error) {
 }
 
 const createSession = `-- name: CreateSession :one
-INSERT INTO sessions (user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
+INSERT INTO sessions (user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
 `
 
 type CreateSessionParams struct {
@@ -38,6 +38,7 @@ type CreateSessionParams struct {
 	City             sql.NullString `json:"city"`
 	IpAddress        pqtype.Inet    `json:"ip_address"`
 	UserAgent        sql.NullString `json:"user_agent"`
+	ExpiresAt        sql.NullTime   `json:"expires_at"`
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
@@ -50,6 +51,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.City,
 		arg.IpAddress,
 		arg.UserAgent,
+		arg.ExpiresAt,
 	)
 	var i Session
 	err := row.Scan(
@@ -65,12 +67,31 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.LoggedInAt,
 		&i.LastActiveAt,
 		&i.SessionStatus,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
 
+const expireSession = `-- name: ExpireSession :exec
+UPDATE sessions SET session_status = 2 WHERE id = $1 AND session_status = 1
+`
+
+func (q *Queries) ExpireSession(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, expireSession, id)
+	return err
+}
+
+const expireSessionsByUser = `-- name: ExpireSessionsByUser :exec
+UPDATE sessions SET session_status = 2 WHERE user_id = $1 AND session_status = 1 AND expires_at < NOW()
+`
+
+func (q *Queries) ExpireSessionsByUser(ctx context.Context, userID int64) error {
+	_, err := q.db.ExecContext(ctx, expireSessionsByUser, userID)
+	return err
+}
+
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
 FROM sessions
 WHERE id = $1
 `
@@ -91,12 +112,13 @@ func (q *Queries) GetSessionByID(ctx context.Context, id int64) (Session, error)
 		&i.LoggedInAt,
 		&i.LastActiveAt,
 		&i.SessionStatus,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
 
 const getSessionByRefreshTokenHash = `-- name: GetSessionByRefreshTokenHash :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
 FROM sessions
 WHERE refresh_token_hash = $1 AND session_status = 1
 `
@@ -117,12 +139,13 @@ func (q *Queries) GetSessionByRefreshTokenHash(ctx context.Context, refreshToken
 		&i.LoggedInAt,
 		&i.LastActiveAt,
 		&i.SessionStatus,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
 
 const listActiveSessionsByUser = `-- name: ListActiveSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at ASC
@@ -150,6 +173,7 @@ func (q *Queries) ListActiveSessionsByUser(ctx context.Context, userID int64) ([
 			&i.LoggedInAt,
 			&i.LastActiveAt,
 			&i.SessionStatus,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -165,7 +189,7 @@ func (q *Queries) ListActiveSessionsByUser(ctx context.Context, userID int64) ([
 }
 
 const listSessionsByUser = `-- name: ListSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at DESC
@@ -193,6 +217,7 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, userID int64) ([]Sessi
 			&i.LoggedInAt,
 			&i.LastActiveAt,
 			&i.SessionStatus,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -227,6 +252,29 @@ func (q *Queries) PurgeOldRevokedSessions(ctx context.Context, lastActiveAt sql.
 	return err
 }
 
+const revokeAllSessionsByUser = `-- name: RevokeAllSessionsByUser :exec
+UPDATE sessions SET session_status = 0 WHERE user_id = $1 AND session_status = 1
+`
+
+func (q *Queries) RevokeAllSessionsByUser(ctx context.Context, userID int64) error {
+	_, err := q.db.ExecContext(ctx, revokeAllSessionsByUser, userID)
+	return err
+}
+
+const revokeOtherSessionsByUser = `-- name: RevokeOtherSessionsByUser :exec
+UPDATE sessions SET session_status = 0 WHERE user_id = $1 AND id != $2 AND session_status = 1
+`
+
+type RevokeOtherSessionsByUserParams struct {
+	UserID int64 `json:"user_id"`
+	ID     int64 `json:"id"`
+}
+
+func (q *Queries) RevokeOtherSessionsByUser(ctx context.Context, arg RevokeOtherSessionsByUserParams) error {
+	_, err := q.db.ExecContext(ctx, revokeOtherSessionsByUser, arg.UserID, arg.ID)
+	return err
+}
+
 const revokeSession = `-- name: RevokeSession :exec
 UPDATE sessions SET session_status = 0 WHERE id = $1 AND user_id = $2
 `
@@ -238,6 +286,20 @@ type RevokeSessionParams struct {
 
 func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) error {
 	_, err := q.db.ExecContext(ctx, revokeSession, arg.ID, arg.UserID)
+	return err
+}
+
+const revokeSessionsByUserExcept = `-- name: RevokeSessionsByUserExcept :exec
+UPDATE sessions SET session_status = 0 WHERE user_id = $1 AND id != $2 AND session_status IN (1, 2)
+`
+
+type RevokeSessionsByUserExceptParams struct {
+	UserID int64 `json:"user_id"`
+	ID     int64 `json:"id"`
+}
+
+func (q *Queries) RevokeSessionsByUserExcept(ctx context.Context, arg RevokeSessionsByUserExceptParams) error {
+	_, err := q.db.ExecContext(ctx, revokeSessionsByUserExcept, arg.UserID, arg.ID)
 	return err
 }
 

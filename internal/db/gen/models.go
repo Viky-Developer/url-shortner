@@ -73,6 +73,7 @@ type Session struct {
 	LoggedInAt       sql.NullTime   `json:"logged_in_at"`
 	LastActiveAt     sql.NullTime   `json:"last_active_at"`
 	SessionStatus    sql.NullInt16  `json:"session_status"`
+	ExpiresAt        sql.NullTime   `json:"expires_at"`
 }
 
 type Url struct {

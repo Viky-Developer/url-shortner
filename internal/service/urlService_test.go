@@ -15,44 +15,49 @@ import (
 )
 
 type mockQuerier struct {
-	createFn             func(context.Context, gen.CreateURLParams) (gen.Url, error)
-	createUserFn         func(context.Context, gen.CreateUserParams) (gen.CreateUserRow, error)
-	byCodeFn             func(context.Context, string) (gen.GetURLByShortCodeRow, error)
-	byCodeForUpdateFn    func(context.Context, string) (gen.GetURLByShortCodeForUpdateRow, error)
-	byIDFn               func(context.Context, gen.GetURLByIDParams) (gen.GetURLByIDRow, error)
-	listFn               func(context.Context, gen.ListURLsParams) ([]gen.ListURLsRow, error)
-	countFn              func(context.Context, int64) (int64, error)
-	emailFn              func(context.Context, string) (gen.GetUserByEmailRow, error)
-	updateUserFn         func(context.Context, gen.UpdateUserDisplayIDParams) (gen.UpdateUserDisplayIDRow, error)
-	updateFn             func(context.Context, gen.UpdateURLParams) (gen.Url, error)
-	softFn               func(context.Context, gen.SoftDeleteURLParams) (gen.Url, error)
-	hardFn               func(context.Context, gen.HardDeleteURLParams) error
-	createDestFn         func(context.Context, gen.CreateDestinationParams) (gen.CreateDestinationRow, error)
-	destByHashFn         func(context.Context, string) (gen.GetDestinationByHashRow, error)
-	destByIDFn           func(context.Context, int64) (gen.GetDestinationByIDRow, error)
-	blockedFn            func(context.Context, string) (gen.GetBlockedDomainRow, error)
-	createVerFn          func(context.Context, gen.CreateURLVersionParams) error
-	latestVerFn          func(context.Context, int64) (int32, error)
-	createClickFn        func(context.Context, gen.CreateClickLogParams) (gen.ClickLog, error)
-	incrementClickFn     func(context.Context, int64) error
-	updateHealthFn       func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
-	shortCodeExistsFn    func(context.Context, string) (bool, error)
-	listBlockedIPFn      func(context.Context) ([]gen.ListBlockedIPRangesRow, error)
-	createSessionFn      func(context.Context, gen.CreateSessionParams) (gen.Session, error)
-	getSessionByHashFn   func(context.Context, string) (gen.Session, error)
-	getSessionByIDFn     func(context.Context, int64) (gen.Session, error)
-	getUserByIDFn        func(context.Context, int64) (gen.GetUserByIDRow, error)
-	listSessionsFn       func(context.Context, int64) ([]gen.Session, error)
-	revokeSessionFn      func(context.Context, gen.RevokeSessionParams) error
-	updateSessionFn      func(context.Context, int64) error
-	addPasswordHistoryFn func(context.Context, gen.AddPasswordHistoryParams) error
-	updateUserPasswordFn func(context.Context, gen.UpdateUserPasswordParams) (gen.UpdateUserPasswordRow, error)
-	listActiveSessionsFn func(context.Context, int64) ([]gen.Session, error)
-	countClicksFn        func(context.Context, gen.CountClickLogsByURLParams) (int64, error)
-	listClicksFn         func(context.Context, gen.ListClickLogsByURLParams) ([]gen.ListClickLogsByURLRow, error)
-	clickStatsFn         func(context.Context, gen.ClickStatsByURLParams) (gen.ClickStatsByURLRow, error)
-	topReferrersFn       func(context.Context, gen.TopReferrersByURLParams) ([]gen.TopReferrersByURLRow, error)
-	clicksByDateRangeFn  func(context.Context, gen.ClicksByDateRangeParams) ([]gen.ClicksByDateRangeRow, error)
+	createFn               func(context.Context, gen.CreateURLParams) (gen.Url, error)
+	createUserFn           func(context.Context, gen.CreateUserParams) (gen.CreateUserRow, error)
+	byCodeFn               func(context.Context, string) (gen.GetURLByShortCodeRow, error)
+	byCodeForUpdateFn      func(context.Context, string) (gen.GetURLByShortCodeForUpdateRow, error)
+	byIDFn                 func(context.Context, gen.GetURLByIDParams) (gen.GetURLByIDRow, error)
+	listFn                 func(context.Context, gen.ListURLsParams) ([]gen.ListURLsRow, error)
+	countFn                func(context.Context, int64) (int64, error)
+	emailFn                func(context.Context, string) (gen.GetUserByEmailRow, error)
+	updateUserFn           func(context.Context, gen.UpdateUserDisplayIDParams) (gen.UpdateUserDisplayIDRow, error)
+	updateFn               func(context.Context, gen.UpdateURLParams) (gen.Url, error)
+	softFn                 func(context.Context, gen.SoftDeleteURLParams) (gen.Url, error)
+	hardFn                 func(context.Context, gen.HardDeleteURLParams) error
+	createDestFn           func(context.Context, gen.CreateDestinationParams) (gen.CreateDestinationRow, error)
+	destByHashFn           func(context.Context, string) (gen.GetDestinationByHashRow, error)
+	destByIDFn             func(context.Context, int64) (gen.GetDestinationByIDRow, error)
+	blockedFn              func(context.Context, string) (gen.GetBlockedDomainRow, error)
+	createVerFn            func(context.Context, gen.CreateURLVersionParams) error
+	latestVerFn            func(context.Context, int64) (int32, error)
+	createClickFn          func(context.Context, gen.CreateClickLogParams) (gen.ClickLog, error)
+	incrementClickFn       func(context.Context, int64) error
+	updateHealthFn         func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
+	shortCodeExistsFn      func(context.Context, string) (bool, error)
+	listBlockedIPFn        func(context.Context) ([]gen.ListBlockedIPRangesRow, error)
+	createSessionFn        func(context.Context, gen.CreateSessionParams) (gen.Session, error)
+	getSessionByHashFn     func(context.Context, string) (gen.Session, error)
+	getSessionByIDFn       func(context.Context, int64) (gen.Session, error)
+	getUserByIDFn          func(context.Context, int64) (gen.GetUserByIDRow, error)
+	listSessionsFn         func(context.Context, int64) ([]gen.Session, error)
+	revokeSessionFn        func(context.Context, gen.RevokeSessionParams) error
+	updateSessionFn        func(context.Context, int64) error
+	addPasswordHistoryFn   func(context.Context, gen.AddPasswordHistoryParams) error
+	updateUserPasswordFn   func(context.Context, gen.UpdateUserPasswordParams) (gen.UpdateUserPasswordRow, error)
+	listActiveSessionsFn   func(context.Context, int64) ([]gen.Session, error)
+	countClicksFn          func(context.Context, gen.CountClickLogsByURLParams) (int64, error)
+	listClicksFn           func(context.Context, gen.ListClickLogsByURLParams) ([]gen.ListClickLogsByURLRow, error)
+	clickStatsFn           func(context.Context, gen.ClickStatsByURLParams) (gen.ClickStatsByURLRow, error)
+	topReferrersFn         func(context.Context, gen.TopReferrersByURLParams) ([]gen.TopReferrersByURLRow, error)
+	clicksByDateRangeFn    func(context.Context, gen.ClicksByDateRangeParams) ([]gen.ClicksByDateRangeRow, error)
+	revokeAllSessionsFn    func(context.Context, int64) error
+	revokeOtherSessionsFn  func(context.Context, gen.RevokeOtherSessionsByUserParams) error
+	revokeSessionsExceptFn func(context.Context, gen.RevokeSessionsByUserExceptParams) error
+	expireSessionFn        func(context.Context, int64) error
+	expireSessionsByUserFn func(context.Context, int64) error
 }
 
 func (m *mockQuerier) ExecContext(_ context.Context, _ string, _ ...interface{}) (sql.Result, error) {
@@ -347,6 +352,41 @@ func (m *mockQuerier) HardDeleteUser(_ context.Context, _ int64) error {
 
 func (m *mockQuerier) CountRevokedSessions(_ context.Context) (int64, error) {
 	return 0, nil
+}
+
+func (m *mockQuerier) RevokeAllSessionsByUser(ctx context.Context, userID int64) error {
+	if m.revokeAllSessionsFn != nil {
+		return m.revokeAllSessionsFn(ctx, userID)
+	}
+	return nil
+}
+
+func (m *mockQuerier) RevokeOtherSessionsByUser(ctx context.Context, arg gen.RevokeOtherSessionsByUserParams) error {
+	if m.revokeOtherSessionsFn != nil {
+		return m.revokeOtherSessionsFn(ctx, arg)
+	}
+	return nil
+}
+
+func (m *mockQuerier) RevokeSessionsByUserExcept(ctx context.Context, arg gen.RevokeSessionsByUserExceptParams) error {
+	if m.revokeSessionsExceptFn != nil {
+		return m.revokeSessionsExceptFn(ctx, arg)
+	}
+	return nil
+}
+
+func (m *mockQuerier) ExpireSession(ctx context.Context, id int64) error {
+	if m.expireSessionFn != nil {
+		return m.expireSessionFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *mockQuerier) ExpireSessionsByUser(ctx context.Context, userID int64) error {
+	if m.expireSessionsByUserFn != nil {
+		return m.expireSessionsByUserFn(ctx, userID)
+	}
+	return nil
 }
 
 func testLog(t *testing.T) logger.Logger {

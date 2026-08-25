@@ -25,8 +25,10 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 }
 
 // AuthMiddleware validates JWT access tokens, verifies the session is
-// still alive, decodes the encoded user ID, and adds the internal
-// integer user ID to the request context.
+// still alive, checks that the session version matches the token's
+// version (invalidating old tokens after a refresh), decodes the
+// encoded user ID, and adds the internal integer user ID to the request
+// context.
 func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(http.Handler) http.Handler {
 	if log == nil {
 		log, _ = logger.New()
@@ -63,11 +65,28 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 					writeJSONError(w, http.StatusInternalServerError, "failed to validate session")
 					return
 				}
-				if !alive {
-					log.Warn("session is no longer active", logger.Int64("sessionID", claims.SessionID))
-					writeJSONError(w, http.StatusUnauthorized, "session expired or revoked")
+			if !alive {
+				log.Warn("session is no longer active", logger.Int64("sessionID", claims.SessionID))
+				writeJSONError(w, http.StatusUnauthorized, "session expired or revoked")
+				return
+			}
+
+			// Verify session version matches the token — a mismatch
+			// means the token was issued before the most recent refresh.
+			if claims.SessionID > 0 && claims.SessionVersion > 0 {
+				dbVersion, vErr := authService.GetSessionVersion(r.Context(), claims.SessionID)
+				if vErr != nil {
+					log.Error("session version query failed", logger.Error(vErr), logger.Int64("sessionID", claims.SessionID))
+					writeJSONError(w, http.StatusInternalServerError, "failed to validate session version")
 					return
 				}
+				if dbVersion != claims.SessionVersion {
+					log.Warn("session version mismatch — stale token", logger.Int64("sessionID", claims.SessionID),
+						logger.Int64("tokenVersion", claims.SessionVersion), logger.Int64("dbVersion", dbVersion))
+					writeJSONError(w, http.StatusUnauthorized, "Invalid access token")
+					return
+				}
+			}
 			}
 
 			// Decode the HMAC-encoded display user ID to the internal int64
@@ -80,6 +99,7 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 
 			log.Debug("request authenticated", logger.Int64("userID", userID), logger.Int64("sessionID", claims.SessionID))
 			ctx := context.WithValue(r.Context(), contextutil.UserIDKey, userID)
+			ctx = context.WithValue(ctx, contextutil.SessionIDKey, claims.SessionID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -53,6 +53,7 @@ type SessionResponse struct {
 	City         string `json:"city,omitempty"`
 	LoggedInAt   string `json:"loggedInAt"`
 	LastActiveAt string `json:"lastActiveAt"`
+	ExpiresAt    string `json:"expiresAt,omitempty"`
 }
 
 // ForgotPasswordRequest represents the forgot-password request.

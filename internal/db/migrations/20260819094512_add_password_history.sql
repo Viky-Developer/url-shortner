@@ -17,5 +17,6 @@ CREATE INDEX idx_password_history_user ON password_history(user_id);
 
 -- +goose Down
 
+DROP INDEX IF EXISTS idx_password_history_user;
 DROP TABLE IF EXISTS password_history;
 ALTER TABLE users DROP COLUMN IF EXISTS password_changed_at;

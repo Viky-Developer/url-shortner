@@ -53,7 +53,7 @@ UPDATE urls
 SET destination_id = $3,
     title = COALESCE(sqlc.narg('title'), title),
     description = COALESCE(sqlc.narg('description'), description),
-    expires_at = sqlc.narg('expires_at'),
+    expires_at = COALESCE(sqlc.narg('expires_at'), expires_at),
     url_status = COALESCE(sqlc.narg('url_status'), url_status),
     updated_at = NOW()
 WHERE id = $1

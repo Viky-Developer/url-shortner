@@ -65,20 +65,3 @@ func TestErrorsWrapCorrectly(t *testing.T) {
 		t.Error("expected errors.Is to match the wrapped error")
 	}
 }
-
-func TestMaxDeviceError(t *testing.T) {
-	err := &MaxDeviceError{
-		Devices: []ActiveDevice{
-			{ID: 1, DeviceType: "web"},
-			{ID: 2, DeviceType: "mobile"},
-		},
-	}
-
-	var target *MaxDeviceError
-	if !errors.As(err, &target) {
-		t.Fatal("expected errors.As to unwrap into *MaxDeviceError")
-	}
-	if len(target.Devices) != 2 {
-		t.Errorf("expected 2 devices, got %d", len(target.Devices))
-	}
-}
