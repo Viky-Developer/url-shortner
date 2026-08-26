@@ -34,10 +34,21 @@ type CacheService interface {
 	// Returns the field value or an error on miss/connection failure.
 	HGet(ctx context.Context, key, field string) (string, error)
 
+	// HMGet retrieves multiple fields from a Redis hash in a single round-trip.
+	// Returns a map of field→value; missing fields are omitted from the map.
+	HMGet(ctx context.Context, key string, fields ...string) (map[string]string, error)
+
+	// HGetAll retrieves all field-value pairs from a Redis hash.
+	// Returns a map of field→value or an error on miss/connection failure.
+	HGetAll(ctx context.Context, key string) (map[string]string, error)
+
 	// HSet stores one or more field-value pairs in a Redis hash.
 	// Use WithExpiration to set a TTL on the key.
 	HSet(ctx context.Context, key string, fields map[string]any, opts ...CacheOption) error
 
 	// HDel removes one or more fields from a Redis hash.
 	HDel(ctx context.Context, key string, fields ...string) error
+
+	// Del removes an entire key from Redis.
+	Del(ctx context.Context, key string) error
 }

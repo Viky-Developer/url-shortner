@@ -2,21 +2,21 @@ package payload
 
 // RegisterRequest represents the user registration request.
 type RegisterRequest struct {
-	Email       string `json:"email"`
-	Password    string `json:"password"`
+	Email       string `json:"email" validate:"required,email"`
+	Password    string `json:"password" validate:"required,min=8"`
 	DisplayName string `json:"displayName,omitempty"`
 }
 
 // LoginRequest represents the user login request.
 type LoginRequest struct {
-	Email           string `json:"email"`
-	Password        string `json:"password"`
+	Email           string `json:"email" validate:"required,email"`
+	Password        string `json:"password" validate:"required"`
 	RevokeSessionID *int64 `json:"revokeSessionId,omitempty"`
 }
 
 // RefreshTokenRequest represents the token refresh request.
 type RefreshTokenRequest struct {
-	RefreshToken string `json:"refreshToken"`
+	RefreshToken string `json:"refreshToken" validate:"required"`
 }
 
 // AuthResponse represents the authentication response with tokens and user info.
@@ -57,11 +57,19 @@ type SessionResponse struct {
 }
 
 // ForgotPasswordRequest represents the forgot-password request.
-// Validates the previous password, updates to the new one, and revokes all sessions.
+// Only requires email and new password — no current password needed.
+// All existing sessions are revoked on success.
 type ForgotPasswordRequest struct {
-	Email           string `json:"email"`
-	CurrentPassword string `json:"currentPassword"`
-	NewPassword     string `json:"newPassword"`
+	Email       string `json:"email" validate:"required,email"`
+	NewPassword string `json:"newPassword" validate:"required,min=8"`
+}
+
+// UpdatePasswordRequest represents the update-password request.
+// Requires the current password for verification and the new password.
+// All existing sessions (including the current one) are revoked on success.
+type UpdatePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword" validate:"required"`
+	NewPassword     string `json:"newPassword" validate:"required,min=8"`
 }
 
 // MaxDeviceErrorResponse is returned when a user has reached the maximum

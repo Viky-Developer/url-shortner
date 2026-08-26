@@ -12,14 +12,16 @@ import (
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/response"
 	"github.com/vicky/url-shortner/internal/utils"
+	"github.com/vicky/url-shortner/internal/validation"
 )
 
 // AuthService is the contract the handlers depend on for auth business logic.
 type AuthService interface {
-	Register(ctx context.Context, req payload.RegisterRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error)
+	Register(ctx context.Context, req *payload.RegisterRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error)
 	Login(ctx context.Context, req payload.LoginRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error)
 	ForgotPassword(ctx context.Context, req payload.ForgotPasswordRequest, ipAddress, userAgent string) error
-	RefreshToken(ctx context.Context, refreshToken string) (*payload.RefreshTokenResponse, error)
+	UpdatePassword(ctx context.Context, userID int64, req payload.UpdatePasswordRequest, sessionID int64, ipAddress, userAgent string) error
+	RefreshToken(ctx context.Context, refreshToken string, sessionID int64) (*payload.RefreshTokenResponse, error)
 	Logout(ctx context.Context, refreshToken string, userID, sessionID int64) error
 	ListSessions(ctx context.Context, userID int64) ([]payload.SessionResponse, error)
 	RevokeSession(ctx context.Context, sessionID, userID int64) error
@@ -40,17 +42,9 @@ func NewAuthHandler(authService AuthService, log logger.Logger) *AuthHandler {
 
 // Register handles POST /api/v1/auth/register
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
-	var req payload.RegisterRequest
-	if err := utils.DecodeBody(r, &req); err != nil {
-		h.log.Error("invalid request body", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
 
-	if req.Email == "" || req.Password == "" {
-		err := fmt.Errorf("%w: email and password are required", apperror.ErrInvalidPayload)
-		h.log.Error("missing required fields", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
+	req, ok := validation.BindAndValidate[payload.RegisterRequest](r, w)
+	if !ok {
 		return
 	}
 
@@ -74,17 +68,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 // Login handles POST /api/v1/auth/login
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var req payload.LoginRequest
-	if err := utils.DecodeBody(r, &req); err != nil {
-		h.log.Error("invalid request body", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	if req.Email == "" || req.Password == "" {
-		err := fmt.Errorf("%w: email and password are required", apperror.ErrInvalidPayload)
-		h.log.Error("missing required fields", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
+	req, ok := validation.BindAndValidate[payload.LoginRequest](r, w)
+	if !ok {
 		return
 	}
 
@@ -95,7 +80,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	country := r.Header.Get("X-Country")
 	city := r.Header.Get("X-City")
 
-	resp, err := h.authService.Login(r.Context(), req, deviceType, deviceName, ipAddress, country, city, userAgent)
+	resp, err := h.authService.Login(r.Context(), *req, deviceType, deviceName, ipAddress, country, city, userAgent)
 	if err != nil {
 		h.log.Error("login failed", logger.Error(err), logger.String("email", utils.SanitizeLog(req.Email)))
 		response.Error(w, response.StatusCodeFromError(err), err)
@@ -108,24 +93,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // ForgotPassword handles POST /api/v1/auth/forgot-password
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
-	var req payload.ForgotPasswordRequest
-	if err := utils.DecodeBody(r, &req); err != nil {
-		h.log.Error("invalid request body", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	if req.Email == "" || req.CurrentPassword == "" || req.NewPassword == "" {
-		err := fmt.Errorf("%w: email, current password and new password are required", apperror.ErrInvalidPayload)
-		h.log.Error("missing required fields", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
+	
+	req, ok := validation.BindAndValidate[payload.ForgotPasswordRequest](r, w)
+	if !ok {
 		return
 	}
 
 	ipAddress := clientIP(r).String()
 	userAgent := r.UserAgent()
 
-	err := h.authService.ForgotPassword(r.Context(), req, ipAddress, userAgent)
+	err := h.authService.ForgotPassword(r.Context(), *req, ipAddress, userAgent)
 	if err != nil {
 		h.log.Error("forgot password failed", logger.Error(err), logger.String("email", utils.SanitizeLog(req.Email)))
 		response.Error(w, response.StatusCodeFromError(err), err)
@@ -136,23 +113,46 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, http.StatusOK, "password updated successfully", nil)
 }
 
+// UpdatePassword handles POST /api/v1/auth/update-password
+func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
+	req, ok := validation.BindAndValidate[payload.UpdatePasswordRequest](r, w)
+	if !ok {
+		return
+	}
+
+	userID, ok := h.getUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: user not authenticated", apperror.ErrUnauthorized))
+		return
+	}
+	sessionID, _ := h.getSessionIDFromContext(r)
+
+	ipAddress := clientIP(r).String()
+	userAgent := r.UserAgent()
+
+	err := h.authService.UpdatePassword(r.Context(), userID, *req, sessionID, ipAddress, userAgent)
+	if err != nil {
+		h.log.Error("update password failed", logger.Error(err), logger.Int64("userID", userID))
+		response.Error(w, response.StatusCodeFromError(err), err)
+		return
+	}
+
+	h.log.Info("password updated", logger.Int64("userID", userID))
+	response.Success(w, http.StatusOK, "password updated successfully, all sessions revoked", nil)
+}
+
 // RefreshToken handles POST /api/v1/auth/refresh
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
-	var req payload.RefreshTokenRequest
-	if err := utils.DecodeBody(r, &req); err != nil {
-		h.log.Error("invalid request body", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
+	req, ok := validation.BindAndValidate[payload.RefreshTokenRequest](r, w)
+	if !ok {
 		return
 	}
 
-	if req.RefreshToken == "" {
-		err := fmt.Errorf("%w: refresh token is required", apperror.ErrInvalidPayload)
-		h.log.Error("missing refresh token", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
+	// sessionID is 0 when the client sent no access token; the middleware
+	// populates it from a valid-signature (possibly expired) JWT.
+	sessionID, _ := r.Context().Value(contextutil.SessionIDKey).(int64)
 
-	resp, err := h.authService.RefreshToken(r.Context(), req.RefreshToken)
+	resp, err := h.authService.RefreshToken(r.Context(), req.RefreshToken, sessionID)
 	if err != nil {
 		h.log.Error("token refresh failed", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
@@ -164,17 +164,8 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 
 // Logout handles POST /api/v1/auth/logout
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	var req payload.RefreshTokenRequest
-	if err := utils.DecodeBody(r, &req); err != nil {
-		h.log.Error("invalid request body", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	if req.RefreshToken == "" {
-		err := fmt.Errorf("%w: refresh token is required", apperror.ErrInvalidPayload)
-		h.log.Error("missing refresh token", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
+	req, ok := validation.BindAndValidate[payload.RefreshTokenRequest](r, w)
+	if !ok {
 		return
 	}
 

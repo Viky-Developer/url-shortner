@@ -2,6 +2,7 @@
 package utils
 
 import (
+	"slices"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -252,11 +253,10 @@ func ValidateURL(rawURL string, lookupDNS LookupFunc) error {
 	if err != nil {
 		return fmt.Errorf("unable to resolve host '%s'", host)
 	}
-	for _, ip := range ips {
-		if IsBlockedIP(ip) {
+	
+	if slices.ContainsFunc(ips, IsBlockedIP) {
 			return fmt.Errorf("host '%s' resolves to a private or loopback IP", host)
 		}
-	}
 
 	return nil
 }

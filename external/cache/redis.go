@@ -52,6 +52,36 @@ func (c *RedisCache) HGet(ctx context.Context, key, field string) (string, error
 	return val, nil
 }
 
+// HMGet retrieves multiple fields from a Redis hash in a single round-trip.
+func (c *RedisCache) HMGet(ctx context.Context, key string, fields ...string) (map[string]string, error) {
+	vals, err := c.client.HMGet(ctx, key, fields...).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(fields))
+	for i, v := range vals {
+		if s, ok := v.(string); ok {
+			out[fields[i]] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("redis: nil")
+	}
+	return out, nil
+}
+
+// HGetAll retrieves all field-value pairs from a Redis hash.
+func (c *RedisCache) HGetAll(ctx context.Context, key string) (map[string]string, error) {
+	val, err := c.client.HGetAll(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(val) == 0 {
+		return nil, fmt.Errorf("redis: nil")
+	}
+	return val, nil
+}
+
 // HSet stores one or more field-value pairs in a Redis hash.
 // Use WithExpiration to set a TTL on the entire key.
 func (c *RedisCache) HSet(ctx context.Context, key string, fields map[string]any, opts ...CacheOption) error {
@@ -71,6 +101,11 @@ func (c *RedisCache) HSet(ctx context.Context, key string, fields map[string]any
 // HDel removes one or more fields from a Redis hash.
 func (c *RedisCache) HDel(ctx context.Context, key string, fields ...string) error {
 	return c.client.HDel(ctx, key, fields...).Err()
+}
+
+// Del removes an entire key from Redis.
+func (c *RedisCache) Del(ctx context.Context, key string) error {
+	return c.client.Del(ctx, key).Err()
 }
 
 // Close shuts down the Redis client connection pool.

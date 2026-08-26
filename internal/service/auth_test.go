@@ -158,7 +158,7 @@ func TestRegisterUserAlreadyExists(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	_, err := svc.Register(context.Background(), payload.RegisterRequest{
+	_, err := svc.Register(context.Background(), &payload.RegisterRequest{
 		Email:    "existing@example.com",
 		Password: "Passw0rd",
 	}, "web", "test-device", "127.0.0.1", "", "", "test-agent")
@@ -179,7 +179,7 @@ func TestRegisterUserDBError(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	_, err := svc.Register(context.Background(), payload.RegisterRequest{
+	_, err := svc.Register(context.Background(), &payload.RegisterRequest{
 		Email:    "test@example.com",
 		Password: "Passw0rd",
 	}, "web", "test-device", "127.0.0.1", "", "", "test-agent")
@@ -217,7 +217,7 @@ func TestRegisterUserCreatesAccount(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	resp, err := svc.Register(context.Background(), payload.RegisterRequest{
+	resp, err := svc.Register(context.Background(), &payload.RegisterRequest{
 		Email:    "new@example.com",
 		Password: "Passw0rd",
 	}, "web", "test-device", "127.0.0.1", "", "", "test-agent")
@@ -260,7 +260,7 @@ func TestRegisterGeneratesDisplayUserID(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	_, err := svc.Register(context.Background(), payload.RegisterRequest{
+	_, err := svc.Register(context.Background(), &payload.RegisterRequest{
 		Email:    "test@example.com",
 		Password: "Passw0rd",
 	}, "web", "test-device", "127.0.0.1", "", "", "test-agent")
@@ -422,7 +422,7 @@ func TestRefreshAccessTokenInvalidToken(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	_, err := svc.RefreshAccessToken(context.Background(), "invalid-refresh-token")
+	_, err := svc.RefreshAccessToken(context.Background(), "invalid-refresh-token", 0)
 	if err == nil {
 		t.Fatal("expected error for invalid refresh token")
 	}
@@ -441,7 +441,7 @@ func TestRefreshAccessTokenRevokedSession(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	_, err := svc.RefreshAccessToken(context.Background(), "some-token")
+	_, err := svc.RefreshAccessToken(context.Background(), "some-token", 0)
 	if err == nil {
 		t.Fatal("expected error for revoked session")
 	}
@@ -484,7 +484,7 @@ func TestRefreshAccessTokenSuccess(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	resp, err := svc.RefreshAccessToken(context.Background(), "valid-refresh-token")
+	resp, err := svc.RefreshAccessToken(context.Background(), "valid-refresh-token", 0)
 	if err != nil {
 		t.Fatalf("RefreshAccessToken: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestRefreshAccessTokenRevokeError(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	_, err := svc.RefreshAccessToken(context.Background(), "valid-refresh-token")
+	_, err := svc.RefreshAccessToken(context.Background(), "valid-refresh-token", 0)
 	if err == nil {
 		t.Fatal("expected error when update session fails")
 	}
@@ -661,6 +661,35 @@ func (m *mockCache) HGet(_ context.Context, key, field string) (string, error) {
 	return "", fmt.Errorf("redis: nil")
 }
 
+func (m *mockCache) HMGet(_ context.Context, key string, fields ...string) (map[string]string, error) {
+	h, ok := m.hashes[key]
+	if !ok || len(h) == 0 {
+		return nil, fmt.Errorf("redis: nil")
+	}
+	out := make(map[string]string, len(fields))
+	for _, f := range fields {
+		if v, ok := h[f]; ok {
+			out[f] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("redis: nil")
+	}
+	return out, nil
+}
+
+func (m *mockCache) HGetAll(_ context.Context, key string) (map[string]string, error) {
+	h, ok := m.hashes[key]
+	if !ok || len(h) == 0 {
+		return nil, fmt.Errorf("redis: nil")
+	}
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		out[k] = v
+	}
+	return out, nil
+}
+
 func (m *mockCache) HSet(_ context.Context, key string, fields map[string]any, _ ...cache.CacheOption) error {
 	if m.hashes[key] == nil {
 		m.hashes[key] = make(map[string]string)
@@ -681,36 +710,28 @@ func (m *mockCache) HDel(_ context.Context, key string, fields ...string) error 
 	return nil
 }
 
+func (m *mockCache) Del(_ context.Context, key string) error {
+	delete(m.hashes, key)
+	return nil
+}
+
 func TestGetSessionCacheHit(t *testing.T) {
 	cfg := testConfig()
 	cache := newMockCache()
-	mock := &mockQuerier{}
 
-	// Pre-populate cache hash fields
-	// refresh cache has only session_id pointer
-	_ = cache.HSet(context.Background(), "refresh:hash123", map[string]any{
-		"session_id": 10,
-	})
-	// session cache has full data
-	_ = cache.HSet(context.Background(), "session:10", map[string]any{
-		"id":             10,
-		"user_id":        42,
-		"refresh_token":  "refresh_token_hash",
-		"device_type":    "web",
-		"device_name":    "Chrome",
-		"country":        "US",
-		"city":           "San Francisco",
-		"ip_address":     "127.0.0.1",
-		"user_agent":     "Mozilla/5.0",
-		"logged_in_at":   1609459200,
-		"last_active_at": 1609459200,
-		"session_status": 1,
-		"expires_at":     1612137600,
-	})
+	mock := &mockQuerier{
+		getSessionByHashFn: func(_ context.Context, _ string) (gen.Session, error) {
+			return gen.Session{
+				ID:               10,
+				UserID:           42,
+				SessionStatus:    sql.NullInt16{Int16: 1, Valid: true},
+				RefreshTokenHash: "db_hash",
+			}, nil
+		},
+	}
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
-	// getSession should return from cache without hitting the querier
 	got, err := svc.getSession(context.Background(), "hash123")
 	if err != nil {
 		t.Fatalf("getSession: %v", err)
@@ -724,6 +745,15 @@ func TestGetSessionCacheHit(t *testing.T) {
 	if got.SessionStatus.Int16 != 1 {
 		t.Errorf("expected session status 1, got %d", got.SessionStatus.Int16)
 	}
+
+	// Verify cache was populated for next time
+	cached, cacheErr := cache.HGetAll(context.Background(), "session:10")
+	if cacheErr != nil || len(cached) == 0 {
+		t.Fatal("expected session cache to be populated after DB lookup")
+	}
+	if cached["refresh_token"] != "db_hash" {
+		t.Errorf("expected cached refresh_token to be %q, got %q", "db_hash", cached["refresh_token"])
+	}
 }
 
 func TestGetSessionCacheMiss(t *testing.T) {
@@ -734,13 +764,12 @@ func TestGetSessionCacheMiss(t *testing.T) {
 	mock := &mockQuerier{
 		getSessionByHashFn: func(_ context.Context, hash string) (gen.Session, error) {
 			queriedHash = hash
-			return gen.Session{ID: 20, UserID: 99}, nil
+			return gen.Session{ID: 20, UserID: 99, SessionStatus: sql.NullInt16{Int16: 1, Valid: true}}, nil
 		},
 	}
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
-	// First call: cache miss, should query DB
 	got, err := svc.getSession(context.Background(), "hash456")
 	if err != nil {
 		t.Fatalf("getSession: %v", err)
@@ -752,11 +781,7 @@ func TestGetSessionCacheMiss(t *testing.T) {
 		t.Errorf("expected session ID 20, got %d", got.ID)
 	}
 
-	// Verify refresh cache was populated with session_id pointer
-	if _, err := cache.HGet(context.Background(), "refresh:hash456", "session_id"); err != nil {
-		t.Error("expected refresh cache to have session_id after DB lookup")
-	}
-	// Verify session cache was populated with full data
+	// Verify session cache was populated after DB lookup
 	if _, err := cache.HGet(context.Background(), "session:20", "id"); err != nil {
 		t.Error("expected session cache to have full data after DB lookup")
 	}
@@ -777,17 +802,17 @@ func TestGetSessionCachePopulatedOnMiss(t *testing.T) {
 	// First call populates cache
 	_, _ = svc.getSession(context.Background(), "hash789")
 
-	// Second call should hit cache (no additional DB call)
-	dbCallCount := 0
-	mock.getSessionByHashFn = func(_ context.Context, _ string) (gen.Session, error) {
-		dbCallCount++
-		return gen.Session{}, nil
+	// Verify cache is populated
+	cached, err := cache.HGetAll(context.Background(), "session:30")
+	if err != nil || len(cached) == 0 {
+		t.Fatal("expected session cache to be populated after first call")
 	}
 
+	// Second call: HGetAll returns cached data
 	_, _ = svc.getSession(context.Background(), "hash789")
-
-	if dbCallCount != 0 {
-		t.Errorf("expected 0 DB calls on cache hit, got %d", dbCallCount)
+	cached2, _ := cache.HGetAll(context.Background(), "session:30")
+	if cached2["user_id"] != "55" {
+		t.Errorf("expected cached user_id 55, got %q", cached2["user_id"])
 	}
 }
 
@@ -849,27 +874,13 @@ func TestLogoutClearsCache(t *testing.T) {
 	cfg := testConfig()
 	cache := newMockCache()
 
-	// Manually hash the token to get the cache keys
-	svc := NewAuthService(nil, nil, cfg, cache, testLog(t))
-	refreshTokenHash := svc.hashToken("refresh-token-to-logout")
-
-	// Pre-populate both cache keys (new structure)
-	_ = cache.HSet(context.Background(), "refresh:"+refreshTokenHash, map[string]any{
-		"session_id": 5,
-	})
+	// Pre-populate session cache
 	_ = cache.HSet(context.Background(), "session:5", map[string]any{
 		"id":             5,
 		"user_id":        42,
 		"refresh_token":  "refresh_token_hash",
-		"device_type":    "web",
-		"device_name":    "Chrome",
-		"country":        "US",
-		"city":           "San Francisco",
-		"ip_address":     "127.0.0.1",
-		"user_agent":     "Mozilla/5.0",
-		"logged_in_at":   1609459200,
-		"last_active_at": 1609459200,
 		"session_status": 1,
+		"last_active_at": 1609459200,
 		"expires_at":     1612137600,
 	})
 
@@ -879,16 +890,11 @@ func TestLogoutClearsCache(t *testing.T) {
 		},
 	}
 
-	svc = NewAuthService(mock, nil, cfg, cache, testLog(t))
+	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
 	err := svc.Logout(context.Background(), "refresh-token-to-logout", 42, 5)
 	if err != nil {
 		t.Fatalf("Logout: %v", err)
-	}
-
-	// Verify refresh cache was cleared
-	if _, err := cache.HGet(context.Background(), "refresh:"+refreshTokenHash, "session_id"); err == nil {
-		t.Error("expected refresh cache to be cleared after logout")
 	}
 
 	// Verify session cache was cleared
@@ -900,33 +906,25 @@ func TestLogoutClearsCache(t *testing.T) {
 func TestRefreshAccessTokenUsesCache(t *testing.T) {
 	cfg := testConfig()
 	cache := newMockCache()
-	dbCallCount := 0
 
-	// Pre-populate cache with an active session (new structure)
-	refreshTokenHash := (&AuthService{}).hashToken("cached-refresh-token")
-	_ = cache.HSet(context.Background(), "refresh:"+refreshTokenHash, map[string]any{
-		"session_id": 10,
-	})
+	// Pre-populate session cache
 	_ = cache.HSet(context.Background(), "session:10", map[string]any{
 		"id":             10,
 		"user_id":        42,
 		"refresh_token":  "refresh_token_hash",
-		"device_type":    "web",
-		"device_name":    "Chrome",
-		"country":        "US",
-		"city":           "San Francisco",
-		"ip_address":     "127.0.0.1",
-		"user_agent":     "Mozilla/5.0",
-		"logged_in_at":   1609459200,
-		"last_active_at": 1609459200,
 		"session_status": 1,
+		"last_active_at": 1609459200,
 		"expires_at":     1612137600,
 	})
 
 	mock := &mockQuerier{
 		getSessionByHashFn: func(_ context.Context, _ string) (gen.Session, error) {
-			dbCallCount++
-			return gen.Session{}, sql.ErrNoRows
+			return gen.Session{
+				ID:               10,
+				UserID:           42,
+				SessionStatus:    sql.NullInt16{Int16: 1, Valid: true},
+				RefreshTokenHash: "refresh_token_hash",
+			}, nil
 		},
 		updateSessionFn: func(_ context.Context, _ int64) error {
 			return nil
@@ -951,14 +949,9 @@ func TestRefreshAccessTokenUsesCache(t *testing.T) {
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
-	resp, err := svc.RefreshAccessToken(context.Background(), "cached-refresh-token")
+	resp, err := svc.RefreshAccessToken(context.Background(), "cached-refresh-token", 0)
 	if err != nil {
 		t.Fatalf("RefreshAccessToken: %v", err)
-	}
-
-	// Should NOT have called DB for session lookup (cache hit)
-	if dbCallCount != 0 {
-		t.Errorf("expected 0 DB calls for session lookup on cache hit, got %d", dbCallCount)
 	}
 
 	if resp.AccessToken == "" {

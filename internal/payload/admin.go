@@ -1,10 +1,5 @@
 package payload
 
-import "errors"
-
-var ErrInternal = errors.New("internal error")
-var ErrInvalidPayload = errors.New("invalid payload")
-
 // BlockedDomainResponse represents a blocked domain entry.
 type BlockedDomainResponse struct {
 	ID        int64  `json:"id"`

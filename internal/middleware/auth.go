@@ -50,6 +50,24 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 			}
 
 			tokenString := parts[1]
+
+			// Refresh endpoint: skip access-token expiry and session
+			// validation. The client is here because the token expired;
+			// we only need a valid signature to extract the sessionID.
+			if r.URL.Path == "/api/v1/auth/refresh" {
+				claims, err := authService.ValidateAccessTokenAllowExpired(tokenString)
+				if err != nil {
+					log.Warn("invalid token on refresh", logger.Error(err))
+					writeJSONError(w, http.StatusUnauthorized, "invalid or expired token")
+					return
+				}
+				ctx := context.WithValue(r.Context(), contextutil.UserIDKey, claims.UserID)
+				ctx = context.WithValue(ctx, contextutil.SessionIDKey, claims.SessionID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// Standard path: strict token + session validation.
 			claims, err := authService.ValidateAccessToken(tokenString)
 			if err != nil {
 				log.Warn("invalid access token", logger.Error(err))
@@ -57,9 +75,28 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 				return
 			}
 
+			// Reject tokens with invalid or tampered encoded user ID.
+			encodedUserID := claims.UserID
+			if encodedUserID == "" {
+				log.Warn("user_id missing from token")
+				writeJSONError(w, http.StatusUnauthorized, "invalid or expired token")
+				return
+			}
+			userID, err := authService.DecodeUserID(encodedUserID)
+			if err != nil {
+				log.Warn("failed to decode user_id from token", logger.Error(err))
+				writeJSONError(w, http.StatusUnauthorized, "invalid token claims")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), contextutil.UserIDKey, userID)
+			ctx = context.WithValue(ctx, contextutil.SessionIDKey, claims.SessionID)
+
 			// Validate that the session is still alive (not revoked / expired)
+			// and check the session version matches the token — a single
+			// HMGET round-trip replaces the old two-step flow.
 			if claims.SessionID > 0 {
-				alive, err := authService.ValidateSession(r.Context(), claims.SessionID)
+				alive, err := authService.ValidateSessionWithVersion(r.Context(), claims.SessionID, claims.SessionVersion)
 				if err != nil {
 					log.Error("session validation query failed", logger.Error(err), logger.Int64("sessionID", claims.SessionID))
 					writeJSONError(w, http.StatusInternalServerError, "failed to validate session")
@@ -70,36 +107,8 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 					writeJSONError(w, http.StatusUnauthorized, "session expired or revoked")
 					return
 				}
-
-				// Verify session version matches the token — a mismatch
-				// means the token was issued before the most recent refresh.
-				if claims.SessionID > 0 && claims.SessionVersion > 0 {
-					dbVersion, vErr := authService.GetSessionVersion(r.Context(), claims.SessionID)
-					if vErr != nil {
-						log.Error("session version query failed", logger.Error(vErr), logger.Int64("sessionID", claims.SessionID))
-						writeJSONError(w, http.StatusInternalServerError, "failed to validate session version")
-						return
-					}
-					if dbVersion != claims.SessionVersion {
-						log.Warn("session version mismatch — stale token", logger.Int64("sessionID", claims.SessionID),
-							logger.Int64("tokenVersion", claims.SessionVersion), logger.Int64("dbVersion", dbVersion))
-						writeJSONError(w, http.StatusUnauthorized, "Invalid access token")
-						return
-					}
-				}
 			}
 
-			// Decode the HMAC-encoded display user ID to the internal int64
-			userID, err := authService.DecodeUserID(claims.UserID)
-			if err != nil {
-				log.Warn("invalid encoded user ID in token", logger.Error(err))
-				writeJSONError(w, http.StatusUnauthorized, "invalid token claims")
-				return
-			}
-
-			log.Debug("request authenticated", logger.Int64("userID", userID), logger.Int64("sessionID", claims.SessionID))
-			ctx := context.WithValue(r.Context(), contextutil.UserIDKey, userID)
-			ctx = context.WithValue(ctx, contextutil.SessionIDKey, claims.SessionID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

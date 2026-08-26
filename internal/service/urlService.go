@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgerrcode"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
@@ -426,8 +426,8 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 
 // isDuplicateKey reports whether err is a Postgres unique-constraint violation.
 func isDuplicateKey(err error) bool {
-	var pqErr *pq.Error
-	return errors.As(err, &pqErr) && pqErr.Code == pgerrcode.UniqueViolation
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation
 }
 
 // Redirect records a click and returns the destination URL for the given short

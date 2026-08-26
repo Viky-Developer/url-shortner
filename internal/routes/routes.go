@@ -21,7 +21,8 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 
 	// Protected auth routes (need access token)
 	authMiddleware := middleware.AuthMiddleware(authService, nil)
-	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.RefreshToken)
+	mux.Handle("POST /api/v1/auth/refresh", authMiddleware(http.HandlerFunc(authHandler.RefreshToken)))
+	mux.Handle("POST /api/v1/auth/update-password", authMiddleware(http.HandlerFunc(authHandler.UpdatePassword)))
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 	mux.Handle("GET /api/v1/auth/sessions", authMiddleware(http.HandlerFunc(authHandler.ListSessions)))
 	mux.Handle("DELETE /api/v1/auth/sessions/{id}", authMiddleware(http.HandlerFunc(authHandler.RevokeSession)))

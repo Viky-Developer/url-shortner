@@ -15,6 +15,7 @@ import (
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/response"
 	"github.com/vicky/url-shortner/internal/utils"
+	"github.com/vicky/url-shortner/internal/validation"
 )
 
 // lookupIP resolves a host to its IP addresses. It is a variable so tests can
@@ -91,18 +92,8 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req payload.CreateURLRequest
-	if err := utils.DecodeBody(r, &req); err != nil {
-		h.log.Error("invalid request body", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	if req.OriginalURL == "" && req.CustomCode == "" && req.Title == "" &&
-		req.Description == "" && !req.ExpiresAt.Valid {
-		err := fmt.Errorf("%w: request body is required", apperror.ErrInvalidPayload)
-		h.log.Error("invalid payload", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
+	req, ok := validation.BindAndValidate[payload.CreateURLRequest](r, w)
+	if !ok {
 		return
 	}
 
@@ -112,7 +103,7 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.urlService.Create(r.Context(), userID, req)
+	created, err := h.urlService.Create(r.Context(), userID, *req)
 	if err != nil {
 		h.log.Error("failed to create url", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
