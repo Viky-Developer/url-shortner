@@ -514,17 +514,54 @@ func (s *AuthService) GetSessionVersion(ctx context.Context, sessionID int64) (i
 }
 
 // getSession looks up a session by refresh token hash.
-// Direct DB lookup, then populates session cache for next time.
+// Cache-first: checks refresh:<hash> → session:<id>, falls back to DB.
 func (s *AuthService) getSession(ctx context.Context, refreshTokenHash string) (gen.Session, error) {
 
+	// Level 1: look up session_id from the refresh token cache.
+	refreshCacheKey := "refresh:" + refreshTokenHash
+	sessionIDStr, err := s.cache.HGet(ctx, refreshCacheKey, "session_id")
+	if err == nil {
+		var sessionID int64
+		if _, parseErr := fmt.Sscanf(sessionIDStr, "%d", &sessionID); parseErr == nil && sessionID > 0 {
+			// Level 2: look up full session data from the session cache.
+			sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, sessionID)
+			idStr, cacheErr := s.cache.HGet(ctx, sessionCacheKey, "id")
+			if cacheErr == nil {
+				var id int64
+				if _, parseErr2 := fmt.Sscanf(idStr, "%d", &id); parseErr2 == nil && id > 0 {
+					userIDStr, _ := s.cache.HGet(ctx, sessionCacheKey, "user_id")
+					statusStr, _ := s.cache.HGet(ctx, sessionCacheKey, "session_status")
+					refreshStr, _ := s.cache.HGet(ctx, sessionCacheKey, "refresh_token")
+
+					var userID int64
+					var status int16
+					_, _ = fmt.Sscanf(userIDStr, "%d", &userID)
+					_, _ = fmt.Sscanf(statusStr, "%d", &status)
+
+					return gen.Session{
+						ID:               id,
+						UserID:           userID,
+						RefreshTokenHash: refreshStr,
+						SessionStatus:    sql.NullInt16{Int16: status, Valid: true},
+					}, nil
+				}
+			}
+		}
+	}
+
+	// Cache miss — query DB.
 	session, err := s.queries.GetSessionByRefreshTokenHash(ctx, refreshTokenHash)
 	if err != nil {
 		return gen.Session{}, err
 	}
 
-	// Populate session cache for next time
-	sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, session.ID)
+	// Populate both cache levels for next time.
 	TTL := s.cfg.RefreshTokenExpiry
+	_ = s.cache.HSet(ctx, refreshCacheKey, map[string]any{
+		"session_id": session.ID,
+	}, cache.WithExpiration(TTL))
+
+	sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, session.ID)
 	_ = s.cache.HSet(ctx, sessionCacheKey, map[string]any{
 		"id":             session.ID,
 		"user_id":        session.UserID,
@@ -681,6 +718,10 @@ func (s *AuthService) Logout(ctx context.Context, refreshToken string, userID, s
 	// Remove session cache — stops the middleware from accepting the old access token.
 	_ = s.cache.HDel(ctx, fmt.Sprintf("%s%d", cacheKeySession, sessionID),
 		"id", "user_id", "refresh_token", "session_status", "last_active_at", "expires_at")
+
+	// Remove refresh token cache — prevents getSession from returning stale data.
+	refreshTokenHash := s.hashToken(refreshToken)
+	_ = s.cache.HDel(ctx, "refresh:"+refreshTokenHash, "session_id")
 
 	err := s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
 		ID:     sessionID,

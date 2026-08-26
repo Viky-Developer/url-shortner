@@ -467,6 +467,7 @@ func TestApproveHardDelete(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════
 
 func TestCreateServiceConflict(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		createFn: func(_ context.Context, _ int64, _ payload.CreateURLRequest) (*payload.URLResponse, error) {
 			return nil, apperror.ErrConflict
@@ -487,6 +488,7 @@ func TestCreateServiceConflict(t *testing.T) {
 }
 
 func TestCreateServiceInternalError(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		createFn: func(_ context.Context, _ int64, _ payload.CreateURLRequest) (*payload.URLResponse, error) {
 			return nil, apperror.ErrInternal
@@ -527,6 +529,7 @@ func TestCreateBlockedDomainError(t *testing.T) {
 }
 
 func TestCreatePassesAllFields(t *testing.T) {
+	stubLookupIP(t)
 	var captured payload.CreateURLRequest
 	mock := &mockService{
 		createFn: func(_ context.Context, _ int64, req payload.CreateURLRequest) (*payload.URLResponse, error) {
@@ -561,6 +564,7 @@ func TestCreatePassesAllFields(t *testing.T) {
 }
 
 func TestCreateSuccessReturns201(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		createFn: func(_ context.Context, _ int64, _ payload.CreateURLRequest) (*payload.URLResponse, error) {
 			return sampleResponse(), nil
@@ -961,6 +965,7 @@ func TestUpdateInternalError(t *testing.T) {
 }
 
 func TestUpdateConflict(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		updateFn: func(_ context.Context, _ int64, _ int64, _ payload.UpdateURLRequest) (*payload.URLResponse, error) {
 			return nil, apperror.ErrConflict
