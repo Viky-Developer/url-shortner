@@ -12,7 +12,7 @@ type Pagination struct {
 type SuccessResponse struct {
 	StatusCode int         `json:"statusCode"`           // HTTP status code of the response.
 	Message    string      `json:"message"`              // Human-readable success message.
-	Data       []any       `json:"data"`       // Payload array, omitted when empty.
+	Data       []any       `json:"data"`                 // Payload array, omitted when empty.
 	Pagination *Pagination `json:"pagination,omitempty"` // Pagination metadata, omitted when not paged.
 }
 

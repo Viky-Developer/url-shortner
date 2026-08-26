@@ -15,15 +15,15 @@ import (
 )
 
 type mockAuthService struct {
-	registerFn         func(context.Context, payload.RegisterRequest, string, string, string, string, string, string) (*payload.AuthResponse, error)
-	loginFn            func(context.Context, payload.LoginRequest, string, string, string, string, string, string) (*payload.AuthResponse, error)
-	forgotPassFn       func(context.Context, payload.ForgotPasswordRequest, string, string) error
-	refreshFn          func(context.Context, string) (*payload.RefreshTokenResponse, error)
-	logoutFn           func(context.Context, string, int64, int64) error
-	listSessionsFn     func(context.Context, int64) ([]payload.SessionResponse, error)
-	revokeFn           func(context.Context, int64, int64) error
-	revokeOtherFn      func(context.Context, int64, int64) error
-	revokeAllFn        func(context.Context, int64) error
+	registerFn     func(context.Context, payload.RegisterRequest, string, string, string, string, string, string) (*payload.AuthResponse, error)
+	loginFn        func(context.Context, payload.LoginRequest, string, string, string, string, string, string) (*payload.AuthResponse, error)
+	forgotPassFn   func(context.Context, payload.ForgotPasswordRequest, string, string) error
+	refreshFn      func(context.Context, string) (*payload.RefreshTokenResponse, error)
+	logoutFn       func(context.Context, string, int64, int64) error
+	listSessionsFn func(context.Context, int64) ([]payload.SessionResponse, error)
+	revokeFn       func(context.Context, int64, int64) error
+	revokeOtherFn  func(context.Context, int64, int64) error
+	revokeAllFn    func(context.Context, int64) error
 }
 
 func (m *mockAuthService) Register(ctx context.Context, req payload.RegisterRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error) {

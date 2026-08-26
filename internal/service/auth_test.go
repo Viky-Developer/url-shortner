@@ -693,19 +693,19 @@ func TestGetSessionCacheHit(t *testing.T) {
 	})
 	// session cache has full data
 	_ = cache.HSet(context.Background(), "session:10", map[string]any{
-		"id":               10,
-		"user_id":          42,
-		"refresh_token":    "refresh_token_hash",
-		"device_type":      "web",
-		"device_name":      "Chrome",
-		"country":          "US",
-		"city":             "San Francisco",
-		"ip_address":       "127.0.0.1",
-		"user_agent":       "Mozilla/5.0",
-		"logged_in_at":     1609459200,
-		"last_active_at":   1609459200,
-		"session_status":   1,
-		"expires_at":       1612137600,
+		"id":             10,
+		"user_id":        42,
+		"refresh_token":  "refresh_token_hash",
+		"device_type":    "web",
+		"device_name":    "Chrome",
+		"country":        "US",
+		"city":           "San Francisco",
+		"ip_address":     "127.0.0.1",
+		"user_agent":     "Mozilla/5.0",
+		"logged_in_at":   1609459200,
+		"last_active_at": 1609459200,
+		"session_status": 1,
+		"expires_at":     1612137600,
 	})
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
@@ -858,19 +858,19 @@ func TestLogoutClearsCache(t *testing.T) {
 		"session_id": 5,
 	})
 	_ = cache.HSet(context.Background(), "session:5", map[string]any{
-		"id":               5,
-		"user_id":          42,
-		"refresh_token":    "refresh_token_hash",
-		"device_type":      "web",
-		"device_name":      "Chrome",
-		"country":          "US",
-		"city":             "San Francisco",
-		"ip_address":       "127.0.0.1",
-		"user_agent":       "Mozilla/5.0",
-		"logged_in_at":     1609459200,
-		"last_active_at":   1609459200,
-		"session_status":   1,
-		"expires_at":       1612137600,
+		"id":             5,
+		"user_id":        42,
+		"refresh_token":  "refresh_token_hash",
+		"device_type":    "web",
+		"device_name":    "Chrome",
+		"country":        "US",
+		"city":           "San Francisco",
+		"ip_address":     "127.0.0.1",
+		"user_agent":     "Mozilla/5.0",
+		"logged_in_at":   1609459200,
+		"last_active_at": 1609459200,
+		"session_status": 1,
+		"expires_at":     1612137600,
 	})
 
 	mock := &mockQuerier{
@@ -908,19 +908,19 @@ func TestRefreshAccessTokenUsesCache(t *testing.T) {
 		"session_id": 10,
 	})
 	_ = cache.HSet(context.Background(), "session:10", map[string]any{
-		"id":               10,
-		"user_id":          42,
-		"refresh_token":    "refresh_token_hash",
-		"device_type":      "web",
-		"device_name":      "Chrome",
-		"country":          "US",
-		"city":             "San Francisco",
-		"ip_address":       "127.0.0.1",
-		"user_agent":       "Mozilla/5.0",
-		"logged_in_at":     1609459200,
-		"last_active_at":   1609459200,
-		"session_status":   1,
-		"expires_at":       1612137600,
+		"id":             10,
+		"user_id":        42,
+		"refresh_token":  "refresh_token_hash",
+		"device_type":    "web",
+		"device_name":    "Chrome",
+		"country":        "US",
+		"city":           "San Francisco",
+		"ip_address":     "127.0.0.1",
+		"user_agent":     "Mozilla/5.0",
+		"logged_in_at":   1609459200,
+		"last_active_at": 1609459200,
+		"session_status": 1,
+		"expires_at":     1612137600,
 	})
 
 	mock := &mockQuerier{
