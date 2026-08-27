@@ -39,6 +39,7 @@ type UserResponse struct {
 	ID              string `json:"id"`
 	Email           string `json:"email"`
 	DisplayName     string `json:"displayName,omitempty"`
+	Role            string `json:"role,omitempty"`
 	PasswordAgeDays int    `json:"passwordAgeDays,omitempty"`
 	ChangeSuggested bool   `json:"changeSuggested,omitempty"`
 }
@@ -64,10 +65,10 @@ type ForgotPasswordRequest struct {
 	NewPassword string `json:"newPassword" validate:"required,min=8"`
 }
 
-// UpdatePasswordRequest represents the update-password request.
+// ChangePasswordRequest represents the update-password request.
 // Requires the current password for verification and the new password.
 // All existing sessions (including the current one) are revoked on success.
-type UpdatePasswordRequest struct {
+type ChangePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword" validate:"required"`
 	NewPassword     string `json:"newPassword" validate:"required,min=8"`
 }

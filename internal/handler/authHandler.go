@@ -20,7 +20,7 @@ type AuthService interface {
 	Register(ctx context.Context, req *payload.RegisterRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error)
 	Login(ctx context.Context, req payload.LoginRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error)
 	ForgotPassword(ctx context.Context, req payload.ForgotPasswordRequest, ipAddress, userAgent string) error
-	UpdatePassword(ctx context.Context, userID int64, req payload.UpdatePasswordRequest, sessionID int64, ipAddress, userAgent string) error
+	ChangePassword(ctx context.Context, userID int64, req payload.ChangePasswordRequest, sessionID int64, ipAddress, userAgent string) error
 	RefreshToken(ctx context.Context, refreshToken string, sessionID int64) (*payload.RefreshTokenResponse, error)
 	Logout(ctx context.Context, refreshToken string, userID, sessionID int64) error
 	ListSessions(ctx context.Context, userID int64) ([]payload.SessionResponse, error)
@@ -93,7 +93,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // ForgotPassword handles POST /api/v1/auth/forgot-password
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
-	
+
 	req, ok := validation.BindAndValidate[payload.ForgotPasswordRequest](r, w)
 	if !ok {
 		return
@@ -113,9 +113,9 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, http.StatusOK, "password updated successfully", nil)
 }
 
-// UpdatePassword handles POST /api/v1/auth/update-password
-func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
-	req, ok := validation.BindAndValidate[payload.UpdatePasswordRequest](r, w)
+// ChangePassword handles POST /api/v1/auth/change-password
+func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	req, ok := validation.BindAndValidate[payload.ChangePasswordRequest](r, w)
 	if !ok {
 		return
 	}
@@ -130,7 +130,7 @@ func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	ipAddress := clientIP(r).String()
 	userAgent := r.UserAgent()
 
-	err := h.authService.UpdatePassword(r.Context(), userID, *req, sessionID, ipAddress, userAgent)
+	err := h.authService.ChangePassword(r.Context(), userID, *req, sessionID, ipAddress, userAgent)
 	if err != nil {
 		h.log.Error("update password failed", logger.Error(err), logger.Int64("userID", userID))
 		response.Error(w, response.StatusCodeFromError(err), err)

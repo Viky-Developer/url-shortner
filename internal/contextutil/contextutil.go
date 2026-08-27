@@ -15,3 +15,8 @@ const UserIDKey ContextKey = "user_id"
 // It is used by the auth middleware to set the value and by handlers to read it
 // when they need to identify the current session (e.g. revoke-others, revoke-all).
 const SessionIDKey ContextKey = "session_id"
+
+// RoleKey is the context key for storing the user's role (e.g. "USER", "ADMIN").
+// It is used by the auth middleware to set the value and by the role middleware
+// to enforce access control.
+const RoleKey ContextKey = "role"

@@ -83,6 +83,11 @@ func run() error {
 		middleware.ContentTypeJSON,
 	)
 
+	// Start the background retention worker for session/password history cleanup.
+	retentionWorker := service.NewRetentionWorker(adminService, queries, cfg, log)
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+	go retentionWorker.Start(retentionCtx)
+
 	server := &http.Server{
 		Addr:         cfg.ServerHost + ":" + cfg.ServerPort,
 		Handler:      app,
@@ -99,6 +104,7 @@ func run() error {
 	}()
 
 	graceful.WaitForSignal()
+	retentionCancel() // stop the background retention worker
 	graceful.Shutdown(server, log, 10*time.Second)
 
 	return nil
@@ -132,12 +138,22 @@ func connectDatabase(cfg *config.Config, log logger.Logger) (*sql.DB, error) {
 }
 
 // ensureDefaultUser creates a default user from .env credentials if one does
-// not already exist.
+// not already exist, and ensures the default user always has the ADMIN role.
 func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) error {
 	q := gen.New(database)
-	_, err := q.GetUserByEmail(context.Background(), cfg.DefaultUserEmail)
+	user, err := q.GetUserByEmail(context.Background(), cfg.DefaultUserEmail)
 	if err == nil {
 		log.Info("default user already exists", logger.String("email", cfg.DefaultUserEmail))
+		// Ensure default user always has ADMIN role
+		if user.Role != "ADMIN" {
+			if err := q.UpdateUserRole(context.Background(), gen.UpdateUserRoleParams{
+				ID:   user.ID,
+				Role: "ADMIN",
+			}); err != nil {
+				return fmt.Errorf("promote default user to admin: %w", err)
+			}
+			log.Info("default user promoted to ADMIN", logger.String("email", cfg.DefaultUserEmail))
+		}
 		return nil
 	}
 	if err != sql.ErrNoRows {
@@ -156,6 +172,14 @@ func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) 
 	})
 	if err != nil {
 		return fmt.Errorf("create default user: %w", err)
+	}
+
+	// Set default user role to ADMIN
+	if err := q.UpdateUserRole(context.Background(), gen.UpdateUserRoleParams{
+		ID:   row.ID,
+		Role: "ADMIN",
+	}); err != nil {
+		return fmt.Errorf("set default user role to admin: %w", err)
 	}
 
 	// Seed the initial password history entry — forgot-password validates

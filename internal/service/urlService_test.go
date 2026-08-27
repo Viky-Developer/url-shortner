@@ -37,7 +37,7 @@ type mockQuerier struct {
 	incrementClickFn       func(context.Context, int64) error
 	updateHealthFn         func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
 	shortCodeExistsFn      func(context.Context, string) (bool, error)
-	listBlockedIPFn        func(context.Context) ([]gen.ListBlockedIPRangesRow, error)
+	listBlockedIPFn        func(context.Context) ([]gen.BlockedIpRange, error)
 	createSessionFn        func(context.Context, gen.CreateSessionParams) (gen.Session, error)
 	getSessionByHashFn     func(context.Context, string) (gen.Session, error)
 	getSessionByIDFn       func(context.Context, int64) (gen.Session, error)
@@ -170,7 +170,7 @@ func (m *mockQuerier) ShortCodeExists(ctx context.Context, shortCode string) (bo
 	return false, nil
 }
 
-func (m *mockQuerier) ListBlockedIPRanges(ctx context.Context) ([]gen.ListBlockedIPRangesRow, error) {
+func (m *mockQuerier) ListBlockedIPRanges(ctx context.Context) ([]gen.BlockedIpRange, error) {
 	if m.listBlockedIPFn != nil {
 		return m.listBlockedIPFn(ctx)
 	}
@@ -244,6 +244,18 @@ func (m *mockQuerier) GetLastPasswordHistory(_ context.Context, _ int64) (string
 	return "", nil
 }
 
+func (m *mockQuerier) ListPasswordHistory(_ context.Context, _ gen.ListPasswordHistoryParams) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockQuerier) DeletePasswordHistoryOver(_ context.Context, _ gen.DeletePasswordHistoryOverParams) error {
+	return nil
+}
+
+func (m *mockQuerier) InsertAuditLog(_ context.Context, _ gen.InsertAuditLogParams) error {
+	return nil
+}
+
 func (m *mockQuerier) ListActiveSessionsByUser(ctx context.Context, userID int64) ([]gen.Session, error) {
 	if m.listActiveSessionsFn != nil {
 		return m.listActiveSessionsFn(ctx, userID)
@@ -298,8 +310,8 @@ func (m *mockQuerier) DeleteBlockedDomain(_ context.Context, _ int32) error {
 	return nil
 }
 
-func (m *mockQuerier) CreateBlockedIPRange(_ context.Context, _ gen.CreateBlockedIPRangeParams) (gen.CreateBlockedIPRangeRow, error) {
-	return gen.CreateBlockedIPRangeRow{}, nil
+func (m *mockQuerier) CreateBlockedIPRange(_ context.Context, _ gen.CreateBlockedIPRangeParams) (gen.BlockedIpRange, error) {
+	return gen.BlockedIpRange{}, nil
 }
 
 func (m *mockQuerier) DeleteBlockedIPRange(_ context.Context, _ int64) error {
@@ -386,6 +398,10 @@ func (m *mockQuerier) ExpireSessionsByUser(ctx context.Context, userID int64) er
 	if m.expireSessionsByUserFn != nil {
 		return m.expireSessionsByUserFn(ctx, userID)
 	}
+	return nil
+}
+
+func (m *mockQuerier) UpdateUserRole(_ context.Context, _ gen.UpdateUserRoleParams) error {
 	return nil
 }
 

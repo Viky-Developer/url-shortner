@@ -11,6 +11,16 @@ import (
 	"github.com/sqlc-dev/pqtype"
 )
 
+type AdminAuditLog struct {
+	ID         int64                 `json:"id"`
+	AdminID    sql.NullInt64         `json:"admin_id"`
+	Action     string                `json:"action"`
+	TargetType sql.NullString        `json:"target_type"`
+	TargetID   sql.NullInt64         `json:"target_id"`
+	Details    pqtype.NullRawMessage `json:"details"`
+	CreatedAt  sql.NullTime          `json:"created_at"`
+}
+
 type BlockedDomain struct {
 	ID        int32          `json:"id"`
 	Domain    string         `json:"domain"`
@@ -19,9 +29,9 @@ type BlockedDomain struct {
 }
 
 type BlockedIpRange struct {
+	ID          int64       `json:"id"`
 	Cidr        pqtype.CIDR `json:"cidr"`
 	Description string      `json:"description"`
-	ID          int64       `json:"id"`
 }
 
 type ClickLog struct {
@@ -74,6 +84,7 @@ type Session struct {
 	LastActiveAt     sql.NullTime   `json:"last_active_at"`
 	SessionStatus    sql.NullInt16  `json:"session_status"`
 	ExpiresAt        sql.NullTime   `json:"expires_at"`
+	RevokedAt        sql.NullTime   `json:"revoked_at"`
 }
 
 type Url struct {
@@ -111,6 +122,7 @@ type User struct {
 	PasswordHash      string         `json:"password_hash"`
 	DisplayUserID     sql.NullString `json:"display_user_id"`
 	DisplayUserName   sql.NullString `json:"display_user_name"`
+	Role              string         `json:"role"`
 	CreatedAt         sql.NullTime   `json:"created_at"`
 	UpdatedAt         sql.NullTime   `json:"updated_at"`
 	DeletedAt         sql.NullTime   `json:"deleted_at"`

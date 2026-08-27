@@ -26,7 +26,7 @@ func (q *Queries) CountRevokedSessions(ctx context.Context) (int64, error) {
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
+RETURNING id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
 `
 
 type CreateSessionParams struct {
@@ -68,6 +68,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.LastActiveAt,
 		&i.SessionStatus,
 		&i.ExpiresAt,
+		&i.RevokedAt,
 	)
 	return i, err
 }
@@ -91,7 +92,7 @@ func (q *Queries) ExpireSessionsByUser(ctx context.Context, userID int64) error 
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
 FROM sessions
 WHERE id = $1
 `
@@ -113,12 +114,13 @@ func (q *Queries) GetSessionByID(ctx context.Context, id int64) (Session, error)
 		&i.LastActiveAt,
 		&i.SessionStatus,
 		&i.ExpiresAt,
+		&i.RevokedAt,
 	)
 	return i, err
 }
 
 const getSessionByRefreshTokenHash = `-- name: GetSessionByRefreshTokenHash :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
 FROM sessions
 WHERE refresh_token_hash = $1 AND session_status = 1
 `
@@ -140,12 +142,13 @@ func (q *Queries) GetSessionByRefreshTokenHash(ctx context.Context, refreshToken
 		&i.LastActiveAt,
 		&i.SessionStatus,
 		&i.ExpiresAt,
+		&i.RevokedAt,
 	)
 	return i, err
 }
 
 const listActiveSessionsByUser = `-- name: ListActiveSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at ASC
@@ -174,6 +177,7 @@ func (q *Queries) ListActiveSessionsByUser(ctx context.Context, userID int64) ([
 			&i.LastActiveAt,
 			&i.SessionStatus,
 			&i.ExpiresAt,
+			&i.RevokedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -189,7 +193,7 @@ func (q *Queries) ListActiveSessionsByUser(ctx context.Context, userID int64) ([
 }
 
 const listSessionsByUser = `-- name: ListSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at DESC
@@ -218,6 +222,7 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, userID int64) ([]Sessi
 			&i.LastActiveAt,
 			&i.SessionStatus,
 			&i.ExpiresAt,
+			&i.RevokedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -232,23 +237,14 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, userID int64) ([]Sessi
 	return items, nil
 }
 
-const purgeInactiveSessions = `-- name: PurgeInactiveSessions :exec
-DELETE FROM sessions
-WHERE session_status = 1 AND last_active_at < $1
-`
-
-func (q *Queries) PurgeInactiveSessions(ctx context.Context, lastActiveAt sql.NullTime) error {
-	_, err := q.db.ExecContext(ctx, purgeInactiveSessions, lastActiveAt)
-	return err
-}
-
 const purgeOldRevokedSessions = `-- name: PurgeOldRevokedSessions :exec
 DELETE FROM sessions
-WHERE session_status = 0 AND last_active_at < $1
+WHERE session_status IN (0, 2)
+  AND COALESCE(revoked_at, last_active_at) < $1
 `
 
-func (q *Queries) PurgeOldRevokedSessions(ctx context.Context, lastActiveAt sql.NullTime) error {
-	_, err := q.db.ExecContext(ctx, purgeOldRevokedSessions, lastActiveAt)
+func (q *Queries) PurgeOldRevokedSessions(ctx context.Context, revokedAt sql.NullTime) error {
+	_, err := q.db.ExecContext(ctx, purgeOldRevokedSessions, revokedAt)
 	return err
 }
 
@@ -276,7 +272,7 @@ func (q *Queries) RevokeOtherSessionsByUser(ctx context.Context, arg RevokeOther
 }
 
 const revokeSession = `-- name: RevokeSession :exec
-UPDATE sessions SET session_status = 0 WHERE id = $1 AND user_id = $2
+UPDATE sessions SET session_status = 0, revoked_at = NOW() WHERE id = $1 AND user_id = $2
 `
 
 type RevokeSessionParams struct {

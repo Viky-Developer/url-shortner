@@ -10,6 +10,7 @@ import (
 
 	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
+	"github.com/vicky/url-shortner/internal/apperror"
 	"github.com/vicky/url-shortner/internal/config"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 	"github.com/vicky/url-shortner/internal/payload"
@@ -29,7 +30,7 @@ func TestGenerateAccessToken(t *testing.T) {
 	cfg := testConfig()
 	svc := NewAuthService(nil, nil, cfg, NoopCache{}, testLog(t))
 
-	token, err := svc.generateAccessToken("USR_abc123", "test@example.com", "Test User")
+	token, err := svc.generateAccessToken("USR_abc123", "test@example.com", "Test User", "USER")
 	if err != nil {
 		t.Fatalf("generateAccessToken: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestValidateAccessToken(t *testing.T) {
 	cfg := testConfig()
 	svc := NewAuthService(nil, nil, cfg, NoopCache{}, testLog(t))
 
-	token, err := svc.generateAccessToken("USR_abc123", "test@example.com", "Test User")
+	token, err := svc.generateAccessToken("USR_abc123", "test@example.com", "Test User", "USER")
 	if err != nil {
 		t.Fatalf("generateAccessToken: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestValidateAccessTokenWrongKey(t *testing.T) {
 	svc1 := NewAuthService(nil, nil, cfg1, NoopCache{}, testLog(t))
 	svc2 := NewAuthService(nil, nil, cfg2, NoopCache{}, testLog(t))
 
-	token, err := svc1.generateAccessToken("USR_abc123", "test@example.com", "Test User")
+	token, err := svc1.generateAccessToken("USR_abc123", "test@example.com", "Test User", "USER")
 	if err != nil {
 		t.Fatalf("generateAccessToken: %v", err)
 	}
@@ -290,8 +291,8 @@ func TestLoginUserNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-existent user")
 	}
-	if !errors.Is(err, errInvalidCredentials) {
-		t.Errorf("expected errInvalidCredentials, got %q", err.Error())
+	if !errors.Is(err, apperror.ErrUnauthorized) {
+		t.Errorf("expected apperror.ErrUnauthorized, got %q", err.Error())
 	}
 }
 
@@ -335,8 +336,8 @@ func TestLoginInvalidPassword(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for wrong password")
 	}
-	if !errors.Is(err, errInvalidCredentials) {
-		t.Errorf("expected errInvalidCredentials, got %q", err.Error())
+	if !errors.Is(err, apperror.ErrUnauthorized) {
+		t.Errorf("expected apperror.ErrUnauthorized, got %q", err.Error())
 	}
 }
 
@@ -392,7 +393,7 @@ func TestGenerateTokensCreatesSession(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
+	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "USER", "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
 	if err != nil {
 		t.Fatalf("GenerateTokens: %v", err)
 	}
@@ -854,7 +855,7 @@ func TestGenerateTokensPopulatesCache(t *testing.T) {
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
-	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
+	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "USER", "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
 	if err != nil {
 		t.Fatalf("GenerateTokens: %v", err)
 	}

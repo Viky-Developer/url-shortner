@@ -18,7 +18,7 @@ type mockAuthService struct {
 	registerFn     func(context.Context, *payload.RegisterRequest, string, string, string, string, string, string) (*payload.AuthResponse, error)
 	loginFn        func(context.Context, payload.LoginRequest, string, string, string, string, string, string) (*payload.AuthResponse, error)
 	forgotPassFn   func(context.Context, payload.ForgotPasswordRequest, string, string) error
-	updatePassFn   func(context.Context, int64, payload.UpdatePasswordRequest, int64, string, string) error
+	ChangePassFn   func(context.Context, int64, payload.ChangePasswordRequest, int64, string, string) error
 	refreshFn      func(context.Context, string, int64) (*payload.RefreshTokenResponse, error)
 	logoutFn       func(context.Context, string, int64, int64) error
 	listSessionsFn func(context.Context, int64) ([]payload.SessionResponse, error)
@@ -42,9 +42,9 @@ func (m *mockAuthService) ForgotPassword(ctx context.Context, req payload.Forgot
 	return nil
 }
 
-func (m *mockAuthService) UpdatePassword(ctx context.Context, userID int64, req payload.UpdatePasswordRequest, sessionID int64, ipAddress, userAgent string) error {
-	if m.updatePassFn != nil {
-		return m.updatePassFn(ctx, userID, req, sessionID, ipAddress, userAgent)
+func (m *mockAuthService) ChangePassword(ctx context.Context, userID int64, req payload.ChangePasswordRequest, sessionID int64, ipAddress, userAgent string) error {
+	if m.ChangePassFn != nil {
+		return m.ChangePassFn(ctx, userID, req, sessionID, ipAddress, userAgent)
 	}
 	return nil
 }

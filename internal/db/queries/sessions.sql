@@ -1,15 +1,15 @@
 -- name: CreateSession :one
 INSERT INTO sessions (user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at;
+RETURNING id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at;
 
 -- name: GetSessionByRefreshTokenHash :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
 FROM sessions
 WHERE refresh_token_hash = $1 AND session_status = 1;
 
 -- name: GetSessionByID :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
 FROM sessions
 WHERE id = $1;
 
@@ -17,33 +17,30 @@ WHERE id = $1;
 UPDATE sessions SET last_active_at = NOW() WHERE id = $1 AND session_status = 1;
 
 -- name: RevokeSession :exec
-UPDATE sessions SET session_status = 0 WHERE id = $1 AND user_id = $2;
+UPDATE sessions SET session_status = 0, revoked_at = NOW() WHERE id = $1 AND user_id = $2;
 
 -- name: ListSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at DESC;
 
 -- name: ListActiveSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at ASC;
 
 -- name: PurgeOldRevokedSessions :exec
 DELETE FROM sessions
-WHERE session_status = 0 AND last_active_at < $1;
-
--- name: PurgeInactiveSessions :exec
-DELETE FROM sessions
-WHERE session_status = 1 AND last_active_at < $1;
-
--- name: CountRevokedSessions :one
-SELECT COUNT(*) FROM sessions WHERE session_status = 0;
+WHERE session_status IN (0, 2)
+  AND COALESCE(revoked_at, last_active_at) < $1;
 
 -- name: RevokeAllSessionsByUser :exec
 UPDATE sessions SET session_status = 0 WHERE user_id = $1 AND session_status = 1;
+
+-- name: CountRevokedSessions :one
+SELECT COUNT(*) FROM sessions WHERE session_status = 0;
 
 -- name: RevokeOtherSessionsByUser :exec
 UPDATE sessions SET session_status = 0 WHERE user_id = $1 AND id != $2 AND session_status = 1;

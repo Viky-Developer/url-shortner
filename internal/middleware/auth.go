@@ -33,6 +33,7 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 	if log == nil {
 		log, _ = logger.New()
 	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -91,6 +92,7 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 
 			ctx := context.WithValue(r.Context(), contextutil.UserIDKey, userID)
 			ctx = context.WithValue(ctx, contextutil.SessionIDKey, claims.SessionID)
+			ctx = context.WithValue(ctx, contextutil.RoleKey, claims.Role)
 
 			// Validate that the session is still alive (not revoked / expired)
 			// and check the session version matches the token — a single
