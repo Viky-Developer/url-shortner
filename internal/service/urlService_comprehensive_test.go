@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 	"github.com/vicky/url-shortner/internal/enum"
 	"github.com/vicky/url-shortner/internal/payload"
@@ -1705,7 +1706,7 @@ func TestToResponseBaseURL(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════
 
 func TestIsDuplicateKey(t *testing.T) {
-	if !isDuplicateKey(&pq.Error{Code: "23505"}) {
+	if !isDuplicateKey(&pgconn.PgError{Code: pgerrcode.UniqueViolation}) {
 		t.Error("expected true for unique violation")
 	}
 	if isDuplicateKey(fmt.Errorf("other error")) {
