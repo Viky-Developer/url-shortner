@@ -15,6 +15,7 @@ import (
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/response"
 	"github.com/vicky/url-shortner/internal/utils"
+	"github.com/vicky/url-shortner/internal/validation"
 )
 
 // lookupIP resolves a host to its IP addresses. It is a variable so tests can
@@ -27,11 +28,11 @@ type URLService interface {
 	Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error)
 	Redirect(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, error)
 	GetByID(ctx context.Context, userID int64, id int64) (*payload.URLResponse, error)
-	List(ctx context.Context, userID int64, page, perPage, offset int32) (*payload.URLListResponse, error)
+	List(ctx context.Context, userID int64, page, perPage, offset int32) ([]any, int64, error)
 	Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error)
 	SoftDelete(ctx context.Context, userID int64, id int64) (*payload.DeleteResponse, error)
 	HardDelete(ctx context.Context, userID int64, id int64) error
-	ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) (*payload.ClickLogsResponse, error)
+	ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) ([]any, int64, error)
 	GetAnalytics(ctx context.Context, userID, urlID int64, from, to *time.Time) (*payload.AnalyticsResponse, error)
 }
 
@@ -91,18 +92,8 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req payload.CreateURLRequest
-	if err := utils.DecodeBody(r, &req); err != nil {
-		h.log.Error("invalid request body", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	if req.OriginalURL == "" && req.CustomCode == "" && req.Title == "" &&
-		req.Description == "" && !req.ExpiresAt.Valid {
-		err := fmt.Errorf("%w: request body is required", apperror.ErrInvalidPayload)
-		h.log.Error("invalid payload", logger.Error(err))
-		response.Error(w, http.StatusBadRequest, err)
+	req, ok := validation.BindAndValidate[payload.CreateURLRequest](r, w)
+	if !ok {
 		return
 	}
 
@@ -112,7 +103,7 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.urlService.Create(r.Context(), userID, req)
+	created, err := h.urlService.Create(r.Context(), userID, *req)
 	if err != nil {
 		h.log.Error("failed to create url", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
@@ -180,23 +171,35 @@ func (h *URLHandler) ListURLs(w http.ResponseWriter, r *http.Request) {
 		r.URL.Query().Get("perPage"),
 	)
 
-	list, err := h.urlService.List(r.Context(), userID, page, perPage, offset)
+	list, total, err := h.urlService.List(r.Context(), userID, page, perPage, offset)
 	if err != nil {
 		h.log.Error("list urls failed", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
 
-	items := make([]any, len(list.Items))
-	for i, item := range list.Items {
-		items[i] = item
+	totalPages := int(total) / int(perPage)
+
+	if int(total)%int(perPage) > 0 {
+		totalPages++
 	}
 
-	response.Success(w, http.StatusOK, "urls listed", items, &payload.Pagination{
-		Total:      list.Total,
-		Page:       list.Page,
-		PerPage:    list.PerPage,
-		TotalPages: list.TotalPages,
+	if len(list) == 0 {
+		response.Success(w, http.StatusOK, "urls listed", list, &payload.Pagination{
+			Total:      total,
+			Page:       page,
+			PerPage:    perPage,
+			TotalPages: totalPages,
+		})
+
+		return
+	}
+
+	response.Success(w, http.StatusOK, "urls listed", list, &payload.Pagination{
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: totalPages,
 	})
 }
 
@@ -315,14 +318,36 @@ func (h *URLHandler) ListClickLogs(w http.ResponseWriter, r *http.Request) {
 	from, to := parseTimeRange(r)
 	page, perPage, offset := utils.ParsePagination(r.URL.Query().Get("page"), r.URL.Query().Get("perPage"))
 
-	clicks, err := h.urlService.ListClickLogs(r.Context(), userID, id, from, to, page, perPage, offset)
+	clicks, total, err := h.urlService.ListClickLogs(r.Context(), userID, id, from, to, page, perPage, offset)
 	if err != nil {
 		h.log.Error("failed to list click logs", logger.Error(err), logger.Int64("id", id))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
 
-	response.Success(w, http.StatusOK, "click logs retrieved", []any{clicks})
+	totalPages := int(total) / int(perPage)
+
+	if int(total)%int(perPage) > 0 {
+		totalPages++
+	}
+
+	if len(clicks) == 0 {
+		response.Success(w, http.StatusOK, "click logs retrieved", clicks, &payload.Pagination{
+			Total:      total,
+			Page:       page,
+			PerPage:    perPage,
+			TotalPages: totalPages,
+		})
+
+		return
+	}
+
+	response.Success(w, http.StatusOK, "click logs retrieved", clicks, &payload.Pagination{
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: totalPages,
+	})
 }
 
 // GetAnalytics handles GET /urls/{id}/analytics and returns aggregate click

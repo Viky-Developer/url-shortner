@@ -46,51 +46,72 @@ func (q *Queries) CountPasswordHistory(ctx context.Context, userID int64) (int64
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (email, password_hash, display_user_id, password_changed_at)
-VALUES ($1, $2, $3, NOW())
-RETURNING id, email, display_user_id, created_at, password_changed_at
+INSERT INTO users (email, password_hash, display_user_id, display_user_name, password_changed_at)
+VALUES ($1, $2, $3, $4, NOW())
+RETURNING id, email, display_user_id, display_user_name, role, created_at, password_changed_at
 `
 
 type CreateUserParams struct {
-	Email         string         `json:"email"`
-	PasswordHash  string         `json:"password_hash"`
-	DisplayUserID sql.NullString `json:"display_user_id"`
+	Email           string         `json:"email"`
+	PasswordHash    string         `json:"password_hash"`
+	DisplayUserID   sql.NullString `json:"display_user_id"`
+	DisplayUserName sql.NullString `json:"display_user_name"`
 }
 
 type CreateUserRow struct {
 	ID                int64          `json:"id"`
 	Email             string         `json:"email"`
 	DisplayUserID     sql.NullString `json:"display_user_id"`
+	DisplayUserName   sql.NullString `json:"display_user_name"`
+	Role              string         `json:"role"`
 	CreatedAt         sql.NullTime   `json:"created_at"`
 	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
-	row := q.db.QueryRowContext(ctx, createUser, arg.Email, arg.PasswordHash, arg.DisplayUserID)
+	row := q.db.QueryRowContext(ctx, createUser,
+		arg.Email,
+		arg.PasswordHash,
+		arg.DisplayUserID,
+		arg.DisplayUserName,
+	)
 	var i CreateUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,
 		&i.DisplayUserID,
+		&i.DisplayUserName,
+		&i.Role,
 		&i.CreatedAt,
 		&i.PasswordChangedAt,
 	)
 	return i, err
 }
 
-const getLastPasswordHistory = `-- name: GetLastPasswordHistory :one
-SELECT password_hash FROM password_history WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1
+const deletePasswordHistoryOver = `-- name: DeletePasswordHistoryOver :exec
+DELETE FROM password_history
+WHERE password_history.user_id = $1
+  AND password_history.id NOT IN (
+      SELECT ph.id
+      FROM password_history ph
+      WHERE ph.user_id = $1
+      ORDER BY ph.created_at DESC, ph.id DESC
+      LIMIT $2
+  )
 `
 
-func (q *Queries) GetLastPasswordHistory(ctx context.Context, userID int64) (string, error) {
-	row := q.db.QueryRowContext(ctx, getLastPasswordHistory, userID)
-	var password_hash string
-	err := row.Scan(&password_hash)
-	return password_hash, err
+type DeletePasswordHistoryOverParams struct {
+	UserID int64 `json:"user_id"`
+	Limit  int32 `json:"limit"`
+}
+
+func (q *Queries) DeletePasswordHistoryOver(ctx context.Context, arg DeletePasswordHistoryOverParams) error {
+	_, err := q.db.ExecContext(ctx, deletePasswordHistoryOver, arg.UserID, arg.Limit)
+	return err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_user_id, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL
+SELECT id, email, password_hash, display_user_id, display_user_name, role, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL
 `
 
 type GetUserByEmailRow struct {
@@ -98,6 +119,8 @@ type GetUserByEmailRow struct {
 	Email             string         `json:"email"`
 	PasswordHash      string         `json:"password_hash"`
 	DisplayUserID     sql.NullString `json:"display_user_id"`
+	DisplayUserName   sql.NullString `json:"display_user_name"`
+	Role              string         `json:"role"`
 	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
 }
 
@@ -109,19 +132,23 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 		&i.Email,
 		&i.PasswordHash,
 		&i.DisplayUserID,
+		&i.DisplayUserName,
+		&i.Role,
 		&i.PasswordChangedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, display_user_id, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL
+SELECT id, email, display_user_id, display_user_name, role, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserByIDRow struct {
 	ID                int64          `json:"id"`
 	Email             string         `json:"email"`
 	DisplayUserID     sql.NullString `json:"display_user_id"`
+	DisplayUserName   sql.NullString `json:"display_user_name"`
+	Role              string         `json:"role"`
 	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
 }
 
@@ -132,6 +159,8 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, er
 		&i.ID,
 		&i.Email,
 		&i.DisplayUserID,
+		&i.DisplayUserName,
+		&i.Role,
 		&i.PasswordChangedAt,
 	)
 	return i, err
@@ -144,6 +173,41 @@ DELETE FROM users WHERE id = $1 AND deleted_at IS NOT NULL
 func (q *Queries) HardDeleteUser(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, hardDeleteUser, id)
 	return err
+}
+
+const listPasswordHistory = `-- name: ListPasswordHistory :many
+SELECT password_hash FROM password_history
+WHERE user_id = $1
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type ListPasswordHistoryParams struct {
+	UserID int64 `json:"user_id"`
+	Limit  int32 `json:"limit"`
+}
+
+func (q *Queries) ListPasswordHistory(ctx context.Context, arg ListPasswordHistoryParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listPasswordHistory, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var password_hash string
+		if err := rows.Scan(&password_hash); err != nil {
+			return nil, err
+		}
+		items = append(items, password_hash)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const purgeOldPasswordHistory = `-- name: PurgeOldPasswordHistory :exec
@@ -214,4 +278,18 @@ func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPassword
 	var i UpdateUserPasswordRow
 	err := row.Scan(&i.ID, &i.Email, &i.PasswordChangedAt)
 	return i, err
+}
+
+const updateUserRole = `-- name: UpdateUserRole :exec
+UPDATE users SET role = $2 WHERE id = $1 AND deleted_at IS NULL
+`
+
+type UpdateUserRoleParams struct {
+	ID   int64  `json:"id"`
+	Role string `json:"role"`
+}
+
+func (q *Queries) UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserRole, arg.ID, arg.Role)
+	return err
 }

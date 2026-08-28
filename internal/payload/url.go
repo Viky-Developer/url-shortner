@@ -6,11 +6,11 @@ import "github.com/vicky/url-shortner/internal/utils"
 
 // CreateURLRequest is the request body for creating a short URL.
 type CreateURLRequest struct {
-	OriginalURL string              `json:"originalURL" binding:"required"` // The long URL to shorten. Required.
-	CustomCode  string              `json:"customCode,omitempty"`           // Optional custom short code. If empty, a random 10-char code is generated.
-	Title       string              `json:"title,omitempty"`                // Optional title for the short URL.
-	Description string              `json:"description,omitempty"`          // Optional description for the short URL.
-	ExpiresAt   utils.UnixMilliTime `json:"expiresAt,omitempty"`            // Optional expiration time (RFC3339 or Unix milliseconds).
+	OriginalURL string              `json:"originalURL" validate:"required,url"` // The long URL to shorten. Required.
+	CustomCode  string              `json:"customCode,omitempty"`                // Optional custom short code. If empty, a random 10-char code is generated.
+	Title       string              `json:"title,omitempty"`                     // Optional title for the short URL.
+	Description string              `json:"description,omitempty"`               // Optional description for the short URL.
+	ExpiresAt   utils.UnixMilliTime `json:"expiresAt,omitempty"`                 // Optional expiration time (RFC3339 or Unix milliseconds).
 }
 
 // UpdateURLRequest is the request body for updating an existing URL.
@@ -49,8 +49,8 @@ type URLResponse struct {
 type URLListResponse struct {
 	Items      []URLResponse `json:"items"`      // URLs on the current page.
 	Total      int64         `json:"total"`      // Total number of active URLs.
-	Page       int           `json:"page"`       // Current page number (1-based).
-	PerPage    int           `json:"perPage"`    // Number of items per page.
+	Page       int32         `json:"page"`       // Current page number (1-based).
+	PerPage    int32         `json:"perPage"`    // Number of items per page.
 	TotalPages int           `json:"totalPages"` // Total number of pages.
 }
 

@@ -47,20 +47,28 @@ func Error(w http.ResponseWriter, status int, err error) {
 // StatusCodeFromError maps sentinel app errors to HTTP status codes.
 func StatusCodeFromError(err error) int {
 	switch {
-	case errors.As(err, new(*apperror.MaxDeviceError)):
-		return http.StatusConflict
 	case errors.Is(err, apperror.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, apperror.ErrInvalidURL),
 		errors.Is(err, apperror.ErrInvalidPayload),
 		errors.Is(err, apperror.ErrURLExpired),
 		errors.Is(err, apperror.ErrURLInactive),
-		errors.Is(err, apperror.ErrBlockedDomain):
+		errors.Is(err, apperror.ErrBlockedDomain),
+		errors.Is(err, apperror.ErrPasswordReuse):
 		return http.StatusBadRequest
 	case errors.Is(err, apperror.ErrConflict):
 		return http.StatusConflict
 	case errors.Is(err, apperror.ErrURLDeleted):
 		return http.StatusGone
+	case errors.Is(err, apperror.ErrUnauthorized),
+		errors.Is(err, apperror.ErrSessionExpired),
+		errors.Is(err, apperror.ErrSessionRevoked),
+		errors.Is(err, apperror.ErrInvalidToken),
+		errors.Is(err, apperror.ErrInvalidRefreshToken),
+		errors.Is(err, apperror.ErrInvalidCurrentPassword):
+		return http.StatusUnauthorized
+	case errors.Is(err, apperror.ErrRateLimited):
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusInternalServerError
 	}

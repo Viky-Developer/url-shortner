@@ -27,24 +27,27 @@ var (
 	ErrBlockedDomain = errors.New("the destination domain is blocked")
 	// ErrUnauthorized is returned when the user is not authenticated.
 	ErrUnauthorized = errors.New("unauthorized access")
+	// ErrSessionExpired is returned when a session has passed its expiry time.
+	ErrSessionExpired = errors.New("session expired, please try to login again")
+	// ErrSessionRevoked is returned when a session has been revoked.
+	ErrSessionRevoked = errors.New("session revoked")
+	// ErrRateLimited is returned when too many requests are made in a
+	// short time window (e.g. repeated failed login attempts).
+	ErrRateLimited = errors.New("too many requests, please try again later")
+	// ErrInvalidToken is returned when a JWT token is malformed or has
+	// an invalid signature.
+	ErrInvalidToken = errors.New("invalid or expired token")
+	// ErrInvalidRefreshToken is returned when the refresh token is not
+	// recognised or has been revoked.
+	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
+	// ErrInvalidCredentials is returned when email/password verification
+	// fails. Uses one generic message for both unknown emails and wrong
+	// passwords to prevent account enumeration.
+	ErrInvalidCredentials = errors.New("invalid email or password")
+	// ErrPasswordReuse is returned when the new password matches a
+	// previous password from history.
+	ErrPasswordReuse = errors.New("new password cannot be the same as current password")
+	// ErrInvalidCurrentPassword is returned when the supplied current
+	// password does not match the stored hash.
+	ErrInvalidCurrentPassword = errors.New("invalid current password")
 )
-
-// ActiveDevice represents an active session for the max-device error.
-type ActiveDevice struct {
-	ID           int64
-	DeviceType   string
-	DeviceName   string
-	IPAddress    string
-	LoggedInAt   string
-	LastActiveAt string
-}
-
-// MaxDeviceError is returned when a user already has the maximum number of
-// active devices and must revoke one before a new login is allowed.
-type MaxDeviceError struct {
-	Devices []ActiveDevice
-}
-
-func (e *MaxDeviceError) Error() string {
-	return "maximum active devices reached. please log out from one device and try again"
-}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -19,7 +20,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgerrcode"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
@@ -91,16 +92,47 @@ func (s *URLService) safeDialContext(ctx context.Context, network, addr string) 
 	return nil, dialErr
 }
 
-func (s *URLService) newSafeHTTPClient() *http.Client {
+// hostHeaderTransport injects a custom Host header into outgoing requests
+// while allowing the underlying transport to dial a different address (e.g. a
+// resolved IP for SSRF protection). This keeps TLS certificate validation
+// against the original hostname.
+type hostHeaderTransport struct {
+	base       *http.Transport
+	customHost string
+}
+
+func (t *hostHeaderTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Host = t.customHost
+	return t.base.RoundTrip(req)
+}
+
+func (s *URLService) newSafeHTTPClient(customHost string) *http.Client {
+	transport := &http.Transport{
+		DialContext:           s.safeDialContext,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+	}
+
+	// When dialing a resolved IP for SSRF safety, TLS must still validate
+	// the certificate against the original hostname. Setting ServerName
+	// tells the TLS layer which hostname to check, instead of using the
+	// IP address from the URL.
+	if customHost != "" {
+		transport.TLSClientConfig = &tls.Config{
+			ServerName: customHost,
+		}
+	}
+
+	var rt http.RoundTripper = transport
+	if customHost != "" {
+		rt = &hostHeaderTransport{base: transport, customHost: customHost}
+	}
+
 	return &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			DialContext:           s.safeDialContext,
-			MaxIdleConns:          10,
-			IdleConnTimeout:       30 * time.Second,
-			TLSHandshakeTimeout:   5 * time.Second,
-			ResponseHeaderTimeout: 5 * time.Second,
-		},
+		Timeout:   10 * time.Second,
+		Transport: rt,
 		// Re-validate on every redirect hop instead of following blindly.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
@@ -142,15 +174,22 @@ func buildCleanURL(ip net.IP, useHTTPS bool, port string) string {
 	return scheme + "://" + net.JoinHostPort(ip.String(), port)
 }
 
-func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32) {
+// checkDestinationHealth performs a HEAD request against the destination URL
+// and returns the health status, HTTP status code, and whether a valid HTTP
+// response was received. When the HEAD request fails entirely (DNS error,
+// connection refused, timeout, etc.) statusCode is 0 and responded is false.
+// A non-zero statusCode is only returned when the server actually responded
+// with an HTTP status code, regardless of whether it was a success or error.
+func (s *URLService) checkDestinationHealth(originalURL string) (enum.DestinationStatus, int32, bool) {
+
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
 		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 	if err := validateRequestURL(parsedURL); err != nil {
 		s.log.Error("rejected URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 
 	// Resolve DNS and validate every IP before building the request URL.
@@ -160,7 +199,7 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	ips, dnsErr := net.DefaultResolver.LookupIP(context.Background(), "ip", host)
 	if dnsErr != nil {
 		s.log.Error("DNS resolution failed for health check", logger.Error(dnsErr), logger.String("host", utils.SanitizeLog(host)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 	var safeIP net.IP
 	for _, ip := range ips {
@@ -171,34 +210,34 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	}
 	if safeIP == nil {
 		s.log.Error("all resolved IPs are blocked for health check", logger.String("host", utils.SanitizeLog(host)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 
 	cleanURL := buildCleanURL(safeIP, parsedURL.Scheme == "https", defaultPort(parsedURL))
 
-	client := s.newSafeHTTPClient()
+	client := s.newSafeHTTPClient(host)
 	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
 	if err != nil {
 		s.log.Error("failed to build health check request", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return enum.DestinationStatusUnknown, 0
+		return enum.DestinationStatusUnknown, 0, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	statusCode := int32(resp.StatusCode)
 	if statusCode >= 200 && statusCode < 400 {
-		return enum.DestinationStatusHealthy, statusCode
+		return enum.DestinationStatusHealthy, statusCode, true
 	}
-	return enum.DestinationStatusUnhealthy, statusCode
+	return enum.DestinationStatusUnhealthy, statusCode, true
 }
 
 // URLService implements the URL shortening business logic.
@@ -236,7 +275,7 @@ func (s *URLService) withTx(ctx context.Context, fn func(q gen.Querier) error) e
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		s.log.Error("failed to begin transaction", logger.Error(err))
-		return fmt.Errorf("%w: could not start transaction", apperror.ErrInternal)
+		return apperror.ErrInternal
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -246,7 +285,7 @@ func (s *URLService) withTx(ctx context.Context, fn func(q gen.Querier) error) e
 
 	if err := tx.Commit(); err != nil {
 		s.log.Error("failed to commit transaction", logger.Error(err))
-		return fmt.Errorf("%w: could not save changes", apperror.ErrInternal)
+		return apperror.ErrInternal
 	}
 	return nil
 }
@@ -257,7 +296,7 @@ func (s *URLService) ResolveUserID(ctx context.Context, encodedUserID string) (i
 	id, err := utils.DecodeID(encodedUserID, utils.UserIDPrefix, s.secretKey)
 	if err != nil {
 		s.log.Warn("invalid userId", logger.Error(err), logger.String("userId", utils.SanitizeLog(encodedUserID)))
-		return 0, fmt.Errorf("%w: invalid userId", apperror.ErrNotFound)
+		return 0, apperror.ErrNotFound
 	}
 	return id, nil
 }
@@ -268,18 +307,18 @@ func (s *URLService) checkBlockedDomain(ctx context.Context, originalURL string)
 	parsed, err := url.Parse(originalURL)
 	if err != nil || parsed.Hostname() == "" {
 		s.log.Warn("invalid URL provided", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return fmt.Errorf("%w: the URL '%s' is not valid", apperror.ErrInvalidURL, originalURL)
+		return apperror.ErrInvalidURL
 	}
 	host := strings.ToLower(parsed.Hostname())
 
 	_, err = s.queries.GetBlockedDomain(ctx, host)
 	if err == nil {
 		s.log.Warn("blocked domain rejected", logger.String("host", utils.SanitizeLog(host)))
-		return fmt.Errorf("%w: the domain '%s' is not allowed", apperror.ErrBlockedDomain, host)
+		return apperror.ErrBlockedDomain
 	}
 	if err != sql.ErrNoRows {
 		s.log.Error("failed to check blocked domain", logger.Error(err), logger.String("host", utils.SanitizeLog(host)))
-		return fmt.Errorf("%w: could not validate domain", apperror.ErrInternal)
+		return apperror.ErrInternal
 	}
 	return nil
 }
@@ -295,7 +334,7 @@ func (s *URLService) findOrCreateDestination(q gen.Querier, ctx context.Context,
 	}
 	if err != sql.ErrNoRows {
 		s.log.Error("failed to lookup destination", logger.Error(err), logger.String("urlHash", utils.SanitizeLog(urlHash)))
-		return 0, fmt.Errorf("%w: could not lookup destination", apperror.ErrInternal)
+		return 0, apperror.ErrInternal
 	}
 
 	created, err := q.CreateDestination(ctx, gen.CreateDestinationParams{
@@ -304,7 +343,7 @@ func (s *URLService) findOrCreateDestination(q gen.Querier, ctx context.Context,
 	})
 	if err != nil {
 		s.log.Error("failed to create destination", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
-		return 0, fmt.Errorf("%w: could not create destination", apperror.ErrInternal)
+		return 0, apperror.ErrInternal
 	}
 	return created.ID, nil
 }
@@ -314,7 +353,7 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 
 	// Validate expiresAt
 	if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
-		return nil, fmt.Errorf("%w: %s", apperror.ErrInvalidPayload, err)
+		return nil, apperror.ErrInvalidPayload
 	}
 
 	// Validate destination is reachable
@@ -323,29 +362,51 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		return nil, err
 	}
 
-	// Validate or generate short code
+	// Resolve short code: custom codes fail on duplicate, auto-generated codes
+	// retry until unique (max 5 attempts).
 	custom := req.CustomCode != ""
 	code := req.CustomCode
 
-	if !custom {
-		var err error
-		code, err = s.generateShortCode()
-		if err != nil {
-			s.log.Error("failed to generate short code", logger.Error(err))
-			return nil, fmt.Errorf("%w: could not generate short code", apperror.ErrInternal)
-		}
-	}
+	const maxRetries = 5
 
-	// Check if custom code already exists before the transaction
+	var err error
+
 	if custom {
 		exists, existErr := s.queries.ShortCodeExists(ctx, code)
 		if existErr != nil {
 			s.log.Error("failed to check short code existence", logger.Error(existErr), logger.String("shortCode", utils.SanitizeLog(code)))
-			return nil, fmt.Errorf("%w: could not validate short code", apperror.ErrInternal)
+			return nil, apperror.ErrInternal
 		}
 		if exists {
 			s.log.Warn("custom code already taken", logger.String("shortCode", utils.SanitizeLog(code)))
-			return nil, fmt.Errorf("%w: custom code '%s' is already taken. Please choose a different code", apperror.ErrConflict, code)
+			return nil, apperror.ErrConflict
+		}
+	} else {
+		for i := range maxRetries {
+
+			code, err = s.generateShortCode()
+			if err != nil {
+				return nil, err
+			}
+
+			exists, existErr := s.queries.ShortCodeExists(ctx, code)
+			if existErr != nil {
+				s.log.Error("failed to check short code existence", logger.Error(existErr), logger.String("shortCode", utils.SanitizeLog(code)))
+				return nil, apperror.ErrInternal
+			}
+
+			if !exists {
+				break
+			}
+
+			s.log.Warn("auto-generated short code collision, retrying",
+				logger.String("shortCode", utils.SanitizeLog(code)),
+				logger.Int("attempt", i+1),
+				logger.Int("maxRetries", maxRetries),
+			)
+			if i == maxRetries-1 {
+				return nil, apperror.ErrInternal
+			}
 		}
 	}
 
@@ -356,13 +417,15 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		healthCheckedAt sql.NullTime
 	)
 
-	healthStatus, httpCode = s.checkDestinationHealth(req.OriginalURL)
-	healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+	healthStatus, httpCode, responded := s.checkDestinationHealth(req.OriginalURL)
+	if responded {
+		healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+	}
 
 	// Create URL in a single transaction
 	var created gen.Url
 
-	err := s.withTx(ctx, func(q gen.Querier) error {
+	err = s.withTx(ctx, func(q gen.Querier) error {
 
 		// Find or create destination
 		destID, err := s.findOrCreateDestination(q, ctx, req.OriginalURL)
@@ -383,14 +446,15 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 			DestinationHealthStatus:   sql.NullInt16{Int16: int16(healthStatus), Valid: true},
 			DestinationLastHttpStatus: sql.NullInt32{Int32: httpCode, Valid: httpCode != 0},
 			LastHealthCheck:           healthCheckedAt,
+			LastAccessedAt:            healthCheckedAt,
 		})
 		if err != nil {
 			if isDuplicateKey(err) {
 				s.log.Warn("short code collision on insert", logger.String("shortCode", utils.SanitizeLog(code)))
-				return fmt.Errorf("%w: short code '%s' is already taken", apperror.ErrConflict, code)
+				return apperror.ErrConflict
 			}
 			s.log.Error("failed to create url", logger.Error(err), logger.String("shortCode", utils.SanitizeLog(code)))
-			return fmt.Errorf("%w: could not create url", apperror.ErrInternal)
+			return apperror.ErrInternal
 		}
 
 		// Create version 1 for every new URL
@@ -401,7 +465,7 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		})
 		if err != nil {
 			s.log.Error("failed to create url version", logger.Error(err), logger.Int64("urlID", created.ID))
-			return fmt.Errorf("%w: could not create url version", apperror.ErrInternal)
+			return apperror.ErrInternal
 		}
 
 		return nil
@@ -417,8 +481,8 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 
 // isDuplicateKey reports whether err is a Postgres unique-constraint violation.
 func isDuplicateKey(err error) bool {
-	var pqErr *pq.Error
-	return errors.As(err, &pqErr) && pqErr.Code == pgerrcode.UniqueViolation
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation
 }
 
 // Redirect records a click and returns the destination URL for the given short
@@ -433,15 +497,15 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 		if err != nil {
 			if err == sql.ErrNoRows {
 				s.log.Error("url not found by shortCode", logger.String("shortCode", utils.SanitizeLog(shortCode)))
-				return fmt.Errorf("%w: %s", apperror.ErrNotFound, shortCode)
+				return apperror.ErrNotFound
 			}
 			s.log.Error("failed to get url by shortCode", logger.Error(err), logger.String("shortCode", utils.SanitizeLog(shortCode)))
-			return fmt.Errorf("%w: could not resolve short link", apperror.ErrInternal)
+			return apperror.ErrInternal
 		}
 
 		if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now()) {
 			s.log.Warn("url expired", logger.Int64("id", row.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
-			return fmt.Errorf("%w: this url has expired", apperror.ErrURLExpired)
+			return apperror.ErrURLExpired
 		}
 
 		if _, err := q.CreateClickLog(ctx, gen.CreateClickLogParams{
@@ -453,12 +517,12 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 			DeviceType: nullString(utils.ParseDeviceType(click.UserAgent)),
 		}); err != nil {
 			s.log.Error("failed to create click log", logger.Error(err), logger.Int64("urlID", row.ID))
-			return fmt.Errorf("%w: could not record click", apperror.ErrInternal)
+			return apperror.ErrInternal
 		}
 
 		if err := q.IncrementURLClick(ctx, row.ID); err != nil {
 			s.log.Error("failed to increment click count", logger.Error(err), logger.Int64("urlID", row.ID))
-			return fmt.Errorf("%w: could not update click count", apperror.ErrInternal)
+			return apperror.ErrInternal
 		}
 
 		_ = q.UpsertDailyStats(ctx, gen.UpsertDailyStatsParams{
@@ -484,7 +548,7 @@ func (s *URLService) GetByID(ctx context.Context, userID int64, id int64) (*payl
 	if err != nil {
 		if err == sql.ErrNoRows {
 			s.log.Error("url not found by id", logger.Int64("id", id))
-			return nil, fmt.Errorf("%w: id=%d", apperror.ErrNotFound, id)
+			return nil, apperror.ErrNotFound
 		}
 		s.log.Error("failed to get url by id", logger.Error(err), logger.Int64("id", id))
 		return nil, fmt.Errorf("failed to get url: %w", err)
@@ -496,7 +560,7 @@ func (s *URLService) GetByID(ctx context.Context, userID int64, id int64) (*payl
 
 // List returns a paginated list of active URLs ordered by creation time
 // descending, along with the total count and pagination metadata.
-func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offset int32) (*payload.URLListResponse, error) {
+func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offset int32) ([]any, int64, error) {
 	rows, err := s.queries.ListURLs(ctx, gen.ListURLsParams{
 		UserID: userID,
 		Limit:  perPage,
@@ -504,34 +568,23 @@ func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offs
 	})
 	if err != nil {
 		s.log.Error("failed to list urls", logger.Error(err))
-		return nil, fmt.Errorf("%w: could not fetch urls", apperror.ErrInternal)
+		return nil, 0, apperror.ErrInternal
 	}
 
 	total, err := s.queries.CountURLs(ctx, userID)
 	if err != nil {
 		s.log.Error("failed to count urls", logger.Error(err))
-		return nil, fmt.Errorf("%w: could not count urls", apperror.ErrInternal)
+		return nil, 0, apperror.ErrInternal
 	}
 
-	items := make([]payload.URLResponse, len(rows))
+	items := make([]any, len(rows))
 	for i, row := range rows {
 		items[i] = *s.toResponse(rowToUrlList(row), row.OriginalUrl)
 	}
 
-	perPageInt := int(perPage)
-	totalPages := int(total) / perPageInt
-	if int(total)%perPageInt > 0 {
-		totalPages++
-	}
-
 	s.log.Info("urls listed", logger.Int("count", len(items)), logger.Int64("total", total))
-	return &payload.URLListResponse{
-		Items:      items,
-		Total:      total,
-		Page:       int(page),
-		PerPage:    perPageInt,
-		TotalPages: totalPages,
-	}, nil
+
+	return items, total, nil
 }
 
 // Update changes the original URL and/or expiry inside a transaction. When
@@ -540,7 +593,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 
 	// Validate expiresAt
 	if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
-		return nil, fmt.Errorf("%w: %s", apperror.ErrInvalidPayload, err)
+		return nil, apperror.ErrInvalidPayload
 	}
 
 	// Validate blocked domain if original URL is changing
@@ -561,8 +614,11 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 	)
 
 	if req.OriginalURL != "" {
-		healthStatus, httpCode = s.checkDestinationHealth(req.OriginalURL)
-		healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+		var responded bool
+		healthStatus, httpCode, responded = s.checkDestinationHealth(req.OriginalURL)
+		if responded {
+			healthCheckedAt = sql.NullTime{Time: time.Now(), Valid: true}
+		}
 	}
 
 	// Update URL in a single transaction
@@ -573,10 +629,10 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 		if eErr != nil {
 			if eErr == sql.ErrNoRows {
 				s.log.Warn("url not found for update", logger.Int64("id", id))
-				return fmt.Errorf("%w: url with id %d not found", apperror.ErrNotFound, id)
+				return apperror.ErrNotFound
 			}
 			s.log.Error("failed to fetch existing url", logger.Error(eErr), logger.Int64("id", id))
-			return fmt.Errorf("%w: could not fetch url", apperror.ErrInternal)
+			return apperror.ErrInternal
 		}
 
 		// Resolve destination ID
@@ -604,10 +660,10 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 		if eErr != nil {
 			if eErr == sql.ErrNoRows {
 				s.log.Warn("url not found for update", logger.Int64("id", id))
-				return fmt.Errorf("%w: url with id %d not found", apperror.ErrNotFound, id)
+				return apperror.ErrNotFound
 			}
 			s.log.Error("failed to update url", logger.Error(eErr), logger.Int64("id", id))
-			return fmt.Errorf("%w: could not update url", apperror.ErrInternal)
+			return apperror.ErrInternal
 		}
 
 		// Update health status within the same transaction when originalURL changed
@@ -635,7 +691,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 			dest, dErr := q.GetDestinationByID(ctx, existing.DestinationID)
 			if dErr != nil {
 				s.log.Error("failed to fetch destination", logger.Error(dErr), logger.Int64("destID", existing.DestinationID))
-				return fmt.Errorf("%w: could not fetch destination url", apperror.ErrInternal)
+				return apperror.ErrInternal
 			}
 			responseOriginalURL = dest.OriginalUrl
 		}
@@ -645,7 +701,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 			maxVer, vErr := q.GetLatestURLVersion(ctx, updated.ID)
 			if vErr != nil && vErr != sql.ErrNoRows {
 				s.log.Error("failed to get latest url version", logger.Error(vErr), logger.Int64("id", updated.ID))
-				return fmt.Errorf("%w: could not fetch url version", apperror.ErrInternal)
+				return apperror.ErrInternal
 			}
 			if vErr == sql.ErrNoRows {
 				maxVer = 0
@@ -658,7 +714,7 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 			})
 			if vErr != nil {
 				s.log.Error("failed to create url version", logger.Error(vErr), logger.Int64("id", updated.ID))
-				return fmt.Errorf("%w: could not create url version", apperror.ErrInternal)
+				return apperror.ErrInternal
 			}
 		}
 
@@ -680,7 +736,7 @@ func (s *URLService) SoftDelete(ctx context.Context, userID int64, id int64) (*p
 	if err != nil {
 		if err == sql.ErrNoRows {
 			s.log.Error("url not found for soft delete", logger.Int64("id", id))
-			return nil, fmt.Errorf("%w: id=%d", apperror.ErrNotFound, id)
+			return nil, apperror.ErrNotFound
 		}
 		s.log.Error("failed to soft delete url", logger.Error(err), logger.Int64("id", id))
 		return nil, fmt.Errorf("failed to soft delete url: %w", err)
@@ -708,9 +764,9 @@ func (s *URLService) HardDelete(ctx context.Context, userID int64, id int64) err
 
 // ListClickLogs returns a paginated list of click logs for a URL, optionally
 // filtered by a time range. The URL must belong to the given user.
-func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) (*payload.ClickLogsResponse, error) {
+func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) ([]any, int64, error) {
 	if err := s.ensureOwnership(ctx, userID, urlID); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	total, err := s.queries.CountClickLogsByURL(ctx, gen.CountClickLogsByURLParams{
@@ -720,7 +776,7 @@ func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, fro
 	})
 	if err != nil {
 		s.log.Error("failed to count click logs", logger.Error(err), logger.Int64("urlID", urlID))
-		return nil, fmt.Errorf("%w: could not count clicks", apperror.ErrInternal)
+		return nil, 0, apperror.ErrInternal
 	}
 
 	rows, err := s.queries.ListClickLogsByURL(ctx, gen.ListClickLogsByURLParams{
@@ -732,10 +788,10 @@ func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, fro
 	})
 	if err != nil {
 		s.log.Error("failed to list click logs", logger.Error(err), logger.Int64("urlID", urlID))
-		return nil, fmt.Errorf("%w: could not list clicks", apperror.ErrInternal)
+		return nil, 0, apperror.ErrInternal
 	}
 
-	items := make([]payload.ClickLogEntry, len(rows))
+	items := make([]any, len(rows))
 	for i, r := range rows {
 		items[i] = payload.ClickLogEntry{
 			ID:         r.ID,
@@ -748,23 +804,21 @@ func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, fro
 		}
 	}
 
-	totalPages := int(total) / int(perPage)
-	if int(total)%int(perPage) > 0 {
-		totalPages++
-	}
+	// return &payload.ClickLogsResponse{
+	// 	Items:      items,
+	// 	Total:      total,
+	// 	Page:       int(page),
+	// 	PerPage:    int(perPage),
+	// 	TotalPages: totalPages,
+	// }, nil
 
-	return &payload.ClickLogsResponse{
-		Items:      items,
-		Total:      total,
-		Page:       int(page),
-		PerPage:    int(perPage),
-		TotalPages: totalPages,
-	}, nil
+	return items, total, nil
 }
 
 // GetAnalytics returns aggregate analytics for a URL including stats,
 // top referrers, and daily click breakdown.
 func (s *URLService) GetAnalytics(ctx context.Context, userID, urlID int64, from, to *time.Time) (*payload.AnalyticsResponse, error) {
+
 	if err := s.ensureOwnership(ctx, userID, urlID); err != nil {
 		return nil, err
 	}
@@ -776,7 +830,7 @@ func (s *URLService) GetAnalytics(ctx context.Context, userID, urlID int64, from
 	})
 	if err != nil {
 		s.log.Error("failed to get click stats", logger.Error(err), logger.Int64("urlID", urlID))
-		return nil, fmt.Errorf("%w: could not get stats", apperror.ErrInternal)
+		return nil, apperror.ErrInternal
 	}
 
 	refRows, err := s.queries.TopReferrersByURL(ctx, gen.TopReferrersByURLParams{
@@ -787,7 +841,7 @@ func (s *URLService) GetAnalytics(ctx context.Context, userID, urlID int64, from
 	})
 	if err != nil {
 		s.log.Error("failed to get top referrers", logger.Error(err), logger.Int64("urlID", urlID))
-		return nil, fmt.Errorf("%w: could not get referrers", apperror.ErrInternal)
+		return nil, apperror.ErrInternal
 	}
 
 	referrers := make([]payload.ReferrerStat, len(refRows))
@@ -807,7 +861,7 @@ func (s *URLService) GetAnalytics(ctx context.Context, userID, urlID int64, from
 		})
 		if dErr != nil {
 			s.log.Error("failed to get daily clicks", logger.Error(dErr), logger.Int64("urlID", urlID))
-			return nil, fmt.Errorf("%w: could not get daily stats", apperror.ErrInternal)
+			return nil, apperror.ErrInternal
 		}
 		dailyStats = make([]payload.DailyClickStat, len(dailyRows))
 		for i, r := range dailyRows {
@@ -835,9 +889,9 @@ func (s *URLService) ensureOwnership(ctx context.Context, userID, urlID int64) e
 	_, err := s.queries.GetURLByID(ctx, gen.GetURLByIDParams{ID: urlID, UserID: userID})
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("%w: url with id %d not found", apperror.ErrNotFound, urlID)
+			return apperror.ErrNotFound
 		}
-		return fmt.Errorf("%w: could not verify url ownership", apperror.ErrInternal)
+		return apperror.ErrInternal
 	}
 	return nil
 }

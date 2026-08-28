@@ -449,7 +449,7 @@ UPDATE urls
 SET destination_id = $3,
     title = COALESCE($4, title),
     description = COALESCE($5, description),
-    expires_at = $6,
+    expires_at = COALESCE($6, expires_at),
     url_status = COALESCE($7, url_status),
     updated_at = NOW()
 WHERE id = $1

@@ -18,7 +18,7 @@ type Querier interface {
 	CountRevokedSessions(ctx context.Context) (int64, error)
 	CountURLs(ctx context.Context, userID int64) (int64, error)
 	CreateBlockedDomain(ctx context.Context, arg CreateBlockedDomainParams) (BlockedDomain, error)
-	CreateBlockedIPRange(ctx context.Context, arg CreateBlockedIPRangeParams) (CreateBlockedIPRangeRow, error)
+	CreateBlockedIPRange(ctx context.Context, arg CreateBlockedIPRangeParams) (BlockedIpRange, error)
 	CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error)
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
@@ -27,11 +27,13 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	DeleteBlockedDomain(ctx context.Context, id int32) error
 	DeleteBlockedIPRange(ctx context.Context, id int64) error
+	DeletePasswordHistoryOver(ctx context.Context, arg DeletePasswordHistoryOverParams) error
+	ExpireSession(ctx context.Context, id int64) error
+	ExpireSessionsByUser(ctx context.Context, userID int64) error
 	GetBlockedDomain(ctx context.Context, domain string) (GetBlockedDomainRow, error)
 	GetDailyStatsByURL(ctx context.Context, arg GetDailyStatsByURLParams) ([]GetDailyStatsByURLRow, error)
 	GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error)
 	GetDestinationByID(ctx context.Context, id int64) (GetDestinationByIDRow, error)
-	GetLastPasswordHistory(ctx context.Context, userID int64) (string, error)
 	GetLatestURLVersion(ctx context.Context, urlID int64) (int32, error)
 	GetSessionByID(ctx context.Context, id int64) (Session, error)
 	GetSessionByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (Session, error)
@@ -43,17 +45,21 @@ type Querier interface {
 	HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error
 	HardDeleteUser(ctx context.Context, id int64) error
 	IncrementURLClick(ctx context.Context, id int64) error
+	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
 	ListActiveSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
 	ListBlockedDomains(ctx context.Context) ([]BlockedDomain, error)
-	ListBlockedIPRanges(ctx context.Context) ([]ListBlockedIPRangesRow, error)
+	ListBlockedIPRanges(ctx context.Context) ([]BlockedIpRange, error)
 	ListClickLogsByURL(ctx context.Context, arg ListClickLogsByURLParams) ([]ListClickLogsByURLRow, error)
+	ListPasswordHistory(ctx context.Context, arg ListPasswordHistoryParams) ([]string, error)
 	ListSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
 	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
-	PurgeInactiveSessions(ctx context.Context, lastActiveAt sql.NullTime) error
 	PurgeOldPasswordHistory(ctx context.Context, createdAt sql.NullTime) error
-	PurgeOldRevokedSessions(ctx context.Context, lastActiveAt sql.NullTime) error
+	PurgeOldRevokedSessions(ctx context.Context, revokedAt sql.NullTime) error
 	RefreshDailyStats(ctx context.Context, arg RefreshDailyStatsParams) error
+	RevokeAllSessionsByUser(ctx context.Context, userID int64) error
+	RevokeOtherSessionsByUser(ctx context.Context, arg RevokeOtherSessionsByUserParams) error
 	RevokeSession(ctx context.Context, arg RevokeSessionParams) error
+	RevokeSessionsByUserExcept(ctx context.Context, arg RevokeSessionsByUserExceptParams) error
 	ShortCodeExists(ctx context.Context, shortCode string) (bool, error)
 	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)
 	SoftDeleteUser(ctx context.Context, id int64) error
@@ -65,6 +71,7 @@ type Querier interface {
 	UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error)
 	UpdateUserDisplayID(ctx context.Context, arg UpdateUserDisplayIDParams) (UpdateUserDisplayIDRow, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (UpdateUserPasswordRow, error)
+	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error
 	UpsertDailyStats(ctx context.Context, arg UpsertDailyStatsParams) error
 }
 

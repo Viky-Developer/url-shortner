@@ -8,37 +8,42 @@ import (
 	"os"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
 )
 
 // Config holds all runtime configuration values for the application.
 type Config struct {
-	DBHost              string        // Postgres host.
-	DBPort              string        // Postgres port.
-	DBUser              string        // Postgres user.
-	DBPassword          string        // Postgres password.
-	DBName              string        // Postgres database name.
-	SSLMode             string        // Postgres sslmode.
-	LogLevel            string        // Minimum log level (debug, info, warn, error).
-	DBMaxOpen           int           // Maximum number of open connections.
-	DBMaxIdle           int           // Maximum number of idle connections.
-	DBMaxLife           time.Duration // Maximum connection lifetime.
-	ServerHost          string        // HTTP server bind host.
-	ServerPort          string        // HTTP server bind port.
-	ServerBaseURL       string        // Public base URL used to build short URLs.
-	DefaultUserEmail    string        // Email of the default user created at startup.
-	DefaultUserPassword string        // Password of the default user created at startup.
-	UserIDSecretKey     string        // Secret key used to encode/decode display user ids.
-	JWTSecretKey        string        // Secret key for signing JWT tokens.
-	AccessTokenExpiry   time.Duration // Access token expiry duration.
-	RefreshTokenExpiry  time.Duration // Refresh token expiry duration.
-	RedisHost           string        // Redis host.
-	RedisPort           string        // Redis port.
-	RedisUserName       string        // Redis username.
-	RedisPassword       string        // Redis password.
-	RedisDB             int           // Redis database number.
-	RedisMaxRetries     int           // Redis max retries.
+	DBHost                string        // Postgres host.
+	DBPort                string        // Postgres port.
+	DBUser                string        // Postgres user.
+	DBPassword            string        // Postgres password.
+	DBName                string        // Postgres database name.
+	SSLMode               string        // Postgres sslmode.
+	LogLevel              string        // Minimum log level (debug, info, warn, error).
+	DBMaxOpen             int           // Maximum number of open connections.
+	DBMaxIdle             int           // Maximum number of idle connections.
+	DBMaxLife             time.Duration // Maximum connection lifetime.
+	ServerHost            string        // HTTP server bind host.
+	ServerPort            string        // HTTP server bind port.
+	ServerBaseURL         string        // Public base URL used to build short URLs.
+	DefaultUserEmail      string        // Email of the default user created at startup.
+	DefaultUserPassword   string        // Password of the default user created at startup.
+	UserIDSecretKey       string        // Secret key used to encode/decode display user ids.
+	JWTSecretKey          string        // Secret key for signing JWT tokens.
+	AccessTokenExpiry     time.Duration // Access token expiry duration.
+	RefreshTokenExpiry    time.Duration // Refresh token expiry duration.
+	RedisHost             string        // Redis host.
+	RedisPort             string        // Redis port.
+	RedisUserName         string        // Redis username.
+	RedisPassword         string        // Redis password.
+	RedisDB               int           // Redis database number.
+	RedisMaxRetries       int           // Redis max retries.
+	SessionRetention      time.Duration // Retention period for revoked/expired sessions before hard delete.
+	PasswordRetention     time.Duration // Retention period for old password hashes before hard delete.
+	PasswordReuseLimit    int           // Number of recent password hashes to keep (reuse check window).
+	RetentionRunInterval  time.Duration // Interval between scheduled retention cleanup runs.
+	EnableRetentionWorker bool          // Whether the background retention worker runs.
 }
 
 // Load reads configuration from the .env file (if present) and the process
@@ -46,31 +51,36 @@ type Config struct {
 func Load() *Config {
 	_ = godotenv.Load()
 	return &Config{
-		DBHost:              getEnv("DB_HOST", "localhost"),
-		DBPort:              getEnv("DB_PORT", "5432"),
-		DBUser:              getEnv("DB_USER", "urlshortner"),
-		DBPassword:          getEnv("DB_PASSWORD", "urlshortner123"),
-		DBName:              getEnv("DB_NAME", "urlshortner"),
-		SSLMode:             getEnv("DB_SSLMODE", "disable"),
-		LogLevel:            getEnv("LOG_LEVEL", "info"),
-		DBMaxOpen:           getEnvInt("DB_MAX_OPEN_CONNS", 25),
-		DBMaxIdle:           getEnvInt("DB_MAX_IDLE_CONNS", 25),
-		DBMaxLife:           time.Duration(getEnvInt("DB_MAX_LIFETIME", 5)) * time.Minute,
-		ServerHost:          getEnv("SERVER_HOST", "0.0.0.0"),
-		ServerPort:          getEnv("SERVER_PORT", "8080"),
-		ServerBaseURL:       getEnv("SERVER_BASE_URL", "http://localhost:8080/api/v1"),
-		DefaultUserEmail:    getEnv("DEFAULT_USER_EMAIL", "default@urlshortner.local"),
-		DefaultUserPassword: getEnv("DEFAULT_USER_PASSWORD", "default123"),
-		UserIDSecretKey:     getEnv("USER_ID_SECRET_KEY", "change-me-in-production"),
-		JWTSecretKey:        getEnv("JWT_SECRET_KEY", "change-me-in-production-jwt-secret"),
-		AccessTokenExpiry:   getEnvDuration("ACCESS_TOKEN_EXPIRY", 15*time.Minute),
-		RefreshTokenExpiry:  getEnvDuration("REFRESH_TOKEN_EXPIRY", 7*24*time.Hour),
-		RedisHost:           getEnv("REDIS_HOST", "localhost"),
-		RedisPort:           getEnv("REDIS_PORT", "6379"),
-		RedisUserName:       getEnv("REDIS_USERNAME", ""),
-		RedisPassword:       getEnv("REDIS_PASSWORD", ""),
-		RedisDB:             getEnvInt("REDIS_DB", 0),
-		RedisMaxRetries:     getEnvInt("REDIS_MAX_RETRIES", 3),
+		DBHost:                getEnv("DB_HOST", "localhost"),
+		DBPort:                getEnv("DB_PORT", "5432"),
+		DBUser:                getEnv("DB_USER", "urlshortner"),
+		DBPassword:            getEnv("DB_PASSWORD", "urlshortner123"),
+		DBName:                getEnv("DB_NAME", "urlshortner"),
+		SSLMode:               getEnv("DB_SSLMODE", "disable"),
+		LogLevel:              getEnv("LOG_LEVEL", "info"),
+		DBMaxOpen:             getEnvInt("DB_MAX_OPEN_CONNS", 25),
+		DBMaxIdle:             getEnvInt("DB_MAX_IDLE_CONNS", 25),
+		DBMaxLife:             time.Duration(getEnvInt("DB_MAX_LIFETIME", 5)) * time.Minute,
+		ServerHost:            getEnv("SERVER_HOST", "0.0.0.0"),
+		ServerPort:            getEnv("SERVER_PORT", "8085"),
+		ServerBaseURL:         getEnv("SERVER_BASE_URL", "http://localhost:8080/api/v1"),
+		DefaultUserEmail:      getEnv("DEFAULT_USER_EMAIL", "default@urlshortner.local"),
+		DefaultUserPassword:   getEnv("DEFAULT_USER_PASSWORD", "default123"),
+		UserIDSecretKey:       getEnv("USER_ID_SECRET_KEY", "change-me-in-production"),
+		JWTSecretKey:          getEnv("JWT_SECRET_KEY", "7zj79jrenafbvwsjp6hf2j4uv"),
+		AccessTokenExpiry:     getEnvDuration("ACCESS_TOKEN_EXPIRY", 15*time.Minute),
+		RefreshTokenExpiry:    getEnvDuration("REFRESH_TOKEN_EXPIRY", 7*24*time.Hour),
+		RedisHost:             getEnv("REDIS_HOST", "localhost"),
+		RedisPort:             getEnv("REDIS_PORT", "6379"),
+		RedisUserName:         getEnv("REDIS_USERNAME", ""),
+		RedisPassword:         getEnv("REDIS_PASSWORD", "password"),
+		RedisDB:               getEnvInt("REDIS_DB", 0),
+		RedisMaxRetries:       getEnvInt("REDIS_MAX_RETRIES", 3),
+		SessionRetention:      getEnvDuration("SESSION_RETENTION", 90*24*time.Hour),
+		PasswordRetention:     getEnvDuration("PASSWORD_RETENTION", 365*24*time.Hour),
+		PasswordReuseLimit:    getEnvInt("PASSWORD_REUSE_LIMIT", 5),
+		RetentionRunInterval:  getEnvDuration("RETENTION_RUN_INTERVAL", 24*time.Hour),
+		EnableRetentionWorker: getEnv("ENABLE_RETENTION_WORKER", "true") == "true",
 	}
 }
 
@@ -85,7 +95,7 @@ func (c *Config) DSN() string {
 // Connect opens a Postgres connection pool configured from the config values
 // and verifies it with a ping.
 func (c *Config) Connect() (*sql.DB, error) {
-	db, err := sql.Open("postgres", c.DSN())
+	db, err := sql.Open("pgx", c.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

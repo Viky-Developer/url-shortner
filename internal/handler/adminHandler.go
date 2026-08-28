@@ -11,6 +11,7 @@ import (
 
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
+	"github.com/vicky/url-shortner/internal/contextutil"
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/response"
 	"github.com/vicky/url-shortner/internal/utils"
@@ -18,16 +19,17 @@ import (
 
 // AdminService is the contract the admin handler depends on.
 type AdminService interface {
-	ListBlockedDomains(ctx context.Context) ([]payload.BlockedDomainResponse, error)
+	ListBlockedDomains(ctx context.Context) ([]any, error)
 	CreateBlockedDomain(ctx context.Context, req payload.CreateBlockedDomainRequest) (*payload.BlockedDomainResponse, error)
 	DeleteBlockedDomain(ctx context.Context, id int32) error
-	ListBlockedIPRanges(ctx context.Context) ([]payload.BlockedIPRangeResponse, error)
+	ListBlockedIPRanges(ctx context.Context) ([]any, error)
 	CreateBlockedIPRange(ctx context.Context, req payload.CreateBlockedIPRangeRequest) (*payload.BlockedIPRangeResponse, error)
 	DeleteBlockedIPRange(ctx context.Context, id int64) error
 	PurgeOldRevokedSessions(ctx context.Context, olderThan time.Duration) error
 	PurgeOldPasswordHistory(ctx context.Context, olderThan time.Duration) error
 	SoftDeleteUser(ctx context.Context, userID int64) error
 	HardDeleteUser(ctx context.Context, userID int64) error
+	LogAction(ctx context.Context, adminID int64, action, targetType string, targetID int64)
 }
 
 // AdminHandler handles admin-only HTTP endpoints.
@@ -53,7 +55,8 @@ func (h *AdminHandler) ListBlockedDomains(w http.ResponseWriter, r *http.Request
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	response.Success(w, http.StatusOK, "blocked domains retrieved", []any{domains})
+
+	response.Success(w, http.StatusOK, "blocked domains retrieved", domains)
 }
 
 // CreateBlockedDomain handles POST /admin/blocked-domains.
@@ -71,6 +74,7 @@ func (h *AdminHandler) CreateBlockedDomain(w http.ResponseWriter, r *http.Reques
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
+	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "create_blocked_domain", "blocked_domain", int64(domain.ID))
 	response.Success(w, http.StatusCreated, "domain blocked", []any{domain})
 }
 
@@ -91,6 +95,7 @@ func (h *AdminHandler) DeleteBlockedDomain(w http.ResponseWriter, r *http.Reques
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
+	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "delete_blocked_domain", "blocked_domain", id)
 	response.Success(w, http.StatusOK, "domain unblocked", []any{})
 }
 
@@ -100,13 +105,14 @@ func (h *AdminHandler) DeleteBlockedDomain(w http.ResponseWriter, r *http.Reques
 
 // ListBlockedIPRanges handles GET /admin/blocked-ip-ranges.
 func (h *AdminHandler) ListBlockedIPRanges(w http.ResponseWriter, r *http.Request) {
+
 	ranges, err := h.adminService.ListBlockedIPRanges(r.Context())
 	if err != nil {
 		h.log.Error("failed to list blocked IP ranges", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	response.Success(w, http.StatusOK, "blocked IP ranges retrieved", []any{ranges})
+	response.Success(w, http.StatusOK, "blocked IP ranges retrieved", ranges)
 }
 
 // CreateBlockedIPRange handles POST /admin/blocked-ip-ranges.
@@ -124,6 +130,7 @@ func (h *AdminHandler) CreateBlockedIPRange(w http.ResponseWriter, r *http.Reque
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
+	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "create_blocked_ip_range", "blocked_ip_range", ipRange.ID)
 	response.Success(w, http.StatusCreated, "IP range blocked", []any{ipRange})
 }
 
@@ -140,6 +147,7 @@ func (h *AdminHandler) DeleteBlockedIPRange(w http.ResponseWriter, r *http.Reque
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
+	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "delete_blocked_ip_range", "blocked_ip_range", id)
 	response.Success(w, http.StatusOK, "IP range unblocked", []any{})
 }
 
@@ -160,6 +168,7 @@ func (h *AdminHandler) SoftDeleteUser(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
+	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "soft_delete_user", "user", id)
 	response.Success(w, http.StatusOK, "user soft deleted", []any{})
 }
 
@@ -176,6 +185,7 @@ func (h *AdminHandler) HardDeleteUser(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
+	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "hard_delete_user", "user", id)
 	response.Success(w, http.StatusOK, "user permanently deleted", []any{})
 }
 
@@ -191,6 +201,7 @@ func (h *AdminHandler) PurgeSessions(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
+	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "purge_sessions", "session", 0)
 	response.Success(w, http.StatusOK, "old sessions purged", []any{})
 }
 
@@ -202,6 +213,7 @@ func (h *AdminHandler) PurgePasswordHistory(w http.ResponseWriter, r *http.Reque
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
+	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "purge_password_history", "password_history", 0)
 	response.Success(w, http.StatusOK, "old password history purged", []any{})
 }
 
@@ -213,4 +225,11 @@ func parseDaysParam(r *http.Request, defaultDays int32) time.Duration {
 		}
 	}
 	return time.Duration(defaultDays) * 24 * time.Hour
+}
+
+// getAdminID extracts the authenticated admin's user ID from context.
+// Returns 0 if not found (should not happen behind auth middleware).
+func getAdminID(ctx context.Context) int64 {
+	id, _ := ctx.Value(contextutil.UserIDKey).(int64)
+	return id
 }

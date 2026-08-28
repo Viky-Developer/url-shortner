@@ -12,6 +12,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -123,7 +124,7 @@ func ValidateExpiresAt(e UnixMilliTime) error {
 		return nil
 	}
 	if e.Time.Before(time.Now()) {
-		return fmt.Errorf("expiresAt must not be in the past")
+		return fmt.Errorf("expiresAt must be greater than the current time")
 	}
 	return nil
 }
@@ -157,8 +158,8 @@ func ValidateEmail(email string) error {
 // - Maximum 8 characters
 func ValidatePassword(password string) error {
 
-	if len(password) > 8 {
-		return fmt.Errorf("password must be at most 8 characters")
+	if len(password) < 8 {
+		return fmt.Errorf("%w: password must be at most 8 characters", apperror.ErrInvalidPayload)
 	}
 
 	hasLower := false
@@ -188,7 +189,7 @@ func ValidatePassword(password string) error {
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("password must contain at least one %s", strings.Join(missing, ", "))
+		return fmt.Errorf("%w: password must contain at least one %s", apperror.ErrInvalidPayload, strings.Join(missing, ", "))
 	}
 
 	return nil
@@ -252,10 +253,9 @@ func ValidateURL(rawURL string, lookupDNS LookupFunc) error {
 	if err != nil {
 		return fmt.Errorf("unable to resolve host '%s'", host)
 	}
-	for _, ip := range ips {
-		if IsBlockedIP(ip) {
-			return fmt.Errorf("host '%s' resolves to a private or loopback IP", host)
-		}
+
+	if slices.ContainsFunc(ips, IsBlockedIP) {
+		return fmt.Errorf("host '%s' resolves to a private or loopback IP", host)
 	}
 
 	return nil

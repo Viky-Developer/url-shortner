@@ -22,11 +22,11 @@ type mockService struct {
 	createFn     func(context.Context, int64, payload.CreateURLRequest) (*payload.URLResponse, error)
 	redirectFn   func(context.Context, string, payload.ClickInfo) (*payload.URLResponse, error)
 	byIDFn       func(context.Context, int64, int64) (*payload.URLResponse, error)
-	listFn       func(context.Context, int64, int32, int32, int32) (*payload.URLListResponse, error)
+	listFn       func(context.Context, int64, int32, int32, int32) ([]any, int64, error)
 	updateFn     func(context.Context, int64, int64, payload.UpdateURLRequest) (*payload.URLResponse, error)
 	softDeleteFn func(context.Context, int64, int64) (*payload.DeleteResponse, error)
 	hardDeleteFn func(context.Context, int64, int64) error
-	listClicksFn func(context.Context, int64, int64, *time.Time, *time.Time, int32, int32, int32) (*payload.ClickLogsResponse, error)
+	listClicksFn func(context.Context, int64, int64, *time.Time, *time.Time, int32, int32, int32) ([]any, int64, error)
 	analyticsFn  func(context.Context, int64, int64, *time.Time, *time.Time) (*payload.AnalyticsResponse, error)
 }
 
@@ -42,7 +42,7 @@ func (m *mockService) GetByID(ctx context.Context, userID int64, id int64) (*pay
 	return m.byIDFn(ctx, userID, id)
 }
 
-func (m *mockService) List(ctx context.Context, userID int64, page, perPage, offset int32) (*payload.URLListResponse, error) {
+func (m *mockService) List(ctx context.Context, userID int64, page, perPage, offset int32) ([]any, int64, error) {
 	return m.listFn(ctx, userID, page, perPage, offset)
 }
 
@@ -58,7 +58,7 @@ func (m *mockService) HardDelete(ctx context.Context, userID int64, id int64) er
 	return m.hardDeleteFn(ctx, userID, id)
 }
 
-func (m *mockService) ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) (*payload.ClickLogsResponse, error) {
+func (m *mockService) ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) ([]any, int64, error) {
 	return m.listClicksFn(ctx, userID, urlID, from, to, page, perPage, offset)
 }
 
@@ -371,7 +371,7 @@ func TestGetURLByIDUnauthorized(t *testing.T) {
 
 func TestListURLsDefaults(t *testing.T) {
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) (*payload.URLListResponse, error) {
+		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) ([]any, int64, error) {
 			if page != 1 {
 				t.Errorf("expected default page 1, got %d", page)
 			}
@@ -381,7 +381,7 @@ func TestListURLsDefaults(t *testing.T) {
 			if offset != 0 {
 				t.Errorf("expected default offset 0, got %d", offset)
 			}
-			return &payload.URLListResponse{Items: []payload.URLResponse{*sampleResponse()}, Total: 1, Page: 1, PerPage: 10, TotalPages: 1}, nil
+			return []any{sampleResponse()}, int64(1), nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -467,6 +467,7 @@ func TestApproveHardDelete(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════
 
 func TestCreateServiceConflict(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		createFn: func(_ context.Context, _ int64, _ payload.CreateURLRequest) (*payload.URLResponse, error) {
 			return nil, apperror.ErrConflict
@@ -487,6 +488,7 @@ func TestCreateServiceConflict(t *testing.T) {
 }
 
 func TestCreateServiceInternalError(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		createFn: func(_ context.Context, _ int64, _ payload.CreateURLRequest) (*payload.URLResponse, error) {
 			return nil, apperror.ErrInternal
@@ -527,6 +529,7 @@ func TestCreateBlockedDomainError(t *testing.T) {
 }
 
 func TestCreatePassesAllFields(t *testing.T) {
+	stubLookupIP(t)
 	var captured payload.CreateURLRequest
 	mock := &mockService{
 		createFn: func(_ context.Context, _ int64, req payload.CreateURLRequest) (*payload.URLResponse, error) {
@@ -561,6 +564,7 @@ func TestCreatePassesAllFields(t *testing.T) {
 }
 
 func TestCreateSuccessReturns201(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		createFn: func(_ context.Context, _ int64, _ payload.CreateURLRequest) (*payload.URLResponse, error) {
 			return sampleResponse(), nil
@@ -775,11 +779,11 @@ func TestGetByIDPassesArgs(t *testing.T) {
 func TestListCustomPagination(t *testing.T) {
 	var capturedPage, capturedPerPage, capturedOffset int32
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) (*payload.URLListResponse, error) {
+		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) ([]any, int64, error) {
 			capturedPage = page
 			capturedPerPage = perPage
 			capturedOffset = offset
-			return &payload.URLListResponse{Items: []payload.URLResponse{}}, nil
+			return []any{}, int64(0), nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -804,9 +808,9 @@ func TestListCustomPagination(t *testing.T) {
 func TestListPerPageClamped(t *testing.T) {
 	var capturedPerPage int32
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, _, perPage, _ int32) (*payload.URLListResponse, error) {
+		listFn: func(_ context.Context, _ int64, _, perPage, _ int32) ([]any, int64, error) {
 			capturedPerPage = perPage
-			return &payload.URLListResponse{Items: []payload.URLResponse{}}, nil
+			return []any{}, int64(0), nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -824,8 +828,8 @@ func TestListPerPageClamped(t *testing.T) {
 
 func TestListServiceError(t *testing.T) {
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, _, _, _ int32) (*payload.URLListResponse, error) {
-			return nil, apperror.ErrInternal
+		listFn: func(_ context.Context, _ int64, _, _, _ int32) ([]any, int64, error) {
+			return nil, int64(0), apperror.ErrInternal
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -844,14 +848,11 @@ func TestListServiceError(t *testing.T) {
 func TestListDefaultsWhenNoQueryParams(t *testing.T) {
 	var capturedPage, capturedPerPage, capturedOffset int32
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) (*payload.URLListResponse, error) {
+		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) ([]any, int64, error) {
 			capturedPage = page
 			capturedPerPage = perPage
 			capturedOffset = offset
-			return &payload.URLListResponse{
-				Items: []payload.URLResponse{},
-				Total: 0,
-			}, nil
+			return []any{}, int64(0), nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -875,11 +876,8 @@ func TestListDefaultsWhenNoQueryParams(t *testing.T) {
 
 func TestListResponseBody(t *testing.T) {
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, _, _, _ int32) (*payload.URLListResponse, error) {
-			return &payload.URLListResponse{
-				Items: []payload.URLResponse{*sampleResponse()},
-				Total: 1,
-			}, nil
+		listFn: func(_ context.Context, _ int64, _, _, _ int32) ([]any, int64, error) {
+			return []any{sampleResponse()}, int64(1), nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -961,6 +959,7 @@ func TestUpdateInternalError(t *testing.T) {
 }
 
 func TestUpdateConflict(t *testing.T) {
+	stubLookupIP(t)
 	mock := &mockService{
 		updateFn: func(_ context.Context, _ int64, _ int64, _ payload.UpdateURLRequest) (*payload.URLResponse, error) {
 			return nil, apperror.ErrConflict
@@ -1289,15 +1288,9 @@ func TestRedirectXForwardedForMultiple(t *testing.T) {
 func TestListClickLogsSuccess(t *testing.T) {
 	var capturedURLID int64
 	mock := &mockService{
-		listClicksFn: func(_ context.Context, _, urlID int64, _, _ *time.Time, _, _, _ int32) (*payload.ClickLogsResponse, error) {
+		listClicksFn: func(_ context.Context, _, urlID int64, _, _ *time.Time, _, _, _ int32) ([]any, int64, error) {
 			capturedURLID = urlID
-			return &payload.ClickLogsResponse{
-				Items:      []payload.ClickLogEntry{{ID: 1, IPAddress: "1.2.3.4"}},
-				Total:      1,
-				Page:       1,
-				PerPage:    10,
-				TotalPages: 1,
-			}, nil
+			return []any{}, int64(1), nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -1335,8 +1328,8 @@ func TestListClickLogsInvalidID(t *testing.T) {
 
 func TestListClickLogsServiceError(t *testing.T) {
 	mock := &mockService{
-		listClicksFn: func(_ context.Context, _, _ int64, _, _ *time.Time, _, _, _ int32) (*payload.ClickLogsResponse, error) {
-			return nil, fmt.Errorf("%w: url not found", apperror.ErrNotFound)
+		listClicksFn: func(_ context.Context, _, _ int64, _, _ *time.Time, _, _, _ int32) ([]any, int64, error) {
+			return nil, int64(0), fmt.Errorf("%w: url not found", apperror.ErrNotFound)
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))

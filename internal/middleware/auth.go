@@ -25,12 +25,15 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 }
 
 // AuthMiddleware validates JWT access tokens, verifies the session is
-// still alive, decodes the encoded user ID, and adds the internal
-// integer user ID to the request context.
+// still alive, checks that the session version matches the token's
+// version (invalidating old tokens after a refresh), decodes the
+// encoded user ID, and adds the internal integer user ID to the request
+// context.
 func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(http.Handler) http.Handler {
 	if log == nil {
 		log, _ = logger.New()
 	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -48,6 +51,24 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 			}
 
 			tokenString := parts[1]
+
+			// Refresh endpoint: skip access-token expiry and session
+			// validation. The client is here because the token expired;
+			// we only need a valid signature to extract the sessionID.
+			if r.URL.Path == "/api/v1/auth/refresh" {
+				claims, err := authService.ValidateAccessTokenAllowExpired(tokenString)
+				if err != nil {
+					log.Warn("invalid token on refresh", logger.Error(err))
+					writeJSONError(w, http.StatusUnauthorized, "invalid or expired token")
+					return
+				}
+				ctx := context.WithValue(r.Context(), contextutil.UserIDKey, claims.UserID)
+				ctx = context.WithValue(ctx, contextutil.SessionIDKey, claims.SessionID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// Standard path: strict token + session validation.
 			claims, err := authService.ValidateAccessToken(tokenString)
 			if err != nil {
 				log.Warn("invalid access token", logger.Error(err))
@@ -55,9 +76,29 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 				return
 			}
 
+			// Reject tokens with invalid or tampered encoded user ID.
+			encodedUserID := claims.UserID
+			if encodedUserID == "" {
+				log.Warn("user_id missing from token")
+				writeJSONError(w, http.StatusUnauthorized, "invalid or expired token")
+				return
+			}
+			userID, err := authService.DecodeUserID(encodedUserID)
+			if err != nil {
+				log.Warn("failed to decode user_id from token", logger.Error(err))
+				writeJSONError(w, http.StatusUnauthorized, "invalid token claims")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), contextutil.UserIDKey, userID)
+			ctx = context.WithValue(ctx, contextutil.SessionIDKey, claims.SessionID)
+			ctx = context.WithValue(ctx, contextutil.RoleKey, claims.Role)
+
 			// Validate that the session is still alive (not revoked / expired)
+			// and check the session version matches the token — a single
+			// HMGET round-trip replaces the old two-step flow.
 			if claims.SessionID > 0 {
-				alive, err := authService.ValidateSession(r.Context(), claims.SessionID)
+				alive, err := authService.ValidateSessionWithVersion(r.Context(), claims.SessionID, claims.SessionVersion)
 				if err != nil {
 					log.Error("session validation query failed", logger.Error(err), logger.Int64("sessionID", claims.SessionID))
 					writeJSONError(w, http.StatusInternalServerError, "failed to validate session")
@@ -70,16 +111,6 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 				}
 			}
 
-			// Decode the HMAC-encoded display user ID to the internal int64
-			userID, err := authService.DecodeUserID(claims.EncodedUserID)
-			if err != nil {
-				log.Warn("invalid encoded user ID in token", logger.Error(err))
-				writeJSONError(w, http.StatusUnauthorized, "invalid token claims")
-				return
-			}
-
-			log.Debug("request authenticated", logger.Int64("userID", userID), logger.Int64("sessionID", claims.SessionID))
-			ctx := context.WithValue(r.Context(), contextutil.UserIDKey, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

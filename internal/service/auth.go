@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
 	"github.com/vicky/url-shortner/internal/config"
@@ -27,22 +28,40 @@ import (
 // Implementations live in external/cache; the service never imports Redis
 // or any other concrete backend.
 type SessionCache interface {
-	HGet(key, field string) (string, error)
-	HSet(key, field string, value any) error
-	HSetFields(key string, fields map[string]any) error
-	HSetWithTTL(key, field string, value any, ttl time.Duration) error
-	HDel(key string, fields ...string) error
+	HGet(ctx context.Context, key, field string) (string, error)
+	HMGet(ctx context.Context, key string, fields ...string) (map[string]string, error)
+	HGetAll(ctx context.Context, key string) (map[string]string, error)
+	HSet(ctx context.Context, key string, fields map[string]any, opts ...cache.CacheOption) error
+	HDel(ctx context.Context, key string, fields ...string) error
+	Del(ctx context.Context, key string) error
 }
 
 // NoopCache is a SessionCache implementation that always returns cache-miss.
 // Used in tests and as a fallback when cache is unavailable.
 type NoopCache struct{}
 
-func (NoopCache) HGet(string, string) (string, error)                  { return "", fmt.Errorf("noop") }
-func (NoopCache) HSet(string, string, any) error                       { return nil }
-func (NoopCache) HSetFields(string, map[string]any) error              { return nil }
-func (NoopCache) HSetWithTTL(string, string, any, time.Duration) error { return nil }
-func (NoopCache) HDel(string, ...string) error                         { return nil }
+func (NoopCache) HGet(context.Context, string, string) (string, error) { return "", fmt.Errorf("noop") }
+func (NoopCache) HMGet(context.Context, string, ...string) (map[string]string, error) {
+	return nil, fmt.Errorf("noop")
+}
+func (NoopCache) HGetAll(context.Context, string) (map[string]string, error) {
+	return nil, fmt.Errorf("noop")
+}
+func (NoopCache) HSet(context.Context, string, map[string]any, ...cache.CacheOption) error {
+	return nil
+}
+func (NoopCache) HDel(context.Context, string, ...string) error { return nil }
+func (NoopCache) Del(context.Context, string) error             { return nil }
+
+// Cache key prefixes — every Redis key in the application must use one of these.
+const (
+	cacheKeySession   = "session:"   // session validation cache (keyed by session ID)
+	cacheKeyRateLimit = "ratelimit:" // login rate-limit counter (keyed by email)
+)
+
+// apperror.ErrUnauthorized wraps ErrUnauthorized so it maps to HTTP 401, and
+// uses one generic message for both unknown emails and wrong passwords to
+// prevent account enumeration.
 
 // AuthService provides authentication business logic.
 type AuthService struct {
@@ -76,7 +95,7 @@ func (s *AuthService) withAuthTx(ctx context.Context, fn func(q gen.Querier) err
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		s.log.Error("failed to begin transaction", logger.Error(err))
-		return fmt.Errorf("%w: could not start transaction", apperror.ErrInternal)
+		return apperror.ErrInternal
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -86,7 +105,7 @@ func (s *AuthService) withAuthTx(ctx context.Context, fn func(q gen.Querier) err
 
 	if err := tx.Commit(); err != nil {
 		s.log.Error("failed to commit transaction", logger.Error(err))
-		return fmt.Errorf("%w: could not commit transaction", apperror.ErrInternal)
+		return apperror.ErrInternal
 	}
 	return nil
 }
@@ -98,15 +117,20 @@ type Tokens struct {
 
 // Claims is the JWT access token payload. It carries the session ID so
 // the middleware can verify the session is still alive (not revoked /
-// expired) on every request.
+// expired) on every request. SessionVersion is compared against the
+// session's last_active_at to invalidate old tokens after a refresh.
 type Claims struct {
-	EncodedUserID string `json:"encoded_user_id"`
-	SessionID     int64  `json:"session_id"`
+	UserID         string `json:"user_id"`
+	Email          string `json:"email"`
+	DisplayName    string `json:"display_name"`
+	Role           string `json:"role"`
+	SessionID      int64  `json:"session_id"`
+	SessionVersion int64  `json:"session_version"`
 	jwt.RegisteredClaims
 }
 
 // Register creates a new user account.
-func (s *AuthService) Register(ctx context.Context, req payload.RegisterRequest, ipAddress, userAgent string) (*payload.AuthResponse, error) {
+func (s *AuthService) Register(ctx context.Context, req *payload.RegisterRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error) {
 	// Validate email
 	if err := utils.ValidateEmail(req.Email); err != nil {
 		return nil, err
@@ -143,9 +167,9 @@ func (s *AuthService) Register(ctx context.Context, req payload.RegisterRequest,
 		// Create user
 		var txErr error
 		user, txErr = q.CreateUser(ctx, gen.CreateUserParams{
-			Email:         req.Email,
-			PasswordHash:  string(passwordHash),
-			DisplayUserID: utils.NullString(req.DisplayName),
+			Email:           req.Email,
+			PasswordHash:    string(passwordHash),
+			DisplayUserName: utils.NullString(req.DisplayName),
 		})
 		if txErr != nil {
 			return txErr
@@ -182,7 +206,7 @@ func (s *AuthService) Register(ctx context.Context, req payload.RegisterRequest,
 	s.log.Info("user registered", logger.Int64("userID", user.ID), logger.String("email", req.Email))
 
 	// Generate tokens
-	tokens, err := s.GenerateTokens(ctx, user.ID, displayUserID, "", "", "", "")
+	tokens, err := s.GenerateTokens(ctx, user.ID, displayUserID, user.Email, req.DisplayName, user.Role, deviceType, deviceName, ipAddress, country, city, userAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -194,29 +218,30 @@ func (s *AuthService) Register(ctx context.Context, req payload.RegisterRequest,
 			ID:          displayUserID,
 			Email:       user.Email,
 			DisplayName: req.DisplayName,
+			Role:        user.Role,
 		},
 	}, nil
 }
 
 // Login authenticates a user and returns tokens.
-func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, deviceType, deviceName, ipAddress, userAgent string) (*payload.AuthResponse, error) {
+func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error) {
 	// Validate email
 	if err := utils.ValidateEmail(req.Email); err != nil {
 		return nil, err
 	}
 
 	// Check login rate limiting
-	if blocked, err := s.checkLoginRateLimit(req.Email); err != nil {
+	if blocked, err := s.checkLoginRateLimit(ctx, req.Email); err != nil {
 		return nil, err
 	} else if blocked {
-		return nil, errors.New("too many failed login attempts, please try again after 30 minutes")
+		return nil, apperror.ErrRateLimited
 	}
 
 	user, err := s.queries.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			s.log.Warn("login attempt with unknown email", logger.String("email", req.Email))
-			return nil, errors.New("invalid credentials")
+			return nil, apperror.ErrUnauthorized
 		}
 		s.log.Error("failed to get user by email", logger.Error(err), logger.String("email", req.Email))
 		return nil, apperror.ErrInternal
@@ -227,14 +252,14 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 	if err != nil {
 
 		// Record failed login attempt
-		s.recordFailedLogin(req.Email)
+		s.recordFailedLogin(ctx, req.Email)
 
 		s.log.Warn("invalid password", logger.String("email", req.Email))
-		return nil, errors.New("invalid credentials")
+		return nil, apperror.ErrUnauthorized
 	}
 
 	// Clear failed login attempts on successful login
-	s.clearFailedLogins(req.Email)
+	s.clearFailedLogins(ctx, req.Email)
 
 	displayUserID := ""
 	if user.DisplayUserID.Valid {
@@ -243,36 +268,15 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 
 	s.log.Info("user logged in", logger.Int64("userID", user.ID), logger.String("email", req.Email))
 
-	// Determine revoke task: user-approved removal or automatic enforcement
-	var revokeTask func()
-	if req.RevokeSessionID != nil && *req.RevokeSessionID > 0 {
-		revokeTask = s.revokeApprovedSession(ctx, user.ID, *req.RevokeSessionID)
-	} else {
-		var err error
-		revokeTask, err = s.enforceMaxDevices(ctx, user.ID)
-		if err != nil {
-			return nil, err
-		}
+	// Expire any sessions past their expires_at before generating new tokens
+	if expireErr := s.queries.ExpireSessionsByUser(ctx, user.ID); expireErr != nil {
+		s.log.Error("failed to expire old sessions", logger.Error(expireErr), logger.Int64("userID", user.ID))
 	}
 
-	// Generate tokens and revoke old session in parallel
-	var tokens *Tokens
-	var tokensErr error
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		tokens, tokensErr = s.GenerateTokens(ctx, user.ID, displayUserID, deviceType, deviceName, ipAddress, userAgent)
-	}()
-
-	if revokeTask != nil {
-		revokeTask()
-	}
-
-	<-done
-
-	if tokensErr != nil {
-		return nil, tokensErr
+	// Generate tokens
+	tokens, err := s.GenerateTokens(ctx, user.ID, displayUserID, user.Email, user.DisplayUserName.String, user.Role, deviceType, deviceName, ipAddress, country, city, userAgent)
+	if err != nil {
+		return nil, err
 	}
 
 	// Calculate password age
@@ -291,13 +295,15 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 		User: payload.UserResponse{
 			ID:              displayUserID,
 			Email:           user.Email,
+			DisplayName:     user.DisplayUserName.String,
+			Role:            user.Role,
 			PasswordAgeDays: passwordAgeDays,
 			ChangeSuggested: changeSuggested,
 		},
 	}, nil
 }
 
-func (s *AuthService) GenerateTokens(ctx context.Context, userID int64, encodedUserID, deviceType, deviceName, ipAddress, userAgent string) (*Tokens, error) {
+func (s *AuthService) GenerateTokens(ctx context.Context, userID int64, encodedUserID, email, displayName, role, deviceType, deviceName, ipAddress, country, city, userAgent string) (*Tokens, error) {
 
 	refreshToken, err := s.generateRefreshToken()
 	if err != nil {
@@ -307,6 +313,9 @@ func (s *AuthService) GenerateTokens(ctx context.Context, userID int64, encodedU
 
 	refreshTokenHash := s.hashToken(refreshToken)
 
+	// Calculate session expiry from config
+	expiresAt := time.Now().Add(s.cfg.RefreshTokenExpiry)
+
 	session, err := s.queries.CreateSession(ctx, gen.CreateSessionParams{
 		UserID:           userID,
 		RefreshTokenHash: refreshTokenHash,
@@ -314,6 +323,9 @@ func (s *AuthService) GenerateTokens(ctx context.Context, userID int64, encodedU
 		DeviceName:       utils.NullString(deviceName),
 		IpAddress:        utils.NullIP(ipAddress),
 		UserAgent:        utils.NullString(userAgent),
+		Country:          utils.NullString(country),
+		City:             utils.NullString(city),
+		ExpiresAt:        sql.NullTime{Time: expiresAt, Valid: true},
 	})
 	if err != nil {
 		s.log.Error("failed to create session", logger.Error(err), logger.Int64("userID", userID))
@@ -321,18 +333,25 @@ func (s *AuthService) GenerateTokens(ctx context.Context, userID int64, encodedU
 	}
 
 	// Regenerate access token with session ID embedded
-	accessToken, err := s.generateAccessTokenWithSession(encodedUserID, session.ID)
+	accessToken, err := s.generateAccessTokenWithSession(encodedUserID, email, displayName, role, session.ID, session.LastActiveAt.Time.Unix())
 	if err != nil {
 		s.log.Error("failed to generate access token with session ID", logger.Error(err))
 		return nil, apperror.ErrInternal
 	}
 
-	// Cache the new session so subsequent refresh calls skip the DB (single pipeline, best-effort)
-	_ = s.cache.HSetFields(refreshTokenHash, map[string]any{
+	// Eagerly populate session cache with minimal session data needed for
+	// auth decisions. DB is fallback on cache miss.
+	TTL := s.cfg.RefreshTokenExpiry
+	sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, session.ID)
+	_ = s.cache.HSet(ctx, sessionCacheKey, map[string]any{
 		"id":             session.ID,
 		"user_id":        session.UserID,
 		"session_status": session.SessionStatus.Int16,
-	})
+		"last_active_at": session.LastActiveAt.Time.Unix(),
+		"expires_at":     session.ExpiresAt.Time.Unix(),
+		"refresh_token":  session.RefreshTokenHash,
+		"role":           role,
+	}, cache.WithExpiration(TTL))
 
 	s.log.Info("tokens generated", logger.Int64("userID", userID), logger.Int64("sessionID", session.ID))
 
@@ -342,14 +361,18 @@ func (s *AuthService) GenerateTokens(ctx context.Context, userID int64, encodedU
 	}, nil
 }
 
-func (s *AuthService) generateAccessToken(encodedUserID string) (string, error) {
-	return s.generateAccessTokenWithSession(encodedUserID, 0)
+func (s *AuthService) generateAccessToken(encodedUserID, email, displayName, role string) (string, error) {
+	return s.generateAccessTokenWithSession(encodedUserID, email, displayName, role, 0, 0)
 }
 
-func (s *AuthService) generateAccessTokenWithSession(encodedUserID string, sessionID int64) (string, error) {
+func (s *AuthService) generateAccessTokenWithSession(encodedUserID, email, displayName, role string, sessionID int64, sessionVersion int64) (string, error) {
 	claims := Claims{
-		EncodedUserID: encodedUserID,
-		SessionID:     sessionID,
+		UserID:         encodedUserID,
+		Email:          email,
+		DisplayName:    displayName,
+		Role:           role,
+		SessionID:      sessionID,
+		SessionVersion: sessionVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.cfg.AccessTokenExpiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -374,6 +397,51 @@ func (s *AuthService) hashToken(token string) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// passwordReusesPrevious checks whether newPassword matches any of the user's
+// recent retained password hashes (up to cfg.PasswordReuseLimit). It returns
+// true if a match is found, enforcing the "last N passwords" reuse policy.
+func (s *AuthService) passwordReusesPrevious(ctx context.Context, userID int64, newPassword string) (bool, error) {
+	limit := s.cfg.PasswordReuseLimit
+	if limit <= 0 {
+		limit = 5
+	}
+	hashes, err := s.queries.ListPasswordHistory(ctx, gen.ListPasswordHistoryParams{
+		UserID: userID,
+		Limit:  int32(limit),
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		s.log.Error("failed to load password history", logger.Error(err), logger.Int64("userID", userID))
+		return false, apperror.ErrInternal
+	}
+	for _, h := range hashes {
+		if bcrypt.CompareHashAndPassword([]byte(h), []byte(newPassword)) == nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// enforcePasswordHistoryLimit trims the user's password history to keep at
+// most cfg.PasswordReuseLimit most recent records. Called after a new password
+// is stored so the table never grows unbounded.
+func (s *AuthService) enforcePasswordHistoryLimit(ctx context.Context, q gen.Querier, userID int64) error {
+	limit := s.cfg.PasswordReuseLimit
+	if limit <= 0 {
+		limit = 5
+	}
+	if err := q.DeletePasswordHistoryOver(ctx, gen.DeletePasswordHistoryOverParams{
+		UserID: userID,
+		Limit:  int32(limit),
+	}); err != nil {
+		s.log.Error("failed to trim password history", logger.Error(err), logger.Int64("userID", userID))
+		return apperror.ErrInternal
+	}
+	return nil
+}
+
 func (s *AuthService) ValidateAccessToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -390,18 +458,60 @@ func (s *AuthService) ValidateAccessToken(tokenString string) (*Claims, error) {
 		return claims, nil
 	}
 
-	return nil, errors.New("invalid token")
+	return nil, apperror.ErrInvalidToken
+}
+
+// ValidateAccessTokenAllowExpired parses a JWT, validates the signature, but
+// skips the expiry claim check. Used by the middleware for the refresh endpoint
+// so that a client with an expired access token can still hit /auth/refresh
+// and the sessionID/userID from the (expired but valid-signature) token are
+// placed into the request context.
+func (s *AuthService) ValidateAccessTokenAllowExpired(tokenString string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.cfg.JWTSecretKey), nil
+	}, jwt.WithoutClaimsValidation())
+
+	if err != nil {
+		return nil, err
+	}
+
+	if claims, ok := token.Claims.(*Claims); ok {
+		return claims, nil
+	}
+
+	return nil, apperror.ErrInvalidToken
 }
 
 // ValidateSession checks whether a session is still alive (not revoked and
 // not expired). It checks cache first, then falls back to the database.
 func (s *AuthService) ValidateSession(ctx context.Context, sessionID int64) (bool, error) {
-	sessionCacheKey := fmt.Sprintf("session:%d", sessionID)
 
-	// Cache hit — check session_status field directly
-	status, err := s.cache.HGet(sessionCacheKey, "session_status")
-	if err == nil {
-		return status == "1", nil
+	sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, sessionID)
+
+	// Cache hit — single HMGet for all needed fields
+	cached, err := s.cache.HMGet(ctx, sessionCacheKey, "session_status", "expires_at")
+	if err == nil && len(cached) > 0 {
+		if cached["session_status"] != "1" {
+			s.log.Warn("session revoked", logger.Int64("sessionID", sessionID))
+			return false, nil
+		}
+
+		if expiresAtStr, ok := cached["expires_at"]; ok {
+
+			expiresAt, _ := strconv.ParseInt(expiresAtStr, 10, 64)
+
+			if time.Now().After(time.Unix(expiresAt, 0)) {
+
+				s.log.Warn("session expired", logger.Int64("sessionID", sessionID))
+				_ = s.queries.ExpireSession(ctx, sessionID)
+				return false, nil
+			}
+		}
+
+		return true, nil
 	}
 
 	// Cache miss — query DB
@@ -420,12 +530,105 @@ func (s *AuthService) ValidateSession(ctx context.Context, sessionID int64) (boo
 		return false, nil
 	}
 
-	// Populate cache for next time (single pipeline, best-effort)
-	_ = s.cache.HSetFields(sessionCacheKey, map[string]any{
+	if session.ExpiresAt.Valid && time.Now().After(session.ExpiresAt.Time) {
+		s.log.Warn("session expired", logger.Int64("sessionID", sessionID))
+		_ = s.queries.ExpireSession(ctx, sessionID)
+		return false, nil
+	}
+
+	// Populate cache for next time
+	_ = s.cache.HSet(ctx, sessionCacheKey, map[string]any{
 		"id":             session.ID,
 		"user_id":        session.UserID,
+		"refresh_token":  session.RefreshTokenHash,
+		"last_active_at": session.LastActiveAt.Time.Unix(),
 		"session_status": session.SessionStatus.Int16,
-	})
+		"expires_at":     session.ExpiresAt.Time.Unix(),
+	}, cache.WithExpiration(s.cfg.RefreshTokenExpiry))
+
+	return true, nil
+}
+
+// ValidateSessionWithVersion checks session alive + version match in a
+// single HMGET round-trip, replacing the separate ValidateSession +
+// GetSessionVersion calls the middleware used to make.
+func (s *AuthService) ValidateSessionWithVersion(ctx context.Context, sessionID int64, tokenVersion int64) (bool, error) {
+
+	sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, sessionID)
+
+	// Single HMGet for all three fields in one TCP call.
+	cached, err := s.cache.HMGet(ctx, sessionCacheKey, "session_status", "expires_at", "last_active_at")
+	if err == nil && len(cached) > 0 {
+
+		if cached["session_status"] != "1" {
+			s.log.Warn("session revoked", logger.Int64("sessionID", sessionID))
+			return false, nil
+		}
+
+		if expiresAtStr, ok := cached["expires_at"]; ok {
+
+			expiresAt, _ := strconv.ParseInt(expiresAtStr, 10, 64)
+			if time.Now().After(time.Unix(expiresAt, 0)) {
+
+				s.log.Warn("session expired", logger.Int64("sessionID", sessionID))
+				_ = s.queries.ExpireSession(ctx, sessionID)
+				return false, nil
+			}
+		}
+
+		if v, ok := cached["last_active_at"]; ok && tokenVersion > 0 {
+
+			dbVersion, _ := strconv.ParseInt(v, 10, 64)
+			if dbVersion != tokenVersion {
+				s.log.Warn("session version mismatch — stale token", logger.Int64("sessionID", sessionID),
+					logger.Int64("tokenVersion", tokenVersion), logger.Int64("dbVersion", dbVersion))
+				return false, nil
+			}
+		}
+
+		return true, nil
+	}
+
+	// Cache miss — query DB
+	session, err := s.queries.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			s.log.Warn("session not found", logger.Int64("sessionID", sessionID))
+			return false, nil
+		}
+		s.log.Error("failed to validate session", logger.Error(err), logger.Int64("sessionID", sessionID))
+		return false, err
+	}
+
+	if session.SessionStatus.Int16 != 1 {
+		s.log.Warn("session revoked", logger.Int64("sessionID", sessionID))
+		return false, nil
+	}
+
+	if session.ExpiresAt.Valid && time.Now().After(session.ExpiresAt.Time) {
+		s.log.Warn("session expired", logger.Int64("sessionID", sessionID))
+		_ = s.queries.ExpireSession(ctx, sessionID)
+		return false, nil
+	}
+
+	if tokenVersion > 0 && session.LastActiveAt.Valid {
+		dbVersion := session.LastActiveAt.Time.Unix()
+		if dbVersion != tokenVersion {
+			s.log.Warn("session version mismatch — stale token", logger.Int64("sessionID", sessionID),
+				logger.Int64("tokenVersion", tokenVersion), logger.Int64("dbVersion", dbVersion))
+			return false, nil
+		}
+	}
+
+	// Populate cache for next time
+	_ = s.cache.HSet(ctx, sessionCacheKey, map[string]any{
+		"id":             session.ID,
+		"user_id":        session.UserID,
+		"refresh_token":  session.RefreshTokenHash,
+		"last_active_at": session.LastActiveAt.Time.Unix(),
+		"session_status": session.SessionStatus.Int16,
+		"expires_at":     session.ExpiresAt.Time.Unix(),
+	}, cache.WithExpiration(s.cfg.RefreshTokenExpiry))
 
 	return true, nil
 }
@@ -436,72 +639,140 @@ func (s *AuthService) DecodeUserID(encodedUserID string) (int64, error) {
 	return utils.DecodeID(encodedUserID, utils.UserIDPrefix, s.cfg.UserIDSecretKey)
 }
 
-func truncateKey(key string, maxLen int) string {
-	if len(key) > maxLen {
-		return key[:maxLen] + "..."
+// GetSessionVersion returns the last_active_at timestamp for a session.
+// The middleware uses this to compare against the session_version claim
+// in the access token. A mismatch means the token was issued before the
+// most recent refresh and must be rejected.
+func (s *AuthService) GetSessionVersion(ctx context.Context, sessionID int64) (int64, error) {
+
+	sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, sessionID)
+
+	// Cache hit — single HMGet for last_active_at
+	cached, err := s.cache.HMGet(ctx, sessionCacheKey, "last_active_at")
+	if err == nil && len(cached) > 0 {
+		if v, ok := cached["last_active_at"]; ok {
+			ts, _ := strconv.ParseInt(v, 10, 64)
+			return ts, nil
+		}
 	}
-	return key
+
+	// Cache miss — query DB
+	session, err := s.queries.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	if !session.LastActiveAt.Valid {
+		return 0, nil
+	}
+
+	// Populate cache for next time
+	TTL := s.cfg.RefreshTokenExpiry
+	_ = s.cache.HSet(ctx, sessionCacheKey, map[string]any{
+		"id":             session.ID,
+		"user_id":        session.UserID,
+		"refresh_token":  session.RefreshTokenHash,
+		"last_active_at": session.LastActiveAt.Time.Unix(),
+		"session_status": session.SessionStatus.Int16,
+		"expires_at":     session.ExpiresAt.Time.Unix(),
+	}, cache.WithExpiration(TTL))
+
+	return session.LastActiveAt.Time.Unix(), nil
 }
 
-// getSession looks up a session by refresh token hash, checking cache first.
+// getSession looks up a session by refresh token hash.
+// DB lookup to resolve hash → session, then uses HGetAll on the session cache.
 func (s *AuthService) getSession(ctx context.Context, refreshTokenHash string) (gen.Session, error) {
-	// Cache hit — read individual hash fields
-	idStr, err := s.cache.HGet(refreshTokenHash, "id")
-	if err == nil {
-		uidStr, _ := s.cache.HGet(refreshTokenHash, "user_id")
-		statusStr, _ := s.cache.HGet(refreshTokenHash, "session_status")
-
-		id, _ := strconv.ParseInt(idStr, 10, 64)
-		uid, _ := strconv.ParseInt(uidStr, 10, 64)
-		status, _ := strconv.ParseInt(statusStr, 10, 16)
-
-		s.log.Debug("session cache hit", logger.String("key", truncateKey(refreshTokenHash, 16)))
-		return gen.Session{
-			ID:            id,
-			UserID:        uid,
-			SessionStatus: sql.NullInt16{Int16: int16(status), Valid: true},
-		}, nil
-	}
-
-	s.log.Debug("session cache miss", logger.String("key", truncateKey(refreshTokenHash, 16)))
 
 	session, err := s.queries.GetSessionByRefreshTokenHash(ctx, refreshTokenHash)
 	if err != nil {
 		return gen.Session{}, err
 	}
 
-	// Populate cache (single pipeline, best-effort)
-	_ = s.cache.HSetFields(refreshTokenHash, map[string]any{
+	sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, session.ID)
+
+	// Cache miss — populate cache for next time.
+	TTL := s.cfg.RefreshTokenExpiry
+	_ = s.cache.HSet(ctx, sessionCacheKey, map[string]any{
 		"id":             session.ID,
 		"user_id":        session.UserID,
 		"session_status": session.SessionStatus.Int16,
-	})
+		"last_active_at": session.LastActiveAt.Time.Unix(),
+		"expires_at":     session.ExpiresAt.Time.Unix(),
+		"refresh_token":  session.RefreshTokenHash,
+	}, cache.WithExpiration(TTL))
 
 	return session, nil
 }
 
-func (s *AuthService) RefreshAccessToken(ctx context.Context, refreshToken string) (*Tokens, error) {
+// RefreshAccessToken validates the existing refresh token and issues a new
+// access token. The refresh token is NOT rotated — it stays valid for its
+// full 7-day lifetime. The old access token is invalidated by updating the
+// session's last_active_at, which changes the session_version embedded in
+// the JWT. The middleware rejects the old token because its version no
+// longer matches the database.
+func (s *AuthService) RefreshAccessToken(ctx context.Context, refreshToken string, sessionID int64) (*payload.RefreshTokenResponse, error) {
 
-	refreshTokenHash := s.hashToken(refreshToken)
+	var session gen.Session
+	var err error
 
-	session, err := s.getSession(ctx, refreshTokenHash)
-	if err != nil {
-		s.log.Warn("refresh failed: session lookup error", logger.Error(err))
-		return nil, errors.New("invalid or expired refresh token")
+	// When the middleware placed a sessionID in context (from a valid-signature
+	// access token, even if expired), the handler passes it here — try cache
+	// first for a fast path. On miss, fall back to the refresh token hash
+	// lookup which is the authoritative source.
+	if sessionID > 0 {
+		sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, sessionID)
+
+		// Cache hit — single HGetAll in one TCP round-trip.
+		cached, cacheErr := s.cache.HGetAll(ctx, sessionCacheKey)
+		if cacheErr == nil && len(cached) > 0 {
+			var id, userID int64
+			var status int16
+			_, _ = fmt.Sscanf(cached["id"], "%d", &id)
+			_, _ = fmt.Sscanf(cached["user_id"], "%d", &userID)
+			_, _ = fmt.Sscanf(cached["session_status"], "%d", &status)
+
+			session = gen.Session{
+				ID:            id,
+				UserID:        userID,
+				SessionStatus: sql.NullInt16{Int16: status, Valid: true},
+			}
+		}
+	}
+
+	// Cache miss (or no sessionID) — always resolve by refresh token hash.
+	if session.ID == 0 {
+
+		refreshTokenHash := s.hashToken(refreshToken)
+
+		session, err = s.getSession(ctx, refreshTokenHash)
+		if err != nil {
+			s.log.Warn("refresh failed: session lookup error", logger.Error(err))
+			return nil, apperror.ErrInvalidRefreshToken
+		}
 	}
 
 	if session.SessionStatus.Int16 != 1 {
 		s.log.Warn("refresh failed: session revoked", logger.Int64("sessionID", session.ID))
-		return nil, errors.New("session revoked")
+		return nil, apperror.ErrSessionRevoked
 	}
 
+	// Check if session has expired via expires_at
+	if session.ExpiresAt.Valid && time.Now().After(session.ExpiresAt.Time) {
+		s.log.Warn("refresh failed: session expired", logger.Int64("sessionID", session.ID))
+		_ = s.queries.ExpireSession(ctx, session.ID)
+		_ = s.cache.Del(ctx, fmt.Sprintf("%s%d", cacheKeySession, session.ID))
+		return nil, apperror.ErrSessionExpired
+	}
+
+	// Update last_active_at — this bumps the session version so the
+	// old access token is immediately rejected by the middleware.
 	err = s.queries.UpdateSessionLastActive(ctx, session.ID)
 	if err != nil {
 		s.log.Error("failed to update session last active", logger.Error(err), logger.Int64("sessionID", session.ID))
 		return nil, apperror.ErrInternal
 	}
 
-	// Fetch user to get their encoded display user ID for the new token
+	// Fetch user to get display ID, email, and display name for the new token
 	user, err := s.queries.GetUserByID(ctx, session.UserID)
 	if err != nil {
 		s.log.Error("failed to get user for refresh", logger.Error(err), logger.Int64("userID", session.UserID))
@@ -513,12 +784,60 @@ func (s *AuthService) RefreshAccessToken(ctx context.Context, refreshToken strin
 		encodedUserID = user.DisplayUserID.String
 	}
 
-	s.log.Info("tokens refreshed", logger.Int64("userID", session.UserID), logger.Int64("sessionID", session.ID))
+	displayName := ""
+	if user.DisplayUserName.Valid {
+		displayName = user.DisplayUserName.String
+	}
 
-	return s.GenerateTokens(ctx, session.UserID, encodedUserID, "", "", "", "")
+	// Read back the updated last_active_at so the new access token's
+	// version matches the DB exactly (avoids clock precision issues).
+	updatedSession, err := s.queries.GetSessionByID(ctx, session.ID)
+	if err != nil {
+		s.log.Error("failed to read updated session for version", logger.Error(err), logger.Int64("sessionID", session.ID))
+		return nil, apperror.ErrInternal
+	}
+
+	// Generate only a new access token — same refresh token, same session
+	accessToken, err := s.generateAccessTokenWithSession(encodedUserID, user.Email, displayName, user.Role, session.ID, updatedSession.LastActiveAt.Time.Unix())
+	if err != nil {
+		s.log.Error("failed to generate access token", logger.Error(err))
+		return nil, apperror.ErrInternal
+	}
+
+	// Sync cache so the next middleware check sees the updated version.
+	sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, session.ID)
+	_ = s.cache.HSet(ctx, sessionCacheKey, map[string]any{
+		"last_active_at": updatedSession.LastActiveAt.Time.Unix(),
+		"role":           user.Role,
+	}, cache.WithExpiration(s.cfg.RefreshTokenExpiry))
+
+	s.log.Info("token refreshed", logger.Int64("userID", session.UserID), logger.Int64("sessionID", session.ID))
+
+	return &payload.RefreshTokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+	}, nil
 }
 
 func (s *AuthService) RevokeSession(ctx context.Context, sessionID, userID int64) error {
+	// Fetch the session to get cache keys before revoking
+	session, err := s.queries.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		s.log.Error("revokeSession: session not found", logger.Error(err), logger.Int64("sessionID", sessionID))
+		return apperror.ErrInternal
+	}
+	if session.UserID != userID {
+		s.log.Warn("revokeSession: session not owned by user", logger.Int64("sessionID", sessionID), logger.Int64("userID", userID))
+		return apperror.ErrNotFound
+	}
+
+	// Delete refresh token cache
+
+	// Delete session validation cache
+	sessionCacheKey := fmt.Sprintf("%s%d", cacheKeySession, sessionID)
+	_ = s.cache.Del(ctx, sessionCacheKey)
+
+	// Revoke in DB
 	return s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
 		ID:     sessionID,
 		UserID: userID,
@@ -542,386 +861,263 @@ func (s *AuthService) buildSessionResponses(sessions []gen.Session) []payload.Se
 			ID:           sess.ID,
 			DeviceType:   sess.DeviceType.String,
 			DeviceName:   sess.DeviceName.String,
+			Country:      sess.Country.String,
+			City:         sess.City.String,
 			LoggedInAt:   sess.LoggedInAt.Time.Format(time.RFC3339),
 			LastActiveAt: sess.LastActiveAt.Time.Format(time.RFC3339),
 		}
 		if sess.IpAddress.Valid {
 			resp[i].IPAddress = sess.IpAddress.IPNet.IP.String()
 		}
+		if sess.ExpiresAt.Valid {
+			resp[i].ExpiresAt = sess.ExpiresAt.Time.Format(time.RFC3339)
+		}
 	}
 	return resp
 }
 
-func (s *AuthService) buildActiveDevices(sessions []gen.Session) []apperror.ActiveDevice {
-	devices := make([]apperror.ActiveDevice, len(sessions))
-	for i, sess := range sessions {
-		devices[i] = apperror.ActiveDevice{
-			ID:           sess.ID,
-			DeviceType:   sess.DeviceType.String,
-			DeviceName:   sess.DeviceName.String,
-			LoggedInAt:   sess.LoggedInAt.Time.Format(time.RFC3339),
-			LastActiveAt: sess.LastActiveAt.Time.Format(time.RFC3339),
-		}
-		if sess.IpAddress.Valid {
-			devices[i].IPAddress = sess.IpAddress.IPNet.IP.String()
-		}
-	}
-	return devices
+func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string, sessionID int64) (*payload.RefreshTokenResponse, error) {
+	return s.RefreshAccessToken(ctx, refreshToken, sessionID)
 }
 
-func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*payload.AuthResponse, error) {
-	tokens, err := s.RefreshAccessToken(ctx, refreshToken)
-	if err != nil {
-		return nil, err
-	}
+func (s *AuthService) Logout(ctx context.Context, refreshToken string, userID, sessionID int64) error {
 
-	// Get user info for the response
-	session, err := s.getSession(ctx, s.hashToken(refreshToken))
-	if err != nil {
-		return nil, err
-	}
+	// Remove session cache — stops the middleware from accepting the old access token.
+	_ = s.cache.Del(ctx, fmt.Sprintf("%s%d", cacheKeySession, sessionID))
 
-	user, err := s.queries.GetUserByID(ctx, session.UserID)
-	if err != nil {
-		s.log.Error("failed to get user for refresh response", logger.Error(err), logger.Int64("userID", session.UserID))
-		return nil, apperror.ErrInternal
-	}
-
-	displayUserID := ""
-	if user.DisplayUserID.Valid {
-		displayUserID = user.DisplayUserID.String
-	}
-
-	return &payload.AuthResponse{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: tokens.RefreshToken,
-		User: payload.UserResponse{
-			ID:    displayUserID,
-			Email: user.Email,
-		},
-	}, nil
-}
-
-func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
-	refreshTokenHash := s.hashToken(refreshToken)
-
-	// Remove from cache (best-effort)
-	_ = s.cache.HDel(refreshTokenHash, "id", "user_id", "session_status")
-
-	session, err := s.queries.GetSessionByRefreshTokenHash(ctx, refreshTokenHash)
-	if err != nil {
-		s.log.Warn("logout failed: session not found", logger.Error(err))
-		return errors.New("invalid refresh token")
-	}
-
-	s.log.Info("user logged out", logger.Int64("userID", session.UserID), logger.Int64("sessionID", session.ID))
-
-	err = s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
-		ID:     session.ID,
-		UserID: session.UserID,
+	err := s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
+		ID:     sessionID,
+		UserID: userID,
 	})
 	if err != nil {
-		s.log.Error("failed to revoke session on logout", logger.Error(err), logger.Int64("sessionID", session.ID))
+		s.log.Error("failed to revoke session on logout", logger.Error(err), logger.Int64("sessionID", sessionID))
 		return apperror.ErrInternal
 	}
+
+	s.log.Info("user logged out", logger.Int64("userID", userID), logger.Int64("sessionID", sessionID))
 	return nil
 }
 
-// UpdatePassword updates the user's password with validation and history tracking.
-func (s *AuthService) UpdatePassword(ctx context.Context, userID int64, req payload.UpdatePasswordRequest, ipAddress, userAgent string) (*payload.UpdatePasswordResponse, error) {
-	// Get last password from password_history LIMIT 1 for validation
-	lastHash, err := s.queries.GetLastPasswordHistory(ctx, userID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			s.log.Warn("update password: no password history found", logger.Int64("userID", userID))
-			return nil, errors.New("no password history found")
-		}
-		s.log.Error("update password: failed to get password history", logger.Error(err), logger.Int64("userID", userID))
-		return nil, apperror.ErrInternal
-	}
-
-	// Verify current password against last password_history entry
-	err = bcrypt.CompareHashAndPassword([]byte(lastHash), []byte(req.CurrentPassword))
-	if err != nil {
-		s.log.Warn("update password: invalid current password", logger.Int64("userID", userID))
-		return nil, errors.New("current password is incorrect")
-	}
-
-	// Check if new password is same as current password
-	err = bcrypt.CompareHashAndPassword([]byte(lastHash), []byte(req.NewPassword))
-	if err == nil {
-		s.log.Warn("update password: new password same as current", logger.Int64("userID", userID))
-		return nil, errors.New("new password cannot be the same as current password")
-	}
-
-	// Validate new password strength
-	if err := utils.ValidatePassword(req.NewPassword); err != nil {
-		return nil, err
-	}
-
-	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		s.log.Error("update password: failed to hash new password", logger.Error(err))
-		return nil, apperror.ErrInternal
-	}
-	newHashStr := string(newHash)
-
-	// Check new password is not the same as last password
-	if newHashStr == lastHash {
-		s.log.Warn("update password: new password same as last", logger.Int64("userID", userID))
-		return nil, errors.New("new password cannot be the same as current password")
-	}
-
-	// Update password in users table
-	_, err = s.queries.UpdateUserPassword(ctx, gen.UpdateUserPasswordParams{
-		ID:           userID,
-		PasswordHash: newHashStr,
-	})
-	if err != nil {
-		s.log.Error("update password: failed to update", logger.Error(err), logger.Int64("userID", userID))
-		return nil, apperror.ErrInternal
-	}
-
-	// Add to password history
-	err = s.queries.AddPasswordHistory(ctx, gen.AddPasswordHistoryParams{
-		UserID:       userID,
-		PasswordHash: newHashStr,
-		IpAddress:    utils.NullIP(ipAddress),
-		UserAgent:    utils.NullString(userAgent),
-	})
-	if err != nil {
-		s.log.Error("update password: failed to add to history", logger.Error(err), logger.Int64("userID", userID))
-		return nil, apperror.ErrInternal
-	}
-
-	s.log.Info("password updated", logger.Int64("userID", userID))
-
-	return &payload.UpdatePasswordResponse{
-		Message: "password updated successfully",
-	}, nil
-}
-
-// ForgotPassword validates the user's previous password, updates it, and
-// returns a full auth response (tokens + user) — equivalent to a password-
-// reset that immediately logs the user in.
-func (s *AuthService) ForgotPassword(ctx context.Context, req payload.ForgotPasswordRequest, ipAddress, userAgent string) (*payload.AuthResponse, error) {
+// ForgotPassword updates the user's password without requiring the current
+// password. On success, all existing sessions for the user are revoked,
+// forcing a re-login with the new password. Invalid credentials return a
+// generic error to prevent account enumeration.
+func (s *AuthService) ForgotPassword(ctx context.Context, req payload.ForgotPasswordRequest, ipAddress, userAgent string) error {
 	if err := utils.ValidateEmail(req.Email); err != nil {
-		return nil, err
+		return err
 	}
 
 	if err := utils.ValidatePassword(req.NewPassword); err != nil {
-		return nil, err
+		return err
 	}
 
 	user, err := s.queries.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			s.log.Warn("forgot password: user not found", logger.String("email", req.Email))
-			return nil, errors.New("invalid credentials")
+			return apperror.ErrUnauthorized
 		}
 		s.log.Error("forgot password: failed to get user", logger.Error(err), logger.String("email", req.Email))
-		return nil, apperror.ErrInternal
+		return apperror.ErrInternal
 	}
 
-	lastHash, err := s.queries.GetLastPasswordHistory(ctx, user.ID)
+	reused, err := s.passwordReusesPrevious(ctx, user.ID, req.NewPassword)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			s.log.Warn("forgot password: no password history", logger.Int64("userID", user.ID))
-			return nil, errors.New("no password history found")
-		}
-		s.log.Error("forgot password: failed to get password history", logger.Error(err), logger.Int64("userID", user.ID))
-		return nil, apperror.ErrInternal
+		return err
 	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(lastHash), []byte(req.CurrentPassword)); err != nil {
-		s.log.Warn("forgot password: invalid current password", logger.Int64("userID", user.ID))
-		return nil, errors.New("current password is incorrect")
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(lastHash), []byte(req.NewPassword)); err == nil {
-		s.log.Warn("forgot password: new password same as current", logger.Int64("userID", user.ID))
-		return nil, errors.New("new password cannot be the same as current password")
+	if reused {
+		s.log.Warn("forgot password: new password matches a previous password", logger.Int64("userID", user.ID))
+		return apperror.ErrPasswordReuse
 	}
 
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		s.log.Error("forgot password: failed to hash new password", logger.Error(err))
-		return nil, apperror.ErrInternal
-	}
-	newHashStr := string(newHash)
-
-	if newHashStr == lastHash {
-		s.log.Warn("forgot password: new hash equals old hash", logger.Int64("userID", user.ID))
-		return nil, errors.New("new password cannot be the same as current password")
+		return apperror.ErrInternal
 	}
 
 	err = s.withAuthTx(ctx, func(q gen.Querier) error {
 		if _, txErr := q.UpdateUserPassword(ctx, gen.UpdateUserPasswordParams{
 			ID:           user.ID,
-			PasswordHash: newHashStr,
+			PasswordHash: string(newHash),
 		}); txErr != nil {
 			return txErr
 		}
-		return q.AddPasswordHistory(ctx, gen.AddPasswordHistoryParams{
+		if txErr := q.AddPasswordHistory(ctx, gen.AddPasswordHistoryParams{
 			UserID:       user.ID,
-			PasswordHash: newHashStr,
+			PasswordHash: string(newHash),
 			IpAddress:    utils.NullIP(ipAddress),
 			UserAgent:    utils.NullString(userAgent),
-		})
+		}); txErr != nil {
+			return txErr
+		}
+		return s.enforcePasswordHistoryLimit(ctx, q, user.ID)
 	})
 	if err != nil {
 		s.log.Error("forgot password: transaction failed", logger.Error(err), logger.Int64("userID", user.ID))
-		return nil, apperror.ErrInternal
+		return apperror.ErrInternal
 	}
 
-	var revokeTask func()
-	if req.RevokeSessionID != nil && *req.RevokeSessionID > 0 {
-		revokeTask = s.revokeApprovedSession(ctx, user.ID, *req.RevokeSessionID)
-	} else {
-		var err error
-		revokeTask, err = s.enforceMaxDevices(ctx, user.ID)
-		if err != nil {
-			return nil, err
+	// Revoke all existing sessions — user must re-login with new password.
+	sessions, listErr := s.queries.ListActiveSessionsByUser(ctx, user.ID)
+	if listErr == nil {
+		for _, sess := range sessions {
+			_ = s.cache.Del(ctx, fmt.Sprintf("%s%d", cacheKeySession, sess.ID))
+			_ = s.queries.RevokeSession(ctx, gen.RevokeSessionParams{ID: sess.ID, UserID: user.ID})
 		}
-	}
-
-	displayUserID := ""
-	if user.DisplayUserID.Valid {
-		displayUserID = user.DisplayUserID.String
-	}
-
-	var tokens *Tokens
-	var tokensErr error
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		tokens, tokensErr = s.GenerateTokens(ctx, user.ID, displayUserID, "", "", ipAddress, userAgent)
-	}()
-
-	if revokeTask != nil {
-		revokeTask()
-	}
-
-	<-done
-
-	if tokensErr != nil {
-		return nil, tokensErr
 	}
 
 	s.log.Info("forgot password: success", logger.Int64("userID", user.ID))
-
-	return &payload.AuthResponse{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: tokens.RefreshToken,
-		User: payload.UserResponse{
-			ID:              displayUserID,
-			Email:           user.Email,
-			PasswordAgeDays: 0,
-			ChangeSuggested: false,
-		},
-	}, nil
+	return nil
 }
 
-const (
-	maxDevices        = 2
-	maxDeviceIdleTime = 6 * time.Hour
-)
+// ChangePassword validates the user's current password and updates it.
+// On success, ALL sessions including the current one are revoked, forcing
+// a re-login with the new password.
+func (s *AuthService) ChangePassword(ctx context.Context, userID int64, req payload.ChangePasswordRequest, sessionID int64, ipAddress, userAgent string) error {
+	if err := utils.ValidatePassword(req.NewPassword); err != nil {
+		return err
+	}
 
-// enforceMaxDevices checks whether the user already has maxDevices active
-// sessions. Behaviour when at capacity:
-//   - If the oldest session has been idle for > maxDeviceIdleTime, a revoke
-//     task is returned that can be run in parallel with the sign-in.
-//   - Otherwise an *apperror.MaxDeviceError is returned carrying the active
-//     session list so the client can prompt the user to choose one to remove.
-//
-// The returned revokeTask is always safe to call — it logs errors but never
-// returns them, so it can be fire-and-forget in a goroutine.
-func (s *AuthService) enforceMaxDevices(ctx context.Context, userID int64) (revokeTask func(), err error) {
+	user, err := s.queries.GetUserByID(ctx, userID)
+	if err != nil {
+		s.log.Error("update password: failed to get user", logger.Error(err), logger.Int64("userID", userID))
+		return apperror.ErrInternal
+	}
+
+	lastHash, err := s.queries.ListPasswordHistory(ctx, gen.ListPasswordHistoryParams{
+		UserID: user.ID,
+		Limit:  1,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			s.log.Warn("update password: no password history", logger.Int64("userID", user.ID))
+			return apperror.ErrUnauthorized
+		}
+		s.log.Error("update password: failed to get password history", logger.Error(err), logger.Int64("userID", user.ID))
+		return apperror.ErrInternal
+	}
+	if len(lastHash) == 0 {
+		return apperror.ErrUnauthorized
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(lastHash[0]), []byte(req.CurrentPassword)); err != nil {
+		s.log.Warn("update password: invalid current password", logger.Int64("userID", user.ID))
+		return apperror.ErrInvalidCurrentPassword
+	}
+
+	reused, err := s.passwordReusesPrevious(ctx, user.ID, req.NewPassword)
+	if err != nil {
+		return err
+	}
+	if reused {
+		s.log.Warn("update password: new password matches a previous password", logger.Int64("userID", user.ID))
+		return apperror.ErrPasswordReuse
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		s.log.Error("update password: failed to hash new password", logger.Error(err))
+		return apperror.ErrInternal
+	}
+
+	err = s.withAuthTx(ctx, func(q gen.Querier) error {
+		if _, txErr := q.UpdateUserPassword(ctx, gen.UpdateUserPasswordParams{
+			ID:           user.ID,
+			PasswordHash: string(newHash),
+		}); txErr != nil {
+			return txErr
+		}
+		if txErr := q.AddPasswordHistory(ctx, gen.AddPasswordHistoryParams{
+			UserID:       user.ID,
+			PasswordHash: string(newHash),
+			IpAddress:    utils.NullIP(ipAddress),
+			UserAgent:    utils.NullString(userAgent),
+		}); txErr != nil {
+			return txErr
+		}
+		return s.enforcePasswordHistoryLimit(ctx, q, user.ID)
+	})
+	if err != nil {
+		s.log.Error("update password: transaction failed", logger.Error(err), logger.Int64("userID", user.ID))
+		return apperror.ErrInternal
+	}
+
+	// Revoke ALL sessions including the current one — must re-login.
+	sessions, listErr := s.queries.ListActiveSessionsByUser(ctx, user.ID)
+	if listErr == nil {
+		for _, sess := range sessions {
+			_ = s.cache.Del(ctx, fmt.Sprintf("%s%d", cacheKeySession, sess.ID))
+			_ = s.queries.RevokeSession(ctx, gen.RevokeSessionParams{ID: sess.ID, UserID: user.ID})
+		}
+	}
+
+	s.log.Info("update password: success", logger.Int64("userID", user.ID), logger.Int64("sessionID", sessionID))
+	return nil
+}
+
+// RevokeOtherDevices revokes all active sessions for the user except the
+// specified session. The status of each revoked session is set to revoked (0).
+func (s *AuthService) RevokeOtherDevices(ctx context.Context, userID, currentSessionID int64) error {
+	// Fetch all active sessions for the user (excluding current)
 	sessions, err := s.queries.ListActiveSessionsByUser(ctx, userID)
 	if err != nil {
-		s.log.Error("enforceMaxDevices: failed to list sessions", logger.Error(err), logger.Int64("userID", userID))
-		return nil, apperror.ErrInternal
+		s.log.Error("revokeOtherDevices: failed to list sessions", logger.Error(err), logger.Int64("userID", userID))
+		return apperror.ErrInternal
 	}
 
-	if len(sessions) < maxDevices {
-		return nil, nil
-	}
-
-	// sessions are ordered ASC by last_active_at — oldest first
-	oldest := sessions[0]
-
-	if oldest.LastActiveAt.Valid && time.Since(oldest.LastActiveAt.Time) > maxDeviceIdleTime {
-		s.log.Info("enforceMaxDevices: oldest session idle > 6h, will auto-revoke in parallel",
-			logger.Int64("userID", userID),
-			logger.Int64("sessionID", oldest.ID),
-			logger.String("idle", time.Since(oldest.LastActiveAt.Time).Round(time.Second).String()),
-		)
-
-		revoke := func() {
-			_ = s.cache.HDel(oldest.RefreshTokenHash, "id", "user_id", "session_status")
-			if err := s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
-				ID:     oldest.ID,
-				UserID: oldest.UserID,
-			}); err != nil {
-				s.log.Error("enforceMaxDevices: failed to revoke oldest session",
-					logger.Error(err),
-					logger.Int64("sessionID", oldest.ID),
-				)
-			}
+	for _, sess := range sessions {
+		if sess.ID == currentSessionID {
+			continue
 		}
-		return revoke, nil
+		// Remove session cache
+		_ = s.cache.Del(ctx, fmt.Sprintf("%s%d", cacheKeySession, sess.ID))
 	}
 
-	s.log.Warn("enforceMaxDevices: max devices reached",
-		logger.Int64("userID", userID),
-		logger.Int("activeSessions", len(sessions)),
-	)
-	return nil, &apperror.MaxDeviceError{Devices: s.buildActiveDevices(sessions)}
+	// Bulk revoke all sessions except current (both active and expired)
+	if err := s.queries.RevokeSessionsByUserExcept(ctx, gen.RevokeSessionsByUserExceptParams{
+		UserID: userID,
+		ID:     currentSessionID,
+	}); err != nil {
+		s.log.Error("revokeOtherDevices: failed to revoke sessions", logger.Error(err), logger.Int64("userID", userID))
+		return apperror.ErrInternal
+	}
+
+	s.log.Info("revokeOtherDevices: all other sessions revoked", logger.Int64("userID", userID), logger.Int64("exceptSessionID", currentSessionID))
+	return nil
 }
 
-// revokeApprovedSession builds a fire-and-forget task that revokes the session
-// the user explicitly approved removing. This is used when the client received
-// a 409 MaxDeviceError, showed the device list, and the user picked one —
-// allowing login to complete in a single request.
-func (s *AuthService) revokeApprovedSession(ctx context.Context, userID, sessionID int64) func() {
-	return func() {
-		session, err := s.queries.GetSessionByID(ctx, sessionID)
-		if err != nil {
-			s.log.Warn("revokeApprovedSession: session not found",
-				logger.Error(err),
-				logger.Int64("sessionID", sessionID),
-			)
-			return
-		}
-		if session.UserID != userID {
-			s.log.Warn("revokeApprovedSession: session not owned by user",
-				logger.Int64("sessionID", sessionID),
-				logger.Int64("userID", userID),
-			)
-			return
-		}
-
-		_ = s.cache.HDel(session.RefreshTokenHash, "id", "user_id", "session_status")
-
-		if err := s.queries.RevokeSession(ctx, gen.RevokeSessionParams{
-			ID:     session.ID,
-			UserID: session.UserID,
-		}); err != nil {
-			s.log.Error("revokeApprovedSession: failed to revoke",
-				logger.Error(err),
-				logger.Int64("sessionID", session.ID),
-			)
-		}
+// RevokeAllSessions revokes every active session for the user, including
+// the specified current session. The user must re-login on all devices.
+func (s *AuthService) RevokeAllSessions(ctx context.Context, userID int64) error {
+	// Fetch all active sessions for cache cleanup
+	sessions, err := s.queries.ListActiveSessionsByUser(ctx, userID)
+	if err != nil {
+		s.log.Error("revokeAllSessions: failed to list sessions", logger.Error(err), logger.Int64("userID", userID))
+		return apperror.ErrInternal
 	}
+
+	for _, sess := range sessions {
+		// Remove session cache
+		_ = s.cache.Del(ctx, fmt.Sprintf("%s%d", cacheKeySession, sess.ID))
+	}
+
+	// Bulk revoke all sessions for the user (both active and expired)
+	if err := s.queries.RevokeAllSessionsByUser(ctx, userID); err != nil {
+		s.log.Error("revokeAllSessions: failed to revoke all sessions", logger.Error(err), logger.Int64("userID", userID))
+		return apperror.ErrInternal
+	}
+
+	s.log.Info("revokeAllSessions: all sessions revoked", logger.Int64("userID", userID))
+	return nil
 }
 
 // checkLoginRateLimit checks if the user has exceeded max failed login attempts.
 // Returns (blocked, error) where blocked=true means user is locked out.
-func (s *AuthService) checkLoginRateLimit(email string) (bool, error) {
-	key := "login:attempts:" + email
+func (s *AuthService) checkLoginRateLimit(ctx context.Context, email string) (bool, error) {
+	key := cacheKeyRateLimit + email
 
-	lockedUntilStr, err := s.cache.HGet(key, "locked_until")
+	lockedUntilStr, err := s.cache.HGet(ctx, key, "locked_until")
 	if err != nil {
 		return false, nil
 	}
@@ -936,10 +1132,10 @@ func (s *AuthService) checkLoginRateLimit(email string) (bool, error) {
 
 // recordFailedLogin increments the failed login counter for an email.
 // Locks the account for 30 minutes after 3 failed attempts.
-func (s *AuthService) recordFailedLogin(email string) {
-	key := "login:attempts:" + email
+func (s *AuthService) recordFailedLogin(ctx context.Context, email string) {
+	key := cacheKeyRateLimit + email
 
-	attemptsStr, _ := s.cache.HGet(key, "attempts")
+	attemptsStr, _ := s.cache.HGet(ctx, key, "attempts")
 	attempts, _ := strconv.Atoi(attemptsStr)
 
 	attempts++
@@ -949,26 +1145,14 @@ func (s *AuthService) recordFailedLogin(email string) {
 		lockedUntil = time.Now().Add(30 * time.Minute).Unix()
 	}
 
-	_ = s.cache.HSetWithTTL(key, "attempts", attempts, 30*time.Minute)
-	_ = s.cache.HSetWithTTL(key, "locked_until", lockedUntil, 30*time.Minute)
+	_ = s.cache.HSet(ctx, key, map[string]any{
+		"attempts":     attempts,
+		"locked_until": lockedUntil,
+	}, cache.WithExpiration(30*time.Minute))
 }
 
 // clearFailedLogins removes the failed login counter for an email.
-func (s *AuthService) clearFailedLogins(email string) {
-	key := "login:attempts:" + email
-	_ = s.cache.HDel(key, "attempts", "locked_until")
-}
-
-// --- Test helpers (exported for integration tests) ---
-
-// TestConfig is an alias for config.Config to avoid importing internal/config
-// from test packages. Only the fields needed for token generation are required.
-type TestConfig = config.Config
-
-// GenerateTestToken creates a signed JWT access token for testing. This is
-// exported so integration tests can produce valid tokens without going through
-// the full login flow.
-func GenerateTestToken(cfg *config.Config, encodedUserID string, sessionID int64) (string, error) {
-	svc := &AuthService{cfg: cfg}
-	return svc.generateAccessTokenWithSession(encodedUserID, sessionID)
+func (s *AuthService) clearFailedLogins(ctx context.Context, email string) {
+	key := cacheKeyRateLimit + email
+	_ = s.cache.HDel(ctx, key, "attempts", "locked_until")
 }
