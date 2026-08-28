@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
 )
 
 // Config holds all runtime configuration values for the application.
@@ -95,7 +95,7 @@ func (c *Config) DSN() string {
 // Connect opens a Postgres connection pool configured from the config values
 // and verifies it with a ping.
 func (c *Config) Connect() (*sql.DB, error) {
-	db, err := sql.Open("postgres", c.DSN())
+	db, err := sql.Open("pgx", c.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
