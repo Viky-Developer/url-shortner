@@ -22,7 +22,7 @@ type AdminService interface {
 	ListBlockedDomains(ctx context.Context) ([]any, error)
 	CreateBlockedDomain(ctx context.Context, req payload.CreateBlockedDomainRequest) (*payload.BlockedDomainResponse, error)
 	DeleteBlockedDomain(ctx context.Context, id int32) error
-	ListBlockedIPRanges(ctx context.Context) ([]payload.BlockedIPRangeResponse, error)
+	ListBlockedIPRanges(ctx context.Context) ([]any, error)
 	CreateBlockedIPRange(ctx context.Context, req payload.CreateBlockedIPRangeRequest) (*payload.BlockedIPRangeResponse, error)
 	DeleteBlockedIPRange(ctx context.Context, id int64) error
 	PurgeOldRevokedSessions(ctx context.Context, olderThan time.Duration) error
@@ -105,13 +105,14 @@ func (h *AdminHandler) DeleteBlockedDomain(w http.ResponseWriter, r *http.Reques
 
 // ListBlockedIPRanges handles GET /admin/blocked-ip-ranges.
 func (h *AdminHandler) ListBlockedIPRanges(w http.ResponseWriter, r *http.Request) {
+
 	ranges, err := h.adminService.ListBlockedIPRanges(r.Context())
 	if err != nil {
 		h.log.Error("failed to list blocked IP ranges", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	response.Success(w, http.StatusOK, "blocked IP ranges retrieved", []any{ranges})
+	response.Success(w, http.StatusOK, "blocked IP ranges retrieved", ranges)
 }
 
 // CreateBlockedIPRange handles POST /admin/blocked-ip-ranges.

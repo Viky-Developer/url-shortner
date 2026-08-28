@@ -86,13 +86,13 @@ func (a *AdminService) DeleteBlockedDomain(ctx context.Context, id int32) error 
 }
 
 // ListBlockedIPRanges returns all blocked IP ranges.
-func (a *AdminService) ListBlockedIPRanges(ctx context.Context) ([]payload.BlockedIPRangeResponse, error) {
+func (a *AdminService) ListBlockedIPRanges(ctx context.Context) ([]any, error) {
 	rows, err := a.queries.ListBlockedIPRanges(ctx)
 	if err != nil {
 		return nil, apperror.ErrInternal
 	}
 
-	items := make([]payload.BlockedIPRangeResponse, len(rows))
+	items := make([]any, len(rows))
 	for i, r := range rows {
 		items[i] = payload.BlockedIPRangeResponse{
 			ID:          r.ID,

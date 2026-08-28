@@ -560,7 +560,7 @@ func (s *URLService) GetByID(ctx context.Context, userID int64, id int64) (*payl
 
 // List returns a paginated list of active URLs ordered by creation time
 // descending, along with the total count and pagination metadata.
-func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offset int32) (*payload.URLListResponse, error) {
+func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offset int32) ([]any, int64, error) {
 	rows, err := s.queries.ListURLs(ctx, gen.ListURLsParams{
 		UserID: userID,
 		Limit:  perPage,
@@ -568,34 +568,23 @@ func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offs
 	})
 	if err != nil {
 		s.log.Error("failed to list urls", logger.Error(err))
-		return nil, apperror.ErrInternal
+		return nil, 0, apperror.ErrInternal
 	}
 
 	total, err := s.queries.CountURLs(ctx, userID)
 	if err != nil {
 		s.log.Error("failed to count urls", logger.Error(err))
-		return nil, apperror.ErrInternal
+		return nil, 0, apperror.ErrInternal
 	}
 
-	items := make([]payload.URLResponse, len(rows))
+	items := make([]any, len(rows))
 	for i, row := range rows {
 		items[i] = *s.toResponse(rowToUrlList(row), row.OriginalUrl)
 	}
 
-	perPageInt := int(perPage)
-	totalPages := int(total) / perPageInt
-	if int(total)%perPageInt > 0 {
-		totalPages++
-	}
-
 	s.log.Info("urls listed", logger.Int("count", len(items)), logger.Int64("total", total))
-	return &payload.URLListResponse{
-		Items:      items,
-		Total:      total,
-		Page:       int(page),
-		PerPage:    perPageInt,
-		TotalPages: totalPages,
-	}, nil
+
+	return items, total, nil
 }
 
 // Update changes the original URL and/or expiry inside a transaction. When
@@ -775,9 +764,9 @@ func (s *URLService) HardDelete(ctx context.Context, userID int64, id int64) err
 
 // ListClickLogs returns a paginated list of click logs for a URL, optionally
 // filtered by a time range. The URL must belong to the given user.
-func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) (*payload.ClickLogsResponse, error) {
+func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) ([]any, int64, error) {
 	if err := s.ensureOwnership(ctx, userID, urlID); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	total, err := s.queries.CountClickLogsByURL(ctx, gen.CountClickLogsByURLParams{
@@ -787,7 +776,7 @@ func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, fro
 	})
 	if err != nil {
 		s.log.Error("failed to count click logs", logger.Error(err), logger.Int64("urlID", urlID))
-		return nil, apperror.ErrInternal
+		return nil, 0, apperror.ErrInternal
 	}
 
 	rows, err := s.queries.ListClickLogsByURL(ctx, gen.ListClickLogsByURLParams{
@@ -799,10 +788,10 @@ func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, fro
 	})
 	if err != nil {
 		s.log.Error("failed to list click logs", logger.Error(err), logger.Int64("urlID", urlID))
-		return nil, apperror.ErrInternal
+		return nil, 0, apperror.ErrInternal
 	}
 
-	items := make([]payload.ClickLogEntry, len(rows))
+	items := make([]any, len(rows))
 	for i, r := range rows {
 		items[i] = payload.ClickLogEntry{
 			ID:         r.ID,
@@ -815,23 +804,21 @@ func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, fro
 		}
 	}
 
-	totalPages := int(total) / int(perPage)
-	if int(total)%int(perPage) > 0 {
-		totalPages++
-	}
+	// return &payload.ClickLogsResponse{
+	// 	Items:      items,
+	// 	Total:      total,
+	// 	Page:       int(page),
+	// 	PerPage:    int(perPage),
+	// 	TotalPages: totalPages,
+	// }, nil
 
-	return &payload.ClickLogsResponse{
-		Items:      items,
-		Total:      total,
-		Page:       int(page),
-		PerPage:    int(perPage),
-		TotalPages: totalPages,
-	}, nil
+	return items, total, nil
 }
 
 // GetAnalytics returns aggregate analytics for a URL including stats,
 // top referrers, and daily click breakdown.
 func (s *URLService) GetAnalytics(ctx context.Context, userID, urlID int64, from, to *time.Time) (*payload.AnalyticsResponse, error) {
+
 	if err := s.ensureOwnership(ctx, userID, urlID); err != nil {
 		return nil, err
 	}

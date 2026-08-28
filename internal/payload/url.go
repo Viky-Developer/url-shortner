@@ -49,8 +49,8 @@ type URLResponse struct {
 type URLListResponse struct {
 	Items      []URLResponse `json:"items"`      // URLs on the current page.
 	Total      int64         `json:"total"`      // Total number of active URLs.
-	Page       int           `json:"page"`       // Current page number (1-based).
-	PerPage    int           `json:"perPage"`    // Number of items per page.
+	Page       int32         `json:"page"`       // Current page number (1-based).
+	PerPage    int32         `json:"perPage"`    // Number of items per page.
 	TotalPages int           `json:"totalPages"` // Total number of pages.
 }
 
