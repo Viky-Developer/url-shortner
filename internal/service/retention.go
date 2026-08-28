@@ -45,7 +45,6 @@ func (w *RetentionWorker) Start(ctx context.Context) {
 	w.log.Info("retention worker started",
 		logger.String("interval", w.cfg.RetentionRunInterval.String()),
 		logger.String("sessionRetention", w.cfg.SessionRetention.String()),
-		logger.String("passwordRetention", w.cfg.PasswordRetention.String()),
 	)
 
 	// Run immediately on startup.
