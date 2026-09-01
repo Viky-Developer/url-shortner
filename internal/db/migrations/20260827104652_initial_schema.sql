@@ -138,8 +138,8 @@ CREATE TABLE audit_logs (
     "created_at"      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_audit_logs_created ON "admin_audit_log" ("created_at" DESC);
-CREATE INDEX idx_audit_logs_actor ON "admin_audit_log" ("admin_id");
+CREATE INDEX idx_audit_logs_created ON "audit_logs" ("created_at" DESC);
+CREATE INDEX idx_audit_logs_actor ON "audit_logs" ("actor_user_id");
 
 -- +goose Down
 
