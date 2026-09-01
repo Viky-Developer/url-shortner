@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
-	"github.com/vicky/url-shortner/internal/contextutil"
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/response"
 	"github.com/vicky/url-shortner/internal/utils"
@@ -47,48 +45,12 @@ func NewURLHandler(urlService URLService, log logger.Logger) *URLHandler {
 	return &URLHandler{urlService: urlService, log: log}
 }
 
-// getUserIDFromContext extracts the authenticated user ID from the request
-// context. This is set by the JWT auth middleware after decoding the token.
-func (h *URLHandler) getUserIDFromContext(r *http.Request) (int64, bool) {
-	userID, ok := r.Context().Value(contextutil.UserIDKey).(int64)
-	return userID, ok
-}
-
-// getUserIDOrError is getUserIDFromContext plus HTTP error mapping. It reports
-// false when the response has already been written.
-func (h *URLHandler) getUserIDOrError(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	userID, ok := h.getUserIDFromContext(r)
-	if !ok {
-		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: user not authenticated", apperror.ErrUnauthorized))
-		return 0, false
-	}
-	return userID, true
-}
-
-// clientIP extracts the client IP from the X-Forwarded-For header or the
-// request's remote address. Returns a fallback loopback address when the
-// source IP cannot be determined.
-func clientIP(r *http.Request) net.IP {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if ip := net.ParseIP(strings.TrimSpace(strings.Split(xff, ",")[0])); ip != nil {
-			return ip
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return net.IPv4(127, 0, 0, 1)
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip
-	}
-	return net.IPv4(127, 0, 0, 1)
-}
-
 // CreateShortURL handles POST /shorten and creates a new short URL.
 func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.getUserIDOrError(w, r)
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -119,8 +81,9 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 // issues an HTTP 302 redirect to the destination URL. The browser reads the
 // Location header and follows the redirect automatically.
 func (h *URLHandler) RedirectShortURL(w http.ResponseWriter, r *http.Request) {
+
 	u, err := h.urlService.Redirect(r.Context(), r.PathValue("shortCode"), payload.ClickInfo{
-		IP:        clientIP(r),
+		IP:        utils.ClientIP(r),
 		UserAgent: r.UserAgent(),
 		Referrer:  r.Referer(),
 	})
@@ -136,8 +99,9 @@ func (h *URLHandler) RedirectShortURL(w http.ResponseWriter, r *http.Request) {
 // GetURLByID handles GET /urls/{id} and returns the URL details.
 func (h *URLHandler) GetURLByID(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.getUserIDOrError(w, r)
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -161,8 +125,9 @@ func (h *URLHandler) GetURLByID(w http.ResponseWriter, r *http.Request) {
 // ListURLs handles GET /urls and returns a paginated list of active URLs.
 func (h *URLHandler) ListURLs(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.getUserIDOrError(w, r)
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -206,8 +171,9 @@ func (h *URLHandler) ListURLs(w http.ResponseWriter, r *http.Request) {
 // UpdateURL handles PATCH /urls/{id} and updates the URL details.
 func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.getUserIDOrError(w, r)
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -219,6 +185,7 @@ func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req payload.UpdateURLRequest
+
 	if err := utils.DecodeBody(r, &req); err != nil {
 		h.log.Error("invalid request body", logger.Error(err))
 		response.Error(w, http.StatusBadRequest, err)
@@ -249,8 +216,9 @@ func (h *URLHandler) UpdateURL(w http.ResponseWriter, r *http.Request) {
 // hard-delete pending approval.
 func (h *URLHandler) DeleteURL(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.getUserIDOrError(w, r)
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -277,8 +245,9 @@ func (h *URLHandler) DeleteURL(w http.ResponseWriter, r *http.Request) {
 // a previously soft-deleted URL.
 func (h *URLHandler) ApproveHardDelete(w http.ResponseWriter, r *http.Request) {
 
-	userID, ok := h.getUserIDOrError(w, r)
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -303,8 +272,10 @@ func (h *URLHandler) ApproveHardDelete(w http.ResponseWriter, r *http.Request) {
 // ListClickLogs handles GET /urls/{id}/clicks and returns paginated click logs
 // for a specific URL, optionally filtered by from/to query parameters.
 func (h *URLHandler) ListClickLogs(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.getUserIDOrError(w, r)
+
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -315,7 +286,7 @@ func (h *URLHandler) ListClickLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	from, to := parseTimeRange(r)
+	from, to := utils.ParseTimeRange(r)
 	page, perPage, offset := utils.ParsePagination(r.URL.Query().Get("page"), r.URL.Query().Get("perPage"))
 
 	clicks, total, err := h.urlService.ListClickLogs(r.Context(), userID, id, from, to, page, perPage, offset)
@@ -353,8 +324,10 @@ func (h *URLHandler) ListClickLogs(w http.ResponseWriter, r *http.Request) {
 // GetAnalytics handles GET /urls/{id}/analytics and returns aggregate click
 // analytics for a specific URL, optionally filtered by from/to query parameters.
 func (h *URLHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.getUserIDOrError(w, r)
+
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -365,7 +338,7 @@ func (h *URLHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	from, to := parseTimeRange(r)
+	from, to := utils.ParseTimeRange(r)
 
 	analytics, err := h.urlService.GetAnalytics(r.Context(), userID, id, from, to)
 	if err != nil {
@@ -375,19 +348,4 @@ func (h *URLHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Success(w, http.StatusOK, "analytics retrieved", []any{analytics})
-}
-
-// parseTimeRange extracts optional "from" and "to" RFC3339 query parameters.
-func parseTimeRange(r *http.Request) (from, to *time.Time) {
-	if s := r.URL.Query().Get("from"); s != "" {
-		if t, err := time.Parse(time.RFC3339, s); err == nil {
-			from = &t
-		}
-	}
-	if s := r.URL.Query().Get("to"); s != "" {
-		if t, err := time.Parse(time.RFC3339, s); err == nil {
-			to = &t
-		}
-	}
-	return
 }

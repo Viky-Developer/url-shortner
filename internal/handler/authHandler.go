@@ -48,7 +48,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ipAddress := clientIP(r).String()
+	ipAddress := utils.ClientIP(r).String()
 	userAgent := r.UserAgent()
 	deviceType := r.Header.Get("X-Device-Type")
 	deviceName := r.Header.Get("X-Device-Name")
@@ -75,7 +75,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	deviceType := r.Header.Get("X-Device-Type")
 	deviceName := r.Header.Get("X-Device-Name")
-	ipAddress := clientIP(r).String()
+	ipAddress := utils.ClientIP(r).String()
 	userAgent := r.UserAgent()
 	country := r.Header.Get("X-Country")
 	city := r.Header.Get("X-City")
@@ -99,7 +99,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ipAddress := clientIP(r).String()
+	ipAddress := utils.ClientIP(r).String()
 	userAgent := r.UserAgent()
 
 	err := h.authService.ForgotPassword(r.Context(), *req, ipAddress, userAgent)
@@ -120,14 +120,15 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := h.getUserIDFromContext(r)
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
 		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: user not authenticated", apperror.ErrUnauthorized))
 		return
 	}
-	sessionID, _ := h.getSessionIDFromContext(r)
 
-	ipAddress := clientIP(r).String()
+	sessionID, _ := utils.GetSessionIDFromContext(r)
+
+	ipAddress := utils.ClientIP(r).String()
 	userAgent := r.UserAgent()
 
 	err := h.authService.ChangePassword(r.Context(), userID, *req, sessionID, ipAddress, userAgent)
@@ -150,7 +151,11 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 
 	// sessionID is 0 when the client sent no access token; the middleware
 	// populates it from a valid-signature (possibly expired) JWT.
-	sessionID, _ := r.Context().Value(contextutil.SessionIDKey).(int64)
+	sessionID, ok := r.Context().Value(contextutil.SessionIDKey).(int64)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
+		return
+	}
 
 	resp, err := h.authService.RefreshToken(r.Context(), req.RefreshToken, sessionID)
 	if err != nil {
@@ -169,13 +174,13 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := h.getUserIDFromContext(r)
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
 		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
-	sessionID, ok := h.getSessionIDFromContext(r)
+	sessionID, ok := utils.GetSessionIDFromContext(r)
 	if !ok {
 		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
@@ -193,7 +198,8 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 // ListSessions handles GET /api/v1/auth/sessions
 func (h *AuthHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.getUserIDFromContext(r)
+
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
 		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
@@ -216,7 +222,8 @@ func (h *AuthHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 // RevokeSession handles DELETE /api/v1/auth/sessions/{id}
 func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.getUserIDFromContext(r)
+
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
 		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
@@ -244,13 +251,14 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 // Revokes all active sessions except the one identified by the current user's
 // session (extracted from the JWT access token).
 func (h *AuthHandler) RevokeOtherDevices(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.getUserIDFromContext(r)
+
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
 		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
-	sessionID, ok := h.getSessionIDFromContext(r)
+	sessionID, ok := utils.GetSessionIDFromContext(r)
 	if !ok {
 		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: session required", apperror.ErrUnauthorized))
 		return
@@ -269,7 +277,8 @@ func (h *AuthHandler) RevokeOtherDevices(w http.ResponseWriter, r *http.Request)
 // RevokeAllSessions handles POST /api/v1/auth/sessions/revoke-all
 // Revokes every active session for the user, forcing re-login on all devices.
 func (h *AuthHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.getUserIDFromContext(r)
+
+	userID, ok := utils.GetUserIDFromContext(r)
 	if !ok {
 		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
@@ -283,18 +292,4 @@ func (h *AuthHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	response.Success(w, http.StatusOK, "all sessions revoked, please re-login", []any{})
-}
-
-// getUserIDFromContext extracts the user ID from the request context.
-// This is set by the JWT auth middleware.
-func (h *AuthHandler) getUserIDFromContext(r *http.Request) (int64, bool) {
-	userID, ok := r.Context().Value(contextutil.UserIDKey).(int64)
-	return userID, ok
-}
-
-// getSessionIDFromContext extracts the session ID from the request context.
-// The middleware stores it under the SessionIDKey context key.
-func (h *AuthHandler) getSessionIDFromContext(r *http.Request) (int64, bool) {
-	sessionID, ok := r.Context().Value(contextutil.SessionIDKey).(int64)
-	return sessionID, ok
 }

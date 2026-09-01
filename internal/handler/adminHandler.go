@@ -11,7 +11,6 @@ import (
 
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
-	"github.com/vicky/url-shortner/internal/contextutil"
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/response"
 	"github.com/vicky/url-shortner/internal/utils"
@@ -29,7 +28,7 @@ type AdminService interface {
 	PurgeOldPasswordHistory(ctx context.Context, olderThan time.Duration) error
 	SoftDeleteUser(ctx context.Context, userID int64) error
 	HardDeleteUser(ctx context.Context, userID int64) error
-	LogAction(ctx context.Context, adminID int64, action, targetType string, targetID int64)
+	LogAction(ctx context.Context, adminID int64, action, targetType string, targetID int64, metaData ...byte)
 }
 
 // AdminHandler handles admin-only HTTP endpoints.
@@ -43,12 +42,9 @@ func NewAdminHandler(svc AdminService, log logger.Logger) *AdminHandler {
 	return &AdminHandler{adminService: svc, log: log}
 }
 
-// ───────────────────────────────────────────────────────────────
-//  BLOCKED DOMAINS
-// ───────────────────────────────────────────────────────────────
-
 // ListBlockedDomains handles GET /admin/blocked-domains.
 func (h *AdminHandler) ListBlockedDomains(w http.ResponseWriter, r *http.Request) {
+
 	domains, err := h.adminService.ListBlockedDomains(r.Context())
 	if err != nil {
 		h.log.Error("failed to list blocked domains", logger.Error(err))
@@ -61,10 +57,18 @@ func (h *AdminHandler) ListBlockedDomains(w http.ResponseWriter, r *http.Request
 
 // CreateBlockedDomain handles POST /admin/blocked-domains.
 func (h *AdminHandler) CreateBlockedDomain(w http.ResponseWriter, r *http.Request) {
+
 	var req payload.CreateBlockedDomainRequest
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.log.Error("invalid request body", logger.Error(err))
 		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: invalid request body", apperror.ErrInvalidPayload))
+		return
+	}
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -74,19 +78,29 @@ func (h *AdminHandler) CreateBlockedDomain(w http.ResponseWriter, r *http.Reques
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "create_blocked_domain", "blocked_domain", int64(domain.ID))
+
+	h.adminService.LogAction(r.Context(), userID, "CREATE_BLOCKED_DOMAIN", "BLOCKED_DOMAIN", int64(domain.ID))
+
 	response.Success(w, http.StatusCreated, "domain blocked", []any{domain})
 }
 
 // DeleteBlockedDomain handles DELETE /admin/blocked-domains/{id}.
 func (h *AdminHandler) DeleteBlockedDomain(w http.ResponseWriter, r *http.Request) {
+
 	id, err := utils.ParseID(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: invalid id", apperror.ErrInvalidPayload))
 		return
 	}
+
 	if id < 0 || id > math.MaxInt32 {
 		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: id out of range", apperror.ErrInvalidPayload))
+		return
+	}
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -95,7 +109,9 @@ func (h *AdminHandler) DeleteBlockedDomain(w http.ResponseWriter, r *http.Reques
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "delete_blocked_domain", "blocked_domain", id)
+
+	h.adminService.LogAction(r.Context(), userID, "DELETE_BLOCKED_DOMAIN", "BLOCKED_DOMAIN", id)
+
 	response.Success(w, http.StatusOK, "domain unblocked", []any{})
 }
 
@@ -112,15 +128,24 @@ func (h *AdminHandler) ListBlockedIPRanges(w http.ResponseWriter, r *http.Reques
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
+
 	response.Success(w, http.StatusOK, "blocked IP ranges retrieved", ranges)
 }
 
 // CreateBlockedIPRange handles POST /admin/blocked-ip-ranges.
 func (h *AdminHandler) CreateBlockedIPRange(w http.ResponseWriter, r *http.Request) {
+
 	var req payload.CreateBlockedIPRangeRequest
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.log.Error("invalid request body", logger.Error(err))
 		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: invalid request body", apperror.ErrInvalidPayload))
+		return
+	}
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -130,15 +155,24 @@ func (h *AdminHandler) CreateBlockedIPRange(w http.ResponseWriter, r *http.Reque
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "create_blocked_ip_range", "blocked_ip_range", ipRange.ID)
+
+	h.adminService.LogAction(r.Context(), userID, "CREATE_BLOCKED_IP_RANGE", "BLOCKED_IP_RANGE", ipRange.ID)
+
 	response.Success(w, http.StatusCreated, "IP range blocked", []any{ipRange})
 }
 
 // DeleteBlockedIPRange handles DELETE /admin/blocked-ip-ranges/{id}.
 func (h *AdminHandler) DeleteBlockedIPRange(w http.ResponseWriter, r *http.Request) {
+
 	id, err := utils.ParseID(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: invalid id", apperror.ErrInvalidPayload))
+		return
+	}
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -147,7 +181,9 @@ func (h *AdminHandler) DeleteBlockedIPRange(w http.ResponseWriter, r *http.Reque
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "delete_blocked_ip_range", "blocked_ip_range", id)
+
+	h.adminService.LogAction(r.Context(), userID, "DELETE_BLOCKED_IP_RANGE", "BLOCKED_IP_RANGE", id)
+
 	response.Success(w, http.StatusOK, "IP range unblocked", []any{})
 }
 
@@ -157,9 +193,16 @@ func (h *AdminHandler) DeleteBlockedIPRange(w http.ResponseWriter, r *http.Reque
 
 // SoftDeleteUser handles DELETE /admin/users/{id}/soft-delete.
 func (h *AdminHandler) SoftDeleteUser(w http.ResponseWriter, r *http.Request) {
+
 	id, err := utils.ParseID(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: invalid id", apperror.ErrInvalidPayload))
+		return
+	}
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -168,15 +211,24 @@ func (h *AdminHandler) SoftDeleteUser(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "soft_delete_user", "user", id)
+
+	h.adminService.LogAction(r.Context(), userID, "SOFT_DELETE_USER", "USER", id)
+
 	response.Success(w, http.StatusOK, "user soft deleted", []any{})
 }
 
 // HardDeleteUser handles DELETE /admin/users/{id}/hard-delete.
 func (h *AdminHandler) HardDeleteUser(w http.ResponseWriter, r *http.Request) {
+
 	id, err := utils.ParseID(r.PathValue("id"))
 	if err != nil {
 		response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: invalid id", apperror.ErrInvalidPayload))
+		return
+	}
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
 		return
 	}
 
@@ -185,7 +237,8 @@ func (h *AdminHandler) HardDeleteUser(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "hard_delete_user", "user", id)
+
+	h.adminService.LogAction(r.Context(), userID, "HARD_DELETE_USER", "USER", id)
 	response.Success(w, http.StatusOK, "user permanently deleted", []any{})
 }
 
@@ -195,41 +248,44 @@ func (h *AdminHandler) HardDeleteUser(w http.ResponseWriter, r *http.Request) {
 
 // PurgeSessions handles POST /admin/maintenance/purge-sessions.
 func (h *AdminHandler) PurgeSessions(w http.ResponseWriter, r *http.Request) {
-	days := parseDaysParam(r, 30)
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
+		return
+	}
+
+	days := utils.ParseDaysParam(r, 30)
+
 	if err := h.adminService.PurgeOldRevokedSessions(r.Context(), days); err != nil {
 		h.log.Error("failed to purge sessions", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "purge_sessions", "session", 0)
+
+	h.adminService.LogAction(r.Context(), userID, "PURGE_SESSION", "SESSION", 0)
+
 	response.Success(w, http.StatusOK, "old sessions purged", []any{})
 }
 
 // PurgePasswordHistory handles POST /admin/maintenance/purge-password-history.
 func (h *AdminHandler) PurgePasswordHistory(w http.ResponseWriter, r *http.Request) {
-	days := parseDaysParam(r, 90)
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
+		return
+	}
+
+	days := utils.ParseDaysParam(r, 90)
+
 	if err := h.adminService.PurgeOldPasswordHistory(r.Context(), days); err != nil {
 		h.log.Error("failed to purge password history", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
-	h.adminService.LogAction(r.Context(), getAdminID(r.Context()), "purge_password_history", "password_history", 0)
+
+	h.adminService.LogAction(r.Context(), userID, "PURGE_PASSWORD_HISTORY", "PASSWORD_HISTORY", 0)
+
 	response.Success(w, http.StatusOK, "old password history purged", []any{})
-}
-
-func parseDaysParam(r *http.Request, defaultDays int32) time.Duration {
-	if s := r.URL.Query().Get("days"); s != "" {
-		n := utils.ParsePositiveInt(s, defaultDays)
-		if n > 0 {
-			return time.Duration(n) * 24 * time.Hour
-		}
-	}
-	return time.Duration(defaultDays) * 24 * time.Hour
-}
-
-// getAdminID extracts the authenticated admin's user ID from context.
-// Returns 0 if not found (should not happen behind auth middleware).
-func getAdminID(ctx context.Context) int64 {
-	id, _ := ctx.Value(contextutil.UserIDKey).(int64)
-	return id
 }

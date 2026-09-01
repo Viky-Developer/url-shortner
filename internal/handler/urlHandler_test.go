@@ -1419,7 +1419,7 @@ func TestGetAnalyticsServiceError(t *testing.T) {
 
 func TestParseTimeRange(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/urls/1/analytics?from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z", nil)
-	from, to := parseTimeRange(req)
+	from, to := utils.ParseTimeRange(req)
 
 	if from == nil || from.Year() != 2026 {
 		t.Errorf("from = %v, want 2026", from)
@@ -1429,7 +1429,7 @@ func TestParseTimeRange(t *testing.T) {
 	}
 
 	req2 := httptest.NewRequest(http.MethodGet, "/urls/1/analytics", nil)
-	from2, to2 := parseTimeRange(req2)
+	from2, to2 := utils.ParseTimeRange(req2)
 	if from2 != nil || to2 != nil {
 		t.Error("expected nil from/to for empty params")
 	}

@@ -14,7 +14,8 @@ func TestNew(t *testing.T) {
 	h := handler.NewURLHandler(nil, log)
 	ah := handler.NewAuthHandler(nil, log)
 	adH := handler.NewAdminHandler(nil, log)
-	mux := New(h, ah, adH, nil)
+	accH := handler.NewAccountHandler(nil, log)
+	mux := New(h, ah, adH, accH, nil)
 
 	if mux == nil {
 		t.Fatal("expected non-nil handler from New()")
@@ -30,7 +31,8 @@ func TestRoutesRegistered(t *testing.T) {
 	h := handler.NewURLHandler(nil, log)
 	ah := handler.NewAuthHandler(nil, log)
 	adH := handler.NewAdminHandler(nil, log)
-	mux := New(h, ah, adH, nil)
+	accH := handler.NewAccountHandler(nil, log)
+	mux := New(h, ah, adH, accH, nil)
 
 	routes := []struct {
 		method string
@@ -43,6 +45,10 @@ func TestRoutesRegistered(t *testing.T) {
 		{http.MethodPatch, "/api/v1/urls/456"},
 		{http.MethodDelete, "/api/v1/urls/456"},
 		{http.MethodDelete, "/api/v1/urls/456/approve"},
+		// Account deletion routes
+		{http.MethodDelete, "/api/v1/account"},
+		{http.MethodPost, "/api/v1/account/cancel-deletion"},
+		{http.MethodGet, "/api/v1/account/status"},
 	}
 
 	for _, rt := range routes {

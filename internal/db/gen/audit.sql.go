@@ -12,26 +12,111 @@ import (
 	"github.com/sqlc-dev/pqtype"
 )
 
+const countAuditLogs = `-- name: CountAuditLogs :one
+SELECT COUNT(*) FROM audit_logs
+WHERE ($1 IS NULL OR actor_user_id = $1)
+  AND ($2 IS NULL OR action = $2)
+  AND ($3 IS NULL OR entity_type = $3)
+  AND ($4 IS NULL OR entity_id = $4)
+`
+
+type CountAuditLogsParams struct {
+	Column1 interface{} `json:"column_1"`
+	Column2 interface{} `json:"column_2"`
+	Column3 interface{} `json:"column_3"`
+	Column4 interface{} `json:"column_4"`
+}
+
+func (q *Queries) CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAuditLogs,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const insertAuditLog = `-- name: InsertAuditLog :exec
-INSERT INTO admin_audit_log (admin_id, action, target_type, target_id, details)
+INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata)
 VALUES ($1, $2, $3, $4, $5)
 `
 
 type InsertAuditLogParams struct {
-	AdminID    sql.NullInt64         `json:"admin_id"`
-	Action     string                `json:"action"`
-	TargetType sql.NullString        `json:"target_type"`
-	TargetID   sql.NullInt64         `json:"target_id"`
-	Details    pqtype.NullRawMessage `json:"details"`
+	ActorUserID sql.NullInt64         `json:"actor_user_id"`
+	Action      string                `json:"action"`
+	EntityType  sql.NullString        `json:"entity_type"`
+	EntityID    sql.NullInt64         `json:"entity_id"`
+	Metadata    pqtype.NullRawMessage `json:"metadata"`
 }
 
 func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error {
 	_, err := q.db.ExecContext(ctx, insertAuditLog,
-		arg.AdminID,
+		arg.ActorUserID,
 		arg.Action,
-		arg.TargetType,
-		arg.TargetID,
-		arg.Details,
+		arg.EntityType,
+		arg.EntityID,
+		arg.Metadata,
 	)
 	return err
+}
+
+const listAuditLogs = `-- name: ListAuditLogs :many
+SELECT id, actor_user_id, action, entity_type, entity_id, metadata, created_at
+FROM audit_logs
+WHERE ($1 IS NULL OR actor_user_id = $1)
+  AND ($2 IS NULL OR action = $2)
+  AND ($3 IS NULL OR entity_type = $3)
+  AND ($4 IS NULL OR entity_id = $4)
+ORDER BY created_at DESC
+LIMIT $5 OFFSET $6
+`
+
+type ListAuditLogsParams struct {
+	Column1 interface{} `json:"column_1"`
+	Column2 interface{} `json:"column_2"`
+	Column3 interface{} `json:"column_3"`
+	Column4 interface{} `json:"column_4"`
+	Limit   int32       `json:"limit"`
+	Offset  int32       `json:"offset"`
+}
+
+func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]AuditLog, error) {
+	rows, err := q.db.QueryContext(ctx, listAuditLogs,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditLog
+	for rows.Next() {
+		var i AuditLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorUserID,
+			&i.Action,
+			&i.EntityType,
+			&i.EntityID,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -1,8 +1,8 @@
 -- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_user_id, display_user_name, role, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL;
+SELECT id, email, password_hash, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL;
 
 -- name: GetUserByID :one
-SELECT id, email, display_user_id, display_user_name, role, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL;
+SELECT id, email, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: CreateUser :one
 INSERT INTO users (email, password_hash, display_user_id, display_user_name, password_changed_at)

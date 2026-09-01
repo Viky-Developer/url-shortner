@@ -73,19 +73,28 @@ func run() error {
 	}
 
 	authService := service.NewAuthService(queries, database, cfg, sessionCache, log)
-	urlHandler := buildURLHandler(cfg, database, log)
 	authHandler := handler.NewAuthHandler(authService, log)
+
+	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, log)
+	urlHandler := handler.NewURLHandler(urlService, log)
+
 	adminService := service.NewAdminService(queries)
 	adminHandler := handler.NewAdminHandler(adminService, log)
-	app := middleware.Chain(routes.New(urlHandler, authHandler, adminHandler, authService),
+
+	accountDeletionService := service.NewAccountDeletionService(queries, database, adminService, sessionCache, urlService, log)
+	accountHandler := handler.NewAccountHandler(accountDeletionService, log)
+
+	app := middleware.Chain(routes.New(urlHandler, authHandler, adminHandler, accountHandler, authService),
 		middleware.Recovery(log),
 		middleware.Logger(log),
 		middleware.ContentTypeJSON,
 	)
 
-	// Start the background retention worker for session/password history cleanup.
-	retentionWorker := service.NewRetentionWorker(adminService, queries, cfg, log)
+	// Start the background retention worker for session/password history cleanup
+	// and expired account deletions.
+	retentionWorker := service.NewRetentionWorker(adminService, accountDeletionService, queries, cfg, log)
 	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+
 	go retentionWorker.Start(retentionCtx)
 
 	server := &http.Server{
@@ -140,6 +149,7 @@ func connectDatabase(cfg *config.Config, log logger.Logger) (*sql.DB, error) {
 // ensureDefaultUser creates a default user from .env credentials if one does
 // not already exist, and ensures the default user always has the ADMIN role.
 func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) error {
+
 	q := gen.New(database)
 	user, err := q.GetUserByEmail(context.Background(), cfg.DefaultUserEmail)
 	if err == nil {
@@ -212,12 +222,4 @@ func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) 
 		logger.String("userId", utils.EncodeID(row.ID, utils.UserIDPrefix, cfg.UserIDSecretKey)),
 	)
 	return nil
-}
-
-// buildURLHandler constructs the query layer, service, and HTTP handler for
-// the URL endpoints.
-func buildURLHandler(cfg *config.Config, database *sql.DB, log logger.Logger) *handler.URLHandler {
-	queries := gen.New(database)
-	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, log)
-	return handler.NewURLHandler(urlService, log)
 }

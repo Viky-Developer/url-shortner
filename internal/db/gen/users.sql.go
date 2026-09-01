@@ -111,7 +111,7 @@ func (q *Queries) DeletePasswordHistoryOver(ctx context.Context, arg DeletePassw
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_user_id, display_user_name, role, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL
+SELECT id, email, password_hash, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL
 `
 
 type GetUserByEmailRow struct {
@@ -121,6 +121,7 @@ type GetUserByEmailRow struct {
 	DisplayUserID     sql.NullString `json:"display_user_id"`
 	DisplayUserName   sql.NullString `json:"display_user_name"`
 	Role              string         `json:"role"`
+	Status            string         `json:"status"`
 	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
 }
 
@@ -134,13 +135,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 		&i.DisplayUserID,
 		&i.DisplayUserName,
 		&i.Role,
+		&i.Status,
 		&i.PasswordChangedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, display_user_id, display_user_name, role, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL
+SELECT id, email, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserByIDRow struct {
@@ -149,6 +151,7 @@ type GetUserByIDRow struct {
 	DisplayUserID     sql.NullString `json:"display_user_id"`
 	DisplayUserName   sql.NullString `json:"display_user_name"`
 	Role              string         `json:"role"`
+	Status            string         `json:"status"`
 	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
 }
 
@@ -161,6 +164,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, er
 		&i.DisplayUserID,
 		&i.DisplayUserName,
 		&i.Role,
+		&i.Status,
 		&i.PasswordChangedAt,
 	)
 	return i, err
