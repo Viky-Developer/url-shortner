@@ -89,10 +89,31 @@ Hero section, feature highlights, sign up / login CTAs. No data fetching needed.
 - Change password form (current + new password)
 - Show password age (days since last change) and a suggestion banner if it's old
 - Display name (read-only for now)
+- **Delete Account button** — opens a confirmation modal (see Account Deletion flow)
 
-### 10. Admin Panel
+### 10. Account Deletion (Settings sub-flow)
+- **Trigger:** "Delete Account" button in Settings
+- **Confirmation modal:**
+  - Warning banner explaining all account data will be permanently removed after 30 days
+  - User must type the word `DELETE` exactly (case-sensitive) into an input field to confirm
+  - Submit button disabled until the input matches `DELETE`
+  - Cancel button closes the modal
+- **On success:**
+  - Show a toast/banner: "Your account is scheduled for deletion. You can cancel within 30 days."
+  - Sessions are revoked immediately (user is logged out)
+  - Redirect to login page
+- **Account Status indicator** (in Settings or a dedicated status page):
+  - Shows current status: `ACTIVE`, `PENDING_DELETION`, or `DELETED`
+  - If `PENDING_DELETION`: shows scheduled deletion date and a **Cancel Deletion** button
+  - Cancel restores the account to `ACTIVE` immediately
+- **Grace period behavior:**
+  - Login is blocked while status is `PENDING_DELETION` (generic error, no status leak)
+  - After 30 days the account and all data are permanently hard-deleted
+
+### 11. Admin Panel
 - **Blocked Domains:** table of blocked domains with reason, add/delete actions
 - **Blocked IP Ranges:** table of CIDR ranges with description, add/delete actions
+- **User Management:** list users, soft-delete / hard-delete actions
 - **Maintenance:** buttons to purge old sessions and password history (with configurable days input)
 
 ---
@@ -101,10 +122,11 @@ Hero section, feature highlights, sign up / login CTAs. No data fetching needed.
 
 | State | Badge Color | Used For |
 |---|---|---|
-| Active / Healthy | Green | URL is live, destination reachable |
+| Active / Healthy | Green | URL is live, destination reachable, account is active |
 | Disabled / Revoked | Gray | URL turned off, session revoked |
+| Pending Deletion | Amber/Orange | Account scheduled for deletion (30-day grace) |
 | Expired | Yellow/Amber | URL past expiry, session expired |
-| Deleted / Unhealthy | Red | URL soft-deleted, destination unreachable |
+| Deleted / Unhealthy | Red | URL soft-deleted, account hard-deleted, destination unreachable |
 
 ---
 
@@ -125,8 +147,11 @@ Hero section, feature highlights, sign up / login CTAs. No data fetching needed.
 |---|---|
 | 400 validation error | Show `message` inline under the relevant field |
 | 401 unauthorized | Auto-refresh token; if fails, redirect to login |
+| 403 forbidden | Account is pending deletion — show status page with cancel option |
+| 404 not found | Show "Resource not found" message |
 | 409 device limit | Show session picker modal (see Login flow above) |
 | 409 code taken | Show "This code is already in use" under custom code field |
+| 409 account pending | Account already pending deletion — show current status |
 | Network error | Toast notification: "Something went wrong. Please try again." |
 | 415 wrong content-type | Internal — handled by always sending JSON |
 
@@ -153,6 +178,9 @@ Hero section, feature highlights, sign up / login CTAs. No data fetching needed.
 5. **Click log pagination** is separate from the main pagination — it has its own page/total inside the data payload.
 6. **Password max 8 chars** — unusual but intentional. The strength indicator should reflect this constraint.
 7. **No CORS configured** — frontend dev server will need a proxy to the backend during development.
+8. **Account deletion is 30-day grace** — sessions are revoked immediately, but the account data persists for 30 days. Show the scheduled deletion date clearly.
+9. **Login blocked during deletion** — if a user tries to log in while status is `PENDING_DELETION`, the server returns a generic 401. Do not expose the account status in the login error.
+10. **Delete confirmation requires exact match** — the confirmation input must be exactly `DELETE` (case-sensitive). Disable the submit button until it matches.
 
 ---
 
