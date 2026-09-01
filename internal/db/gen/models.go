@@ -11,14 +11,14 @@ import (
 	"github.com/sqlc-dev/pqtype"
 )
 
-type AdminAuditLog struct {
-	ID         int64                 `json:"id"`
-	AdminID    sql.NullInt64         `json:"admin_id"`
-	Action     string                `json:"action"`
-	TargetType sql.NullString        `json:"target_type"`
-	TargetID   sql.NullInt64         `json:"target_id"`
-	Details    pqtype.NullRawMessage `json:"details"`
-	CreatedAt  sql.NullTime          `json:"created_at"`
+type AuditLog struct {
+	ID          int64                 `json:"id"`
+	ActorUserID sql.NullInt64         `json:"actor_user_id"`
+	Action      string                `json:"action"`
+	EntityType  sql.NullString        `json:"entity_type"`
+	EntityID    sql.NullInt64         `json:"entity_id"`
+	Metadata    pqtype.NullRawMessage `json:"metadata"`
+	CreatedAt   sql.NullTime          `json:"created_at"`
 }
 
 type BlockedDomain struct {
@@ -117,14 +117,16 @@ type UrlVersion struct {
 }
 
 type User struct {
-	ID                int64          `json:"id"`
-	Email             string         `json:"email"`
-	PasswordHash      string         `json:"password_hash"`
-	DisplayUserID     sql.NullString `json:"display_user_id"`
-	DisplayUserName   sql.NullString `json:"display_user_name"`
-	Role              string         `json:"role"`
-	CreatedAt         sql.NullTime   `json:"created_at"`
-	UpdatedAt         sql.NullTime   `json:"updated_at"`
-	DeletedAt         sql.NullTime   `json:"deleted_at"`
-	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
+	ID                  int64          `json:"id"`
+	Email               string         `json:"email"`
+	PasswordHash        string         `json:"password_hash"`
+	DisplayUserID       sql.NullString `json:"display_user_id"`
+	DisplayUserName     sql.NullString `json:"display_user_name"`
+	Role                string         `json:"role"`
+	CreatedAt           sql.NullTime   `json:"created_at"`
+	UpdatedAt           sql.NullTime   `json:"updated_at"`
+	DeletedAt           sql.NullTime   `json:"deleted_at"`
+	PasswordChangedAt   sql.NullTime   `json:"password_changed_at"`
+	Status              string         `json:"status"`
+	DeletionScheduledAt sql.NullTime   `json:"deletion_scheduled_at"`
 }

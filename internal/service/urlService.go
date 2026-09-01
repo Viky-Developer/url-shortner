@@ -287,6 +287,7 @@ func (s *URLService) withTx(ctx context.Context, fn func(q gen.Querier) error) e
 		s.log.Error("failed to commit transaction", logger.Error(err))
 		return apperror.ErrInternal
 	}
+
 	return nil
 }
 

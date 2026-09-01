@@ -244,6 +244,7 @@ func TestRefreshTokenHandler(t *testing.T) {
 
 	body := `{"refreshToken":"some-token"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewBufferString(body))
+	req = req.WithContext(context.WithValue(req.Context(), contextutil.SessionIDKey, int64(10)))
 	w := httptest.NewRecorder()
 
 	h.RefreshToken(w, req)

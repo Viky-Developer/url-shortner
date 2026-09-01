@@ -61,6 +61,13 @@ type mockQuerier struct {
 	revokeSessionsExceptFn func(context.Context, gen.RevokeSessionsByUserExceptParams) error
 	expireSessionFn        func(context.Context, int64) error
 	expireSessionsByUserFn func(context.Context, int64) error
+	userStatusByIDFn       func(context.Context, int64) (gen.GetUserStatusByIDRow, error)
+	markPendingDeletionFn  func(context.Context, int64) error
+	restoreAccountFn       func(context.Context, int64) error
+	accountsDueDeletionFn  func(context.Context) ([]int64, error)
+	hardDeleteUserByIDFn   func(context.Context, int64) error
+	countAuditLogsFn       func(context.Context, gen.CountAuditLogsParams) (int64, error)
+	listAuditLogsFn        func(context.Context, gen.ListAuditLogsParams) ([]gen.AuditLog, error)
 }
 
 func (m *mockQuerier) ExecContext(_ context.Context, _ string, _ ...interface{}) (sql.Result, error) {
@@ -374,6 +381,55 @@ func (m *mockQuerier) RevokeAllSessionsByUser(ctx context.Context, userID int64)
 		return m.revokeAllSessionsFn(ctx, userID)
 	}
 	return nil
+}
+
+func (m *mockQuerier) GetUserStatusByID(ctx context.Context, id int64) (gen.GetUserStatusByIDRow, error) {
+	if m.userStatusByIDFn != nil {
+		return m.userStatusByIDFn(ctx, id)
+	}
+	return gen.GetUserStatusByIDRow{ID: id, Status: "ACTIVE"}, nil
+}
+
+func (m *mockQuerier) MarkPendingDeletion(ctx context.Context, id int64) error {
+	if m.markPendingDeletionFn != nil {
+		return m.markPendingDeletionFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *mockQuerier) RestoreAccount(ctx context.Context, id int64) error {
+	if m.restoreAccountFn != nil {
+		return m.restoreAccountFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *mockQuerier) GetAccountsDueForDeletion(ctx context.Context) ([]int64, error) {
+	if m.accountsDueDeletionFn != nil {
+		return m.accountsDueDeletionFn(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) HardDeleteUserByID(ctx context.Context, id int64) error {
+	if m.hardDeleteUserByIDFn != nil {
+		return m.hardDeleteUserByIDFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *mockQuerier) CountAuditLogs(ctx context.Context, arg gen.CountAuditLogsParams) (int64, error) {
+	if m.countAuditLogsFn != nil {
+		return m.countAuditLogsFn(ctx, arg)
+	}
+	return 0, nil
+}
+
+func (m *mockQuerier) ListAuditLogs(ctx context.Context, arg gen.ListAuditLogsParams) ([]gen.AuditLog, error) {
+	if m.listAuditLogsFn != nil {
+		return m.listAuditLogsFn(ctx, arg)
+	}
+	return nil, nil
 }
 
 func (m *mockQuerier) RevokeOtherSessionsByUser(ctx context.Context, arg gen.RevokeOtherSessionsByUserParams) error {

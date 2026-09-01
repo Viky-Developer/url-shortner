@@ -247,6 +247,13 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 		return nil, apperror.ErrInternal
 	}
 
+	// Block login for accounts pending deletion. Return the same generic
+	// error as bad credentials so account status is not leaked.
+	if user.Status == "PENDING_DELETION" {
+		s.log.Warn("login attempt for account pending deletion", logger.Int64("userID", user.ID))
+		return nil, apperror.ErrUnauthorized
+	}
+
 	// Verify password
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
 	if err != nil {

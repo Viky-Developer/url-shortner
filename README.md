@@ -1,15 +1,27 @@
 # url-shortner
 
-A URL shortening service built with **Go**, using **sqlc + goose** for type-safe database access and migrations, a message queue (**RabbitMQ**) for async processing, and **Grafana** (with **Prometheus**) for observability and monitoring.
+A URL shortening service built with **Go**, using **sqlc + goose** for type-safe database access and migrations, **Redis** for session caching, and **JWT** for stateless authentication.
 
 ## Features
 
-- Create short URLs from long URLs
+- Create short URLs from long URLs (custom or random 10-char codes)
 - Redirect short URLs to their original destination
-- Async link analytics / click tracking via RabbitMQ
+- Click analytics with daily stats, referrer/device/browser breakdowns
+- User authentication (register, login, password reset) with JWT + session management
+- Multi-device session tracking with device limit enforcement
+- Self-service account deletion with a 30-day grace period
+- Admin panel: blocked domains/IP ranges, user management, maintenance purges
+- Destination health checks on URL creation/update
+- Role-based access control (USER / ADMIN)
 - Type-safe SQL queries generated with sqlc
 - Database migrations managed with goose
-- Metrics scraping with Prometheus and dashboards in Grafana
+- Session caching with Redis
+
+### Roadmap
+
+- Async link analytics / click tracking via RabbitMQ
+- Metrics scraping with Prometheus
+- Dashboards in Grafana
 
 ## Architecture
 
@@ -18,30 +30,42 @@ Client ──► HTTP Server (cmd/server)
               │
               ├── handler ──► service ──► db (sqlc generated)
               │                                │
-              │                                └── Postgres (goose migrations)
+              │                                ├── Postgres (goose migrations)
+              │                                └── Redis (session cache)
               │
-              └── publish click events ──► RabbitMQ
-                                               │
-                                               └── consumers (analytics)
+              └── middleware (auth, role, logging, recovery)
 ```
 
 - **cmd/server** — application entry point
-- **internal/handler** — HTTP handlers
-- **internal/service** — business logic (shortening, redirect, analytics)
+- **internal/handler** — HTTP handlers (auth, URL, admin, account)
+- **internal/service** — business logic (auth, URL, admin, account deletion, retention)
 - **internal/db** — database layer (migrations + queries + generated code)
 - **internal/db/migrations** — goose SQL migrations (schema source of truth)
 - **internal/db/queries** — raw SQL queries used by sqlc
 - **internal/db/gen** — sqlc-generated type-safe Go code
-- **pkg** — shared / reusable packages
+- **internal/middleware** — auth, role enforcement, logging, content-type
+- **internal/apperror** — sentinel errors mapped to HTTP status codes
+- **internal/payload** — request/response structs
+- **internal/response** — JSON response helpers
+- **internal/routes** — route registration on ServeMux
+- **internal/validation** — request binding and validation
+- **internal/contextutil** — request context helpers
+- **internal/enum** — role and status enums
+- **internal/graceful** — graceful shutdown
+- **internal/utils** — encoding, IP, string utilities
+- **external/logger** — structured logging (zap)
+- **external/cache** — Redis session cache
 
 ## Requirements
 
 - Go 1.26+
 - [sqlc](https://sqlc.dev/) (installed via `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest`)
 - [goose](https://pressly.github.io/goose/) for database migrations
-- Docker & Docker Compose (for Postgres, RabbitMQ, Prometheus, Grafana)
-- PostgreSQL for URL storage
+- Docker & Docker Compose (for Postgres and Redis)
+- PostgreSQL for data storage
+- Redis for session caching (graceful fallback if unavailable)
 - [lefthook](https://lefthook.dev/) for git hooks (install via `go install github.com/evilmartians/lefthook@latest`)
+- [golangci-lint](https://golangci-lint.run/) for linting
 
 ## Git Hooks (lefthook)
 
@@ -125,80 +149,150 @@ goose -dir internal/db/migrations postgres "$DB_DSN" up
 ### 1. Start infrastructure with Docker Compose
 
 ```bash
-docker compose up -d rabbitmq prometheus grafana
+make docker-up
 ```
 
 This brings up:
 
-| Service   | URL                              | Default credentials   |
-|-----------|----------------------------------|-----------------------|
-| RabbitMQ  | http://localhost:15672           | guest / guest         |
-| Prometheus| http://localhost:9090            | -                     |
-| Grafana   | http://localhost:3000            | admin / admin         |
+| Service   | Port  | Default credentials   |
+|-----------|-------|-----------------------|
+| Postgres  | 5432  | urlshortner / urlshortner123 |
+| Redis     | 6379  | (no password)         |
 
-### 2. Run the server
+> Additional services (RabbitMQ, Prometheus, Grafana) are planned — see [Roadmap](#roadmap-1).
+
+### 2. Apply database migrations
 
 ```bash
-go run ./cmd/server
+make migration-up
+```
+
+### 3. Run the server
+
+```bash
+make run
+```
+
+Or with live reload (Air):
+
+```bash
+make dev
 ```
 
 ## Configuration
 
-Configuration is handled in `internal/config`. Settings can be provided via environment variables or a config file (e.g. `.env` / YAML), including:
+Configuration is handled via environment variables (loaded from `.env`). See `internal/config` for all supported keys:
 
-- Server listen address and port
-- Database connection (DSN)
-- RabbitMQ connection URL
-- Base URL prefix for generated short links
-
-## RabbitMQ
-
-RabbitMQ is used for async event processing, such as recording click count per short link. The service publishes messages (e.g. click events) to a queue, and consumers handle the analytics.
-
-## Observability (Grafana + Prometheus)
-
-The service exposes Prometheus metrics (e.g. `/:metrics` or `/metrics`).
-
-- **Prometheus** scrapes the service metrics endpoint (scrape config: `prometheus.yml`).
-- **Grafana** connects to Prometheus as a data source and provides:
-  - Request rate and latency dashboards
-  - Total URLs created / redirects served
-  - RabbitMQ queue depth and consumer health
-
-### Import dashboard
-
-In Grafana, add the Prometheus data source (`http://prometheus:9090`) and import a dashboard (JSON can be provided in `deploy/grafana/`).
-
-## API
-
-| Method | Path           | Description             |
-|--------|----------------|-------------------------|
-| POST   | `/shorten`     | Create a short URL      |
-| GET    | `/:shortCode`  | Redirect to original URL|
-| GET    | `/metrics`     | Prometheus metrics      |
-
-> Endpoints are placeholders until the service is fully implemented.
+| Variable | Default | Description |
+|---|---|---|
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_USER` | `urlshortner` | Database user |
+| `DB_PASSWORD` | `urlshortner123` | Database password |
+| `DB_NAME` | `urlshortner` | Database name |
+| `DB_SSLMODE` | `disable` | SSL mode |
+| `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `JWT_SECRET_KEY` | — | HMAC signing key for JWT tokens |
+| `USER_ID_SECRET_KEY` | — | HMAC key for encoding user display IDs |
+| `ACCESS_TOKEN_EXPIRY` | `15` | Access token lifetime (minutes) |
+| `REFRESH_TOKEN_EXPIRY` | `7` | Refresh token lifetime (days) |
+| `REDIS_HOST` | `localhost` | Redis host |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_USERNAME` | `""` | Redis AUTH username |
+| `REDIS_PASSWORD` | `""` | Redis AUTH password |
+| `REDIS_DB` | `0` | Redis database number |
 
 ## Project Structure
 
 ```
 .
-├── cmd/server          # main entry point
+├── cmd/server              # application entry point
 ├── internal
-│   ├── config         # configuration
-│   ├── handler        # HTTP handlers
-│   ├── service        # business logic
-│   └── db             # database layer (sqlc + goose)
-│       ├── migrations # goose SQL migrations
-│       ├── queries    # raw SQL queries (sqlc input)
-│       └── gen        # sqlc-generated code
-├── pkg                 # shared packages
-├── sqlc.yaml          # sqlc configuration
-├── Dockerfile
-├── docker-compose.yml
+│   ├── apperror/           # sentinel errors
+│   ├── config/             # configuration (env vars)
+│   ├── contextutil/        # request context helpers
+│   ├── db
+│   │   ├── gen/            # sqlc-generated code
+│   │   ├── migrations/     # goose SQL migrations
+│   │   ├── queries/        # raw SQL queries (sqlc input)
+│   │   └── seeds/          # seed data migrations
+│   ├── enum/               # role and status enums
+│   ├── graceful/           # graceful shutdown
+│   ├── handler/            # HTTP handlers (auth, URL, admin, account)
+│   ├── middleware/          # auth, role, logging, content-type
+│   ├── payload/            # request/response structs
+│   ├── response/           # JSON response helpers
+│   ├── routes/             # route registration
+│   ├── service/            # business logic
+│   ├── utils/              # encoding, IP, string utilities
+│   └── validation/         # request binding and validation
+├── external
+│   ├── cache/              # Redis session cache
+│   └── logger/             # structured logging (zap)
+├── scripts/                # helper scripts
+├── sqlc.yaml               # sqlc configuration
+├── lefthook.yml            # git hooks config
+├── docker-compose.yml      # Postgres + Redis
+├── Makefile                # dev commands
 └── README.md
 ```
 
 ## License
 
 See [LICENSE](LICENSE).
+
+---
+
+## Roadmap
+
+The following features are planned for future implementation.
+
+### RabbitMQ
+
+RabbitMQ will be used for async event processing, such as recording click count per short link. The service will publish messages (e.g. click events) to a queue, and consumers will handle the analytics.
+
+```yaml
+# docker-compose.yml (planned)
+rabbitmq:
+  image: rabbitmq:3-management
+  ports:
+    - "5672:5672"
+    - "15672:15672"
+```
+
+| Service   | URL                    | Default credentials |
+|-----------|------------------------|---------------------|
+| RabbitMQ  | http://localhost:15672 | guest / guest       |
+
+### Observability (Grafana + Prometheus)
+
+The service will expose a Prometheus metrics endpoint (`/metrics`).
+
+- **Prometheus** will scrape the service metrics endpoint (scrape config: `prometheus.yml`).
+- **Grafana** will connect to Prometheus as a data source and provide:
+  - Request rate and latency dashboards
+  - Total URLs created / redirects served
+  - RabbitMQ queue depth and consumer health
+
+To import a dashboard in Grafana, add the Prometheus data source (`http://prometheus:9090`) and import a dashboard (JSON can be provided in `deploy/grafana/`).
+
+```yaml
+# docker-compose.yml (planned)
+prometheus:
+  image: prom/prometheus
+  ports:
+    - "9090:9090"
+
+grafana:
+  image: grafana/grafana
+  ports:
+    - "3000:3000"
+  environment:
+    GF_SECURITY_ADMIN_USER: admin
+    GF_SECURITY_ADMIN_PASSWORD: admin
+```
+
+| Service   | URL                    | Default credentials |
+|-----------|------------------------|---------------------|
+| Prometheus| http://localhost:9090   | -                   |
+| Grafana   | http://localhost:3000   | admin / admin       |

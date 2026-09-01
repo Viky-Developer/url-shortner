@@ -11,8 +11,8 @@ import (
 )
 
 // New builds a new ServeMux with every application route wired to the given
-// URL handler and returns it as an http.Handler.
-func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, adminHandler *handler.AdminHandler, authService *service.AuthService) http.Handler {
+// handlers and returns it as an http.Handler.
+func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, adminHandler *handler.AdminHandler, accountHandler *handler.AccountHandler, authService *service.AuthService) http.Handler {
 	mux := http.NewServeMux()
 
 	// Auth routes (public)
@@ -39,6 +39,11 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 	mux.Handle("DELETE /api/v1/urls/{id}/approve", authMiddleware(http.HandlerFunc(urlHandler.ApproveHardDelete)))
 	mux.Handle("GET /api/v1/urls/{id}/clicks", authMiddleware(http.HandlerFunc(urlHandler.ListClickLogs)))
 	mux.Handle("GET /api/v1/urls/{id}/analytics", authMiddleware(http.HandlerFunc(urlHandler.GetAnalytics)))
+
+	// Account routes (protected) — self-service account deletion lifecycle
+	mux.Handle("DELETE /api/v1/account", authMiddleware(http.HandlerFunc(accountHandler.DeleteAccount)))
+	mux.Handle("POST /api/v1/account/cancel-deletion", authMiddleware(http.HandlerFunc(accountHandler.CancelDeletion)))
+	mux.Handle("GET /api/v1/account/status", authMiddleware(http.HandlerFunc(accountHandler.GetAccountStatus)))
 
 	// Admin routes (protected) — require authentication + ADMIN role
 	adminMiddleware := middleware.RequireRole(enum.RoleAdmin, nil)

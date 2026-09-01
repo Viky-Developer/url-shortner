@@ -50,4 +50,7 @@ var (
 	// ErrInvalidCurrentPassword is returned when the supplied current
 	// password does not match the stored hash.
 	ErrInvalidCurrentPassword = errors.New("invalid current password")
+	// ErrForbidden is returned when the action is not allowed for the
+	// current account state (e.g. account pending deletion).
+	ErrForbidden = errors.New("action not allowed")
 )

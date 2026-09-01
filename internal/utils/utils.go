@@ -19,6 +19,7 @@ import (
 
 	"github.com/sqlc-dev/pqtype"
 	"github.com/vicky/url-shortner/internal/apperror"
+	"github.com/vicky/url-shortner/internal/contextutil"
 )
 
 // UnixMilliTime is a time.Time that accepts both RFC3339 strings and Unix
@@ -329,4 +330,62 @@ func ParseDeviceType(ua string) string {
 	default:
 		return "Desktop"
 	}
+}
+
+func GetUserIDFromContext(r *http.Request) (int64, bool) {
+	userID, ok := r.Context().Value(contextutil.UserIDKey).(int64)
+	return userID, ok
+}
+
+func GetSessionIDFromContext(r *http.Request) (int64, bool) {
+	sessionID, ok := r.Context().Value(contextutil.SessionIDKey).(int64)
+	return sessionID, ok
+}
+
+// ParseTimeRange extracts optional "from" and "to" RFC3339 query parameters.
+func ParseTimeRange(r *http.Request) (from, to *time.Time) {
+	if s := r.URL.Query().Get("from"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			from = &t
+		}
+	}
+	if s := r.URL.Query().Get("to"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			to = &t
+		}
+	}
+	return
+}
+
+// ClientIP extracts the client IP from the X-Forwarded-For header or the
+// request's remote address. Returns a fallback loopback address when the
+// source IP cannot be determined.
+func ClientIP(r *http.Request) net.IP {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if ip := net.ParseIP(strings.TrimSpace(strings.Split(xff, ",")[0])); ip != nil {
+			return ip
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return net.IPv4(127, 0, 0, 1)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip
+	}
+	return net.IP(net.IPv4(127, 0, 0, 1).String())
+}
+
+func ParseDaysParam(r *http.Request, defaultDays int32) time.Duration {
+
+	if s := r.URL.Query().Get("days"); s != "" {
+
+		n := ParsePositiveInt(s, defaultDays)
+		if n > 0 {
+			return time.Duration(n) * 24 * time.Hour
+		}
+
+	}
+
+	return time.Duration(defaultDays) * 24 * time.Hour
 }

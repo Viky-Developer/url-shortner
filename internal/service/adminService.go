@@ -26,18 +26,28 @@ func NewAdminService(q gen.Querier) *AdminService {
 
 // LogAction records an admin action to the audit log. adminID 0 indicates a
 // system-triggered action (e.g. the background retention worker).
-func (a *AdminService) LogAction(ctx context.Context, adminID int64, action, targetType string, targetID int64) {
+func (a *AdminService) LogAction(ctx context.Context, adminID int64, action, entityType string, entityID int64, metaData ...byte) {
+
+	var metadata []byte
+
+	if len(metaData) > 0 {
+		metadata = metaData
+	} else {
+		metadata = []byte(`{}`)
+	}
+
 	_ = a.queries.InsertAuditLog(ctx, gen.InsertAuditLogParams{
-		AdminID:    sql.NullInt64{Int64: adminID, Valid: adminID != 0},
-		Action:     action,
-		TargetType: toNullString(targetType),
-		TargetID:   sql.NullInt64{Int64: targetID, Valid: targetID != 0},
-		Details:    pqtype.NullRawMessage{RawMessage: []byte(`{}`), Valid: true},
+		ActorUserID: sql.NullInt64{Int64: adminID, Valid: adminID != 0},
+		Action:      action,
+		EntityType:  toNullString(entityType),
+		EntityID:    sql.NullInt64{Int64: entityID, Valid: entityID != 0},
+		Metadata:    pqtype.NullRawMessage{RawMessage: metadata, Valid: true},
 	})
 }
 
 // ListBlockedDomains returns all blocked domains.
 func (a *AdminService) ListBlockedDomains(ctx context.Context) ([]any, error) {
+
 	rows, err := a.queries.ListBlockedDomains(ctx)
 	if err != nil {
 		return nil, apperror.ErrInternal

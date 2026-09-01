@@ -3,33 +3,33 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"time"
 
-	"github.com/sqlc-dev/pqtype"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/config"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 )
 
-// RetentionWorker runs periodic cleanup of expired sessions and old password
-// history records. It uses AdminService so both the cron and manual API
-// share the same purge logic.
+// RetentionWorker runs periodic cleanup of expired sessions, old password
+// history records, and expired account deletions. It uses AdminService so
+// both the cron and manual API share the same purge logic.
 type RetentionWorker struct {
-	adminService *AdminService
-	queries      gen.Querier
-	cfg          *config.Config
-	log          logger.Logger
+	adminService           *AdminService
+	accountDeletionService *AccountDeletionService
+	queries                gen.Querier
+	cfg                    *config.Config
+	log                    logger.Logger
 }
 
 // NewRetentionWorker creates a new RetentionWorker.
-func NewRetentionWorker(adminService *AdminService, queries gen.Querier, cfg *config.Config, log logger.Logger) *RetentionWorker {
+func NewRetentionWorker(adminService *AdminService, accountDeletionService *AccountDeletionService, queries gen.Querier, cfg *config.Config, log logger.Logger) *RetentionWorker {
 	return &RetentionWorker{
-		adminService: adminService,
-		queries:      queries,
-		cfg:          cfg,
-		log:          log,
+		adminService:           adminService,
+		accountDeletionService: accountDeletionService,
+		queries:                queries,
+		cfg:                    cfg,
+		log:                    log,
 	}
 }
 
@@ -83,18 +83,21 @@ func (w *RetentionWorker) run(ctx context.Context) {
 		w.log.Info("retention worker: password history purged by age")
 	}
 
+	// 3. Hard-delete accounts whose deletion grace period has expired.
+	if w.accountDeletionService != nil {
+		if err := w.accountDeletionService.ProcessDeletions(ctx); err != nil {
+			w.log.Error("retention worker: failed to process account deletions", logger.Error(err))
+		} else {
+			w.log.Info("retention worker: account deletions processed")
+		}
+	}
+
 	// 3. Log the worker's own action for audit trail.
 	details, _ := json.Marshal(map[string]string{
 		"sessionRetention":  w.cfg.SessionRetention.String(),
 		"passwordRetention": w.cfg.PasswordRetention.String(),
 	})
-	_ = w.queries.InsertAuditLog(ctx, gen.InsertAuditLogParams{
-		AdminID:    sql.NullInt64{},
-		Action:     "retention_purge",
-		TargetType: sql.NullString{String: "system", Valid: true},
-		TargetID:   sql.NullInt64{},
-		Details:    pqtype.NullRawMessage{RawMessage: details, Valid: true},
-	})
+	w.adminService.LogAction(ctx, 0, "RETENTION_PURGE", "SYSTEM", 0, details...)
 
 	w.log.Info("retention worker: purge cycle complete")
 }

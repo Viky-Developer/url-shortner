@@ -13,6 +13,7 @@ type Querier interface {
 	AddPasswordHistory(ctx context.Context, arg AddPasswordHistoryParams) error
 	ClickStatsByURL(ctx context.Context, arg ClickStatsByURLParams) (ClickStatsByURLRow, error)
 	ClicksByDateRange(ctx context.Context, arg ClicksByDateRangeParams) ([]ClicksByDateRangeRow, error)
+	CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error)
 	CountClickLogsByURL(ctx context.Context, arg CountClickLogsByURLParams) (int64, error)
 	CountPasswordHistory(ctx context.Context, userID int64) (int64, error)
 	CountRevokedSessions(ctx context.Context) (int64, error)
@@ -30,6 +31,7 @@ type Querier interface {
 	DeletePasswordHistoryOver(ctx context.Context, arg DeletePasswordHistoryOverParams) error
 	ExpireSession(ctx context.Context, id int64) error
 	ExpireSessionsByUser(ctx context.Context, userID int64) error
+	GetAccountsDueForDeletion(ctx context.Context) ([]int64, error)
 	GetBlockedDomain(ctx context.Context, domain string) (GetBlockedDomainRow, error)
 	GetDailyStatsByURL(ctx context.Context, arg GetDailyStatsByURLParams) ([]GetDailyStatsByURLRow, error)
 	GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error)
@@ -42,20 +44,25 @@ type Querier interface {
 	GetURLByShortCodeForUpdate(ctx context.Context, shortCode string) (GetURLByShortCodeForUpdateRow, error)
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, error)
+	GetUserStatusByID(ctx context.Context, id int64) (GetUserStatusByIDRow, error)
 	HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error
 	HardDeleteUser(ctx context.Context, id int64) error
+	HardDeleteUserByID(ctx context.Context, id int64) error
 	IncrementURLClick(ctx context.Context, id int64) error
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
 	ListActiveSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
+	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]AuditLog, error)
 	ListBlockedDomains(ctx context.Context) ([]BlockedDomain, error)
 	ListBlockedIPRanges(ctx context.Context) ([]BlockedIpRange, error)
 	ListClickLogsByURL(ctx context.Context, arg ListClickLogsByURLParams) ([]ListClickLogsByURLRow, error)
 	ListPasswordHistory(ctx context.Context, arg ListPasswordHistoryParams) ([]string, error)
 	ListSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
 	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
+	MarkPendingDeletion(ctx context.Context, id int64) error
 	PurgeOldPasswordHistory(ctx context.Context, createdAt sql.NullTime) error
 	PurgeOldRevokedSessions(ctx context.Context, revokedAt sql.NullTime) error
 	RefreshDailyStats(ctx context.Context, arg RefreshDailyStatsParams) error
+	RestoreAccount(ctx context.Context, id int64) error
 	RevokeAllSessionsByUser(ctx context.Context, userID int64) error
 	RevokeOtherSessionsByUser(ctx context.Context, arg RevokeOtherSessionsByUserParams) error
 	RevokeSession(ctx context.Context, arg RevokeSessionParams) error
