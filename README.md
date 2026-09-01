@@ -17,6 +17,12 @@ A URL shortening service built with **Go**, using **sqlc + goose** for type-safe
 - Database migrations managed with goose
 - Session caching with Redis
 
+### Roadmap
+
+- Async link analytics / click tracking via RabbitMQ
+- Metrics scraping with Prometheus
+- Dashboards in Grafana
+
 ## Architecture
 
 ```
@@ -152,6 +158,8 @@ This brings up:
 |-----------|-------|-----------------------|
 | Postgres  | 5432  | urlshortner / urlshortner123 |
 | Redis     | 6379  | (no password)         |
+
+> Additional services (RabbitMQ, Prometheus, Grafana) are planned — see [Roadmap](#roadmap-1).
 
 ### 2. Apply database migrations
 
@@ -296,3 +304,59 @@ Configuration is handled via environment variables (loaded from `.env`). See `in
 ## License
 
 See [LICENSE](LICENSE).
+
+---
+
+## Roadmap
+
+The following features are planned for future implementation.
+
+### RabbitMQ
+
+RabbitMQ will be used for async event processing, such as recording click count per short link. The service will publish messages (e.g. click events) to a queue, and consumers will handle the analytics.
+
+```yaml
+# docker-compose.yml (planned)
+rabbitmq:
+  image: rabbitmq:3-management
+  ports:
+    - "5672:5672"
+    - "15672:15672"
+```
+
+| Service   | URL                    | Default credentials |
+|-----------|------------------------|---------------------|
+| RabbitMQ  | http://localhost:15672 | guest / guest       |
+
+### Observability (Grafana + Prometheus)
+
+The service will expose a Prometheus metrics endpoint (`/metrics`).
+
+- **Prometheus** will scrape the service metrics endpoint (scrape config: `prometheus.yml`).
+- **Grafana** will connect to Prometheus as a data source and provide:
+  - Request rate and latency dashboards
+  - Total URLs created / redirects served
+  - RabbitMQ queue depth and consumer health
+
+To import a dashboard in Grafana, add the Prometheus data source (`http://prometheus:9090`) and import a dashboard (JSON can be provided in `deploy/grafana/`).
+
+```yaml
+# docker-compose.yml (planned)
+prometheus:
+  image: prom/prometheus
+  ports:
+    - "9090:9090"
+
+grafana:
+  image: grafana/grafana
+  ports:
+    - "3000:3000"
+  environment:
+    GF_SECURITY_ADMIN_USER: admin
+    GF_SECURITY_ADMIN_PASSWORD: admin
+```
+
+| Service   | URL                    | Default credentials |
+|-----------|------------------------|---------------------|
+| Prometheus| http://localhost:9090   | -                   |
+| Grafana   | http://localhost:3000   | admin / admin       |
