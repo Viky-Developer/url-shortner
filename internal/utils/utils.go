@@ -156,11 +156,15 @@ func ValidateEmail(email string) error {
 // - At least 1 lowercase letter
 // - At least 1 uppercase letter
 // - At least 1 number
-// - Maximum 8 characters
+// - At least 8 characters, at most 55 characters
 func ValidatePassword(password string) error {
 
 	if len(password) < 8 {
-		return fmt.Errorf("%w: password must be at most 8 characters", apperror.ErrInvalidPayload)
+		return fmt.Errorf("%w: password must be at least 8 characters", apperror.ErrInvalidPayload)
+	}
+
+	if len(password) > 55 {
+		return fmt.Errorf("%w: Password is too long", apperror.ErrInvalidPayload)
 	}
 
 	hasLower := false

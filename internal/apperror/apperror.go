@@ -21,6 +21,8 @@ var (
 	// ErrConflict is returned when a resource already exists (e.g. duplicate
 	// short code).
 	ErrConflict = errors.New("the resource already exists")
+
+	ErrEmailAlreadyExists = errors.New("the email already exists")
 	// ErrURLExpired is returned when a URL has passed its expiration time.
 	ErrURLExpired = errors.New("this URL has expired and is no longer available")
 	// ErrBlockedDomain is returned when the destination domain is blocked.

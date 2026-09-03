@@ -166,8 +166,8 @@ func TestRegisterUserAlreadyExists(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for existing email")
 	}
-	if err.Error() != "the resource already exists" {
-		t.Errorf("expected 'the resource already exists', got %q", err.Error())
+	if !errors.Is(err, apperror.ErrEmailAlreadyExists) {
+		t.Errorf("expected ErrEmailAlreadyExists, got %v", err)
 	}
 }
 
@@ -370,10 +370,10 @@ func TestLoginSuccess(t *testing.T) {
 	if resp == nil {
 		t.Fatal("expected non-nil response")
 	}
-	if resp.AccessToken == "" {
+	if resp.Token.AccessToken == "" {
 		t.Error("expected non-empty access token")
 	}
-	if resp.RefreshToken == "" {
+	if resp.Token.RefreshToken == "" {
 		t.Error("expected non-empty refresh token")
 	}
 	if resp.User.ID != "USR_test123" {
@@ -648,11 +648,24 @@ func TestClaimsStruct(t *testing.T) {
 // mockCache implements SessionCache for testing.
 // Internally stores hash fields as map[key]map[field]value.
 type mockCache struct {
-	hashes map[string]map[string]string
+	hashes  map[string]map[string]string
+	strings map[string]string
 }
 
 func newMockCache() *mockCache {
-	return &mockCache{hashes: make(map[string]map[string]string)}
+	return &mockCache{hashes: make(map[string]map[string]string), strings: make(map[string]string)}
+}
+
+func (m *mockCache) Get(_ context.Context, key string) (string, error) {
+	if v, ok := m.strings[key]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("redis: nil")
+}
+
+func (m *mockCache) Set(_ context.Context, key, value string, _ ...cache.CacheOption) error {
+	m.strings[key] = value
+	return nil
 }
 
 func (m *mockCache) HGet(_ context.Context, key, field string) (string, error) {
@@ -713,6 +726,7 @@ func (m *mockCache) HDel(_ context.Context, key string, fields ...string) error 
 
 func (m *mockCache) Del(_ context.Context, key string) error {
 	delete(m.hashes, key)
+	delete(m.strings, key)
 	return nil
 }
 

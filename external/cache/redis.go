@@ -43,6 +43,21 @@ func NewRedisCache(cfg RedisConfig) (*RedisCache, error) {
 	return &RedisCache{client: client}, nil
 }
 
+// Get retrieves a string value by key. Returns an error on miss.
+func (c *RedisCache) Get(ctx context.Context, key string) (string, error) {
+	val, err := c.client.Get(ctx, key).Result()
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
+// Set stores a string value by key with an optional TTL.
+func (c *RedisCache) Set(ctx context.Context, key, value string, opts ...CacheOption) error {
+	o := applyOptions(opts...)
+	return c.client.Set(ctx, key, value, o.expiration).Err()
+}
+
 // HGet retrieves a single field from a Redis hash.
 func (c *RedisCache) HGet(ctx context.Context, key, field string) (string, error) {
 	val, err := c.client.HGet(ctx, key, field).Result()

@@ -56,7 +56,8 @@ func StatusCodeFromError(err error) int {
 		errors.Is(err, apperror.ErrBlockedDomain),
 		errors.Is(err, apperror.ErrPasswordReuse):
 		return http.StatusBadRequest
-	case errors.Is(err, apperror.ErrConflict):
+	case errors.Is(err, apperror.ErrConflict),
+		errors.Is(err, apperror.ErrEmailAlreadyExists):
 		return http.StatusConflict
 	case errors.Is(err, apperror.ErrURLDeleted):
 		return http.StatusGone

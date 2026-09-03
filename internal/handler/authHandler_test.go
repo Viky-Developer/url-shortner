@@ -81,8 +81,10 @@ func (m *mockAuthService) RevokeAllSessions(ctx context.Context, userID int64) e
 
 func sampleAuthResponse() *payload.AuthResponse {
 	return &payload.AuthResponse{
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
+		Token: payload.RefreshTokenResponse{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+		},
 		User: payload.UserResponse{
 			ID:          "USR_test123",
 			Email:       "test@example.com",

@@ -182,8 +182,10 @@ func TestSessionResponseJSON(t *testing.T) {
 
 func TestAuthResponseJSON(t *testing.T) {
 	resp := AuthResponse{
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
+		Token: RefreshTokenResponse{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+		},
 		User: UserResponse{
 			ID:          "USR_abc",
 			Email:       "test@example.com",
@@ -201,8 +203,8 @@ func TestAuthResponseJSON(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if decoded.AccessToken != "access-token" {
-		t.Errorf("AccessToken = %q, want %q", decoded.AccessToken, "access-token")
+	if decoded.Token.AccessToken != "access-token" {
+		t.Errorf("AccessToken = %q, want %q", decoded.Token.AccessToken, "access-token")
 	}
 	if decoded.User.Email != "test@example.com" {
 		t.Errorf("User.Email = %q, want %q", decoded.User.Email, "test@example.com")
