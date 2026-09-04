@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
+	"github.com/vicky/url-shortner/internal/enum"
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/response"
 	"github.com/vicky/url-shortner/internal/utils"
@@ -26,7 +28,8 @@ type URLService interface {
 	Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error)
 	Redirect(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, error)
 	GetByID(ctx context.Context, userID int64, id int64) (*payload.URLResponse, error)
-	List(ctx context.Context, userID int64, page, perPage, offset int32) ([]any, int64, error)
+	List(ctx context.Context, userID int64, page, perPage, offset int32, status *int16) ([]any, int64, error)
+	CountByStatus(ctx context.Context, userID int64) (*payload.URLStatusCounts, error)
 	Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error)
 	SoftDelete(ctx context.Context, userID int64, id int64) (*payload.DeleteResponse, error)
 	HardDelete(ctx context.Context, userID int64, id int64) error
@@ -122,7 +125,9 @@ func (h *URLHandler) GetURLByID(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, http.StatusOK, "url retrieved", []any{u})
 }
 
-// ListURLs handles GET /urls and returns a paginated list of active URLs.
+// ListURLs handles GET /urls and returns a paginated list of URLs, optionally
+// filtered by status (active, expired, deleted). When no status is provided,
+// all non-deleted URLs are returned.
 func (h *URLHandler) ListURLs(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := utils.GetUserIDFromContext(r)
@@ -136,7 +141,18 @@ func (h *URLHandler) ListURLs(w http.ResponseWriter, r *http.Request) {
 		r.URL.Query().Get("perPage"),
 	)
 
-	list, total, err := h.urlService.List(r.Context(), userID, page, perPage, offset)
+	var status *int16
+	if s := r.URL.Query().Get("status"); s != "" {
+		parsed, err := enum.ParseURLStatus(strings.ToUpper(s))
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, fmt.Errorf("%w: %s", apperror.ErrInvalidPayload, err))
+			return
+		}
+		v := int16(parsed)
+		status = &v
+	}
+
+	list, total, err := h.urlService.List(r.Context(), userID, page, perPage, offset, status)
 	if err != nil {
 		h.log.Error("list urls failed", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
@@ -166,6 +182,26 @@ func (h *URLHandler) ListURLs(w http.ResponseWriter, r *http.Request) {
 		PerPage:    perPage,
 		TotalPages: totalPages,
 	})
+}
+
+// GetURLStatusCounts handles GET /urls/status-counts and returns the count of
+// URLs per status for the authenticated user.
+func (h *URLHandler) GetURLStatusCounts(w http.ResponseWriter, r *http.Request) {
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
+		return
+	}
+
+	counts, err := h.urlService.CountByStatus(r.Context(), userID)
+	if err != nil {
+		h.log.Error("failed to get url status counts", logger.Error(err))
+		response.Error(w, response.StatusCodeFromError(err), err)
+		return
+	}
+
+	response.Success(w, http.StatusOK, "url status counts retrieved", []any{counts})
 }
 
 // UpdateURL handles PATCH /urls/{id} and updates the URL details.

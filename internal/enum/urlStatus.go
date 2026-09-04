@@ -1,5 +1,10 @@
 package enum
 
+import (
+	"fmt"
+	"strings"
+)
+
 // URLStatus represents the lifecycle state of a URL.
 type URLStatus int16
 
@@ -27,5 +32,22 @@ func (s URLStatus) String() string {
 		return "Deleted"
 	default:
 		return "Unknown"
+	}
+}
+
+// ParseURLStatus converts a status string to a URLStatus value.
+// Accepts both upper and lowercase (e.g. "ACTIVE", "active").
+func ParseURLStatus(s string) (URLStatus, error) {
+	switch strings.ToUpper(s) {
+	case "ACTIVE":
+		return URLStatusActive, nil
+	case "EXPIRED":
+		return URLStatusExpired, nil
+	case "DELETED":
+		return URLStatusDeleted, nil
+	case "DISABLED":
+		return URLStatusDisabled, nil
+	default:
+		return 0, fmt.Errorf("invalid status: %s", s)
 	}
 }

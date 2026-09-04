@@ -145,7 +145,7 @@ func (s *AuthService) Register(ctx context.Context, req *payload.RegisterRequest
 	_, err := s.queries.GetUserByEmail(ctx, req.Email)
 	if err == nil {
 		s.log.Warn("registration attempt with existing email", logger.String("email", req.Email))
-		return nil, apperror.ErrConflict
+		return nil, apperror.ErrEmailAlreadyExists
 	}
 	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, sql.ErrNoRows) {
 		s.log.Error("failed to check user existence", logger.Error(err), logger.String("email", req.Email))
@@ -212,8 +212,10 @@ func (s *AuthService) Register(ctx context.Context, req *payload.RegisterRequest
 	}
 
 	return &payload.AuthResponse{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: tokens.RefreshToken,
+		Token: payload.RefreshTokenResponse{
+			AccessToken:  tokens.AccessToken,
+			RefreshToken: tokens.RefreshToken,
+		},
 		User: payload.UserResponse{
 			ID:          displayUserID,
 			Email:       user.Email,
@@ -297,8 +299,10 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 	}
 
 	return &payload.AuthResponse{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: tokens.RefreshToken,
+		Token: payload.RefreshTokenResponse{
+			AccessToken:  tokens.AccessToken,
+			RefreshToken: tokens.RefreshToken,
+		},
 		User: payload.UserResponse{
 			ID:              displayUserID,
 			Email:           user.Email,

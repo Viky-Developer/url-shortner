@@ -21,9 +21,8 @@ type RefreshTokenRequest struct {
 
 // AuthResponse represents the authentication response with tokens and user info.
 type AuthResponse struct {
-	AccessToken  string       `json:"accessToken"`
-	RefreshToken string       `json:"refreshToken"`
-	User         UserResponse `json:"user"`
+	Token RefreshTokenResponse `json:"token"`
+	User  UserResponse         `json:"user"`
 }
 
 // RefreshTokenResponse represents the token refresh response — only new

@@ -75,7 +75,7 @@ func TestURLResponseJSON(t *testing.T) {
 		ShortCode:   "abc123",
 		OriginalURL: "https://example.com",
 		ShortURL:    "http://localhost/abc123",
-		IsActive:    true,
+		Status:      "ACTIVE",
 		ClickCount:  10,
 		CreatedAt:   now.Format(time.RFC3339),
 		UpdatedAt:   now.Format(time.RFC3339),
@@ -97,8 +97,8 @@ func TestURLResponseJSON(t *testing.T) {
 	if decoded.ShortCode != resp.ShortCode {
 		t.Errorf("ShortCode = %q, want %q", decoded.ShortCode, resp.ShortCode)
 	}
-	if !decoded.IsActive {
-		t.Error("expected IsActive to be true")
+	if decoded.Status != "ACTIVE" {
+		t.Errorf("expected Status to be 'ACTIVE', got %q", decoded.Status)
 	}
 }
 
@@ -182,8 +182,10 @@ func TestSessionResponseJSON(t *testing.T) {
 
 func TestAuthResponseJSON(t *testing.T) {
 	resp := AuthResponse{
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
+		Token: RefreshTokenResponse{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+		},
 		User: UserResponse{
 			ID:          "USR_abc",
 			Email:       "test@example.com",
@@ -201,8 +203,8 @@ func TestAuthResponseJSON(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if decoded.AccessToken != "access-token" {
-		t.Errorf("AccessToken = %q, want %q", decoded.AccessToken, "access-token")
+	if decoded.Token.AccessToken != "access-token" {
+		t.Errorf("AccessToken = %q, want %q", decoded.Token.AccessToken, "access-token")
 	}
 	if decoded.User.Email != "test@example.com" {
 		t.Errorf("User.Email = %q, want %q", decoded.User.Email, "test@example.com")

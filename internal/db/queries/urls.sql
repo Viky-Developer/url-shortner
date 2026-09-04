@@ -33,6 +33,20 @@ WHERE urls.id = $1
   AND urls.user_id = $2
   AND urls.deleted_at IS NULL;
 
+-- name: GetSoftDeletedURLByID :one
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
+FROM urls
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.id = $1
+  AND urls.user_id = $2
+  AND urls.deleted_at IS NOT NULL;
+
 -- name: ListURLs :many
 SELECT
   urls.id, urls.user_id, urls.short_code, urls.destination_id,
@@ -44,7 +58,13 @@ SELECT
 FROM urls
 JOIN destinations ON urls.destination_id = destinations.id
 WHERE urls.user_id = $1
-  AND urls.deleted_at IS NULL
+  AND (
+    sqlc.narg('status')::smallint IS NULL AND urls.deleted_at IS NULL
+    OR sqlc.narg('status') = 1 AND urls.url_status = 1 AND (urls.expires_at IS NULL OR urls.expires_at > NOW()) AND urls.deleted_at IS NULL
+    OR sqlc.narg('status') = 2 AND (urls.url_status = 2 OR (urls.url_status = 1 AND urls.expires_at IS NOT NULL AND urls.expires_at <= NOW())) AND urls.deleted_at IS NULL
+    OR sqlc.narg('status') = 0 AND urls.url_status = 0 AND urls.deleted_at IS NULL
+    OR sqlc.narg('status') = 3 AND urls.deleted_at IS NOT NULL
+  )
 ORDER BY urls.created_at DESC
 LIMIT $2 OFFSET $3;
 
@@ -78,8 +98,14 @@ WHERE id = $1
 -- name: CountURLs :one
 SELECT COUNT(*)
 FROM urls
-WHERE user_id = $1
-  AND deleted_at IS NULL;
+WHERE urls.user_id = $1
+  AND (
+    sqlc.narg('status')::smallint IS NULL AND urls.deleted_at IS NULL
+    OR sqlc.narg('status') = 1 AND urls.url_status = 1 AND (urls.expires_at IS NULL OR urls.expires_at > NOW()) AND urls.deleted_at IS NULL
+    OR sqlc.narg('status') = 2 AND (urls.url_status = 2 OR (urls.url_status = 1 AND urls.expires_at IS NOT NULL AND urls.expires_at <= NOW())) AND urls.deleted_at IS NULL
+    OR sqlc.narg('status') = 0 AND urls.url_status = 0 AND urls.deleted_at IS NULL
+    OR sqlc.narg('status') = 3 AND urls.deleted_at IS NOT NULL
+  );
 
 -- name: GetURLByShortCodeForUpdate :one
 SELECT
@@ -117,3 +143,12 @@ SET destination_health_status = $2,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
+
+-- name: CountURLsByStatus :one
+SELECT
+  COUNT(*) FILTER (WHERE deleted_at IS NULL AND url_status = 1 AND (expires_at IS NULL OR expires_at > NOW())) AS active,
+  COUNT(*) FILTER (WHERE deleted_at IS NULL AND (url_status = 2 OR (url_status = 1 AND expires_at IS NOT NULL AND expires_at <= NOW()))) AS expired,
+  COUNT(*) FILTER (WHERE deleted_at IS NULL AND url_status = 0) AS disabled,
+  COUNT(*) FILTER (WHERE deleted_at IS NOT NULL) AS deleted
+FROM urls
+WHERE user_id = $1;

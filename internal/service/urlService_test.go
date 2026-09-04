@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"testing"
@@ -23,8 +24,10 @@ type mockQuerier struct {
 	byCodeFn               func(context.Context, string) (gen.GetURLByShortCodeRow, error)
 	byCodeForUpdateFn      func(context.Context, string) (gen.GetURLByShortCodeForUpdateRow, error)
 	byIDFn                 func(context.Context, gen.GetURLByIDParams) (gen.GetURLByIDRow, error)
+	softDeletedByIDFn      func(context.Context, gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error)
 	listFn                 func(context.Context, gen.ListURLsParams) ([]gen.ListURLsRow, error)
-	countFn                func(context.Context, int64) (int64, error)
+	countFn                func(context.Context, gen.CountURLsParams) (int64, error)
+	countByStatusFn        func(context.Context, int64) (gen.CountURLsByStatusRow, error)
 	emailFn                func(context.Context, string) (gen.GetUserByEmailRow, error)
 	updateUserFn           func(context.Context, gen.UpdateUserDisplayIDParams) (gen.UpdateUserDisplayIDRow, error)
 	updateFn               func(context.Context, gen.UpdateURLParams) (gen.Url, error)
@@ -138,6 +141,10 @@ func (m *mockQuerier) GetURLByID(ctx context.Context, arg gen.GetURLByIDParams) 
 	return m.byIDFn(ctx, arg)
 }
 
+func (m *mockQuerier) GetSoftDeletedURLByID(ctx context.Context, arg gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+	return m.softDeletedByIDFn(ctx, arg)
+}
+
 func (m *mockQuerier) ListURLs(ctx context.Context, arg gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 	return m.listFn(ctx, arg)
 }
@@ -150,8 +157,12 @@ func (m *mockQuerier) GetDestinationByHash(ctx context.Context, urlHash string) 
 	return m.destByHashFn(ctx, urlHash)
 }
 
-func (m *mockQuerier) CountURLs(ctx context.Context, userID int64) (int64, error) {
-	return m.countFn(ctx, userID)
+func (m *mockQuerier) CountURLs(ctx context.Context, arg gen.CountURLsParams) (int64, error) {
+	return m.countFn(ctx, arg)
+}
+
+func (m *mockQuerier) CountURLsByStatus(ctx context.Context, userID int64) (gen.CountURLsByStatusRow, error) {
+	return m.countByStatusFn(ctx, userID)
 }
 
 func (m *mockQuerier) UpdateURL(ctx context.Context, arg gen.UpdateURLParams) (gen.Url, error) {
@@ -711,13 +722,13 @@ func TestListPagination(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return []gen.ListURLsRow{testListRow("abc123"), testListRow("def456")}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 25, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	resp, total, err := svc.List(context.Background(), 1, 3, 10, 20)
+	resp, total, err := svc.List(context.Background(), 1, 3, 10, 20, nil)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -839,8 +850,8 @@ func TestUpdateLeavesUrlStatusNilWhenOmitted(t *testing.T) {
 	if captured.UrlStatus.Valid {
 		t.Error("expected urlStatus param to be NULL so COALESCE preserves the existing value")
 	}
-	if !resp.IsActive {
-		t.Error("expected isActive to remain true after update without explicit isActive in the request")
+	if resp.Status != "ACTIVE" {
+		t.Error("expected status to be 'ACTIVE' after update without explicit status in the request")
 	}
 }
 
@@ -1026,7 +1037,7 @@ func TestCreateTitleDescriptionExpiresPassed(t *testing.T) {
 		OriginalURL: "https://example.com",
 		Title:       "My Title",
 		Description: "My Desc",
-		ExpiresAt:   utils.UnixMilliTime{Time: future, Valid: true},
+		ExpiresAt:   future,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1093,8 +1104,8 @@ func TestCreateResponseHasCorrectFields(t *testing.T) {
 	if resp.Description != "Test Desc" {
 		t.Errorf("description = %q", resp.Description)
 	}
-	if resp.IsActive != true {
-		t.Error("isActive should be true")
+	if resp.Status != "ACTIVE" {
+		t.Error("status should be 'ACTIVE'")
 	}
 	if resp.IsCustom == nil || *resp.IsCustom != true {
 		t.Error("isCustom should be true")
@@ -1405,6 +1416,185 @@ func TestRedirectClickLogFails(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  REDIRECT CACHE — service layer
+// ═══════════════════════════════════════════════════════════════
+
+// redirectCacheAdapter adapts *mockCache (which has Set with variadic options)
+// to the simpler URLRedirectCache interface (Set without options).
+type redirectCacheAdapter struct {
+	mc *mockCache
+}
+
+func (a *redirectCacheAdapter) Get(ctx context.Context, key string) (string, error) {
+	return a.mc.Get(ctx, key)
+}
+func (a *redirectCacheAdapter) Set(ctx context.Context, key, value string) error {
+	return a.mc.Set(ctx, key, value)
+}
+func (a *redirectCacheAdapter) Del(ctx context.Context, key string) error {
+	return a.mc.Del(ctx, key)
+}
+
+func TestRedirectCacheHitDoesNotHitDB(t *testing.T) {
+	mc := &redirectCacheAdapter{mc: newMockCache()}
+	data := `{"id":1,"original_url":"https://example.com/cached-target","url_status":1}`
+	_ = mc.Set(context.Background(), cacheKeyRedirectPrefix+"abc1234567", data)
+
+	dbHit := false
+	var clickLogged bool
+	mock := &mockQuerier{
+		byCodeForUpdateFn: func(_ context.Context, _ string) (gen.GetURLByShortCodeForUpdateRow, error) {
+			dbHit = true
+			return gen.GetURLByShortCodeForUpdateRow{}, nil
+		},
+		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
+			clickLogged = true
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, _ int64) error {
+			return nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+
+	resp, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{
+		IP:        net.ParseIP("203.0.113.10"),
+		UserAgent: "agent",
+	})
+	if err != nil {
+		t.Fatalf("redirect: %v", err)
+	}
+	if dbHit {
+		t.Error("expected DB not to be hit on cache hit")
+	}
+	if !clickLogged {
+		t.Error("expected click to be logged on cache hit")
+	}
+	if resp.OriginalURL != "https://example.com/cached-target" {
+		t.Errorf("originalURL = %q, want cached target", resp.OriginalURL)
+	}
+	if resp.ShortCode != "abc1234567" {
+		t.Errorf("shortCode = %q, want abc1234567", resp.ShortCode)
+	}
+}
+
+func TestRedirectCacheMissFallsBackToDBAndPopulates(t *testing.T) {
+	mc := &redirectCacheAdapter{mc: newMockCache()}
+	now := time.Now()
+
+	mock := &mockQuerier{
+		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
+			return gen.GetURLByShortCodeForUpdateRow{
+				ID:          1,
+				UserID:      1,
+				ShortCode:   code,
+				OriginalUrl: "https://example.com/db-target",
+				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
+				CreatedAt:   sql.NullTime{Time: now, Valid: true},
+				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
+			}, nil
+		},
+		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, _ int64) error {
+			return nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+
+	_, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
+	if err != nil {
+		t.Fatalf("redirect: %v", err)
+	}
+
+	// Cache should now be populated.
+	raw, cErr := mc.Get(context.Background(), cacheKeyRedirectPrefix+"abc1234567")
+	if cErr != nil {
+		t.Fatalf("expected cache to be populated, got error: %v", cErr)
+	}
+	var data redirectCacheData
+	if json.Unmarshal([]byte(raw), &data) != nil {
+		t.Fatalf("expected valid JSON in cache, got: %s", raw)
+	}
+	if data.OriginalURL != "https://example.com/db-target" {
+		t.Errorf("cached originalURL = %q, want db-target", data.OriginalURL)
+	}
+	if data.ID != 1 {
+		t.Errorf("cached id = %d, want 1", data.ID)
+	}
+}
+
+func TestRedirectCacheExpiredInvalidates(t *testing.T) {
+	mc := &redirectCacheAdapter{mc: newMockCache()}
+	data := fmt.Sprintf(`{"id":1,"original_url":"https://example.com/old","expires_at":"%s","url_status":1}`,
+		time.Now().Add(-time.Hour).Format(time.RFC3339))
+	_ = mc.Set(context.Background(), cacheKeyRedirectPrefix+"expired", data)
+
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+
+	_, err := svc.Redirect(context.Background(), "expired", payload.ClickInfo{})
+	if err == nil {
+		t.Fatal("expected expired error")
+	}
+
+	if _, cErr := mc.Get(context.Background(), cacheKeyRedirectPrefix+"expired"); cErr == nil {
+		t.Error("expected expired cache entry to be invalidated")
+	}
+}
+
+func TestRedirectCacheInactiveInvalidates(t *testing.T) {
+	mc := &redirectCacheAdapter{mc: newMockCache()}
+	data := `{"id":1,"original_url":"https://example.com/old","url_status":0}`
+	_ = mc.Set(context.Background(), cacheKeyRedirectPrefix+"inactive", data)
+
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+
+	_, err := svc.Redirect(context.Background(), "inactive", payload.ClickInfo{})
+	if err == nil {
+		t.Fatal("expected not found error for inactive cached url")
+	}
+
+	if _, cErr := mc.Get(context.Background(), cacheKeyRedirectPrefix+"inactive"); cErr == nil {
+		t.Error("expected inactive cache entry to be invalidated")
+	}
+}
+
+func TestRedirectCacheNotAvailableFallsBackToDB(t *testing.T) {
+	mc := &redirectCacheAdapter{mc: newMockCache()}
+	now := time.Now()
+
+	mock := &mockQuerier{
+		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
+			return gen.GetURLByShortCodeForUpdateRow{
+				ID:          1,
+				UserID:      1,
+				ShortCode:   code,
+				OriginalUrl: "https://example.com/db-target",
+				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
+				CreatedAt:   sql.NullTime{Time: now, Valid: true},
+				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
+			}, nil
+		},
+		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, _ int64) error {
+			return nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+
+	resp, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
+	if err != nil {
+		t.Fatalf("redirect: %v", err)
+	}
+	if resp.OriginalURL != "https://example.com/db-target" {
+		t.Errorf("originalURL = %q, want db-target", resp.OriginalURL)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  GET BY ID — service layer
 // ═══════════════════════════════════════════════════════════════
 
@@ -1533,13 +1723,13 @@ func TestListEmpty(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return []gen.ListURLsRow{}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 0, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, total, err := svc.List(context.Background(), 1, 1, 10, 0)
+	items, total, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1556,13 +1746,13 @@ func TestListCountFails(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return []gen.ListURLsRow{}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 0, fmt.Errorf("count error")
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	_, _, err := svc.List(context.Background(), 1, 1, 10, 0)
+	_, _, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err == nil {
 		t.Fatal("expected error when count fails")
 	}
@@ -1573,13 +1763,13 @@ func TestListQueryFails(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return nil, fmt.Errorf("list error")
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 0, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	_, _, err := svc.List(context.Background(), 1, 1, 10, 0)
+	_, _, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err == nil {
 		t.Fatal("expected error when list fails")
 	}
@@ -1593,13 +1783,13 @@ func TestListPaginationMath(t *testing.T) {
 				testListRow("def"),
 			}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 25, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, total, err := svc.List(context.Background(), 1, 3, 10, 20)
+	items, total, err := svc.List(context.Background(), 1, 3, 10, 20, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1617,13 +1807,13 @@ func TestListExactMultiple(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return []gen.ListURLsRow{testListRow("a")}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 20, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, total, err := svc.List(context.Background(), 1, 1, 10, 0)
+	items, total, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1651,13 +1841,13 @@ func TestListAllNullFields(t *testing.T) {
 				},
 			}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 1, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, total, err := svc.List(context.Background(), 1, 1, 10, 0)
+	items, total, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1713,13 +1903,13 @@ func TestListMultipleItemsWithHealthStatus(t *testing.T) {
 				},
 			}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 2, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, _, err := svc.List(context.Background(), 1, 1, 10, 0)
+	items, _, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2032,7 +2222,7 @@ func TestUpdateExpiresAt(t *testing.T) {
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
 	_, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
-		ExpiresAt: utils.UnixMilliTime{Time: future, Valid: true},
+		ExpiresAt: future,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2121,6 +2311,28 @@ func TestSoftDeleteResponse(t *testing.T) {
 	}
 }
 
+func TestSoftDeleteInvalidatesCache(t *testing.T) {
+	inner := newMockCache()
+	mc := &redirectCacheAdapter{mc: inner}
+	_ = inner.Set(context.Background(), cacheKeyRedirectPrefix+"abc123",
+		`{"id":1,"original_url":"https://example.com/target","url_status":1}`)
+
+	mock := &mockQuerier{
+		softFn: func(_ context.Context, _ gen.SoftDeleteURLParams) (gen.Url, error) {
+			return gen.Url{ID: 1, ShortCode: "abc123"}, nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+
+	if _, err := svc.SoftDelete(context.Background(), 1, 1); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+
+	if _, cErr := mc.Get(context.Background(), cacheKeyRedirectPrefix+"abc123"); cErr == nil {
+		t.Error("expected cache entry to be invalidated after soft delete")
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  HARD DELETE — service layer
 // ═══════════════════════════════════════════════════════════════
@@ -2128,6 +2340,13 @@ func TestSoftDeleteResponse(t *testing.T) {
 func TestHardDeleteSuccess(t *testing.T) {
 	var capturedParams gen.HardDeleteURLParams
 	mock := &mockQuerier{
+		softDeletedByIDFn: func(_ context.Context, _ gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+			return gen.GetSoftDeletedURLByIDRow{
+				ID:        42,
+				UserID:    1,
+				ShortCode: "abc123",
+			}, nil
+		},
 		hardFn: func(_ context.Context, arg gen.HardDeleteURLParams) error {
 			capturedParams = arg
 			return nil
@@ -2149,6 +2368,9 @@ func TestHardDeleteSuccess(t *testing.T) {
 
 func TestHardDeleteQueryError(t *testing.T) {
 	mock := &mockQuerier{
+		softDeletedByIDFn: func(_ context.Context, _ gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+			return gen.GetSoftDeletedURLByIDRow{ID: 1, UserID: 1, ShortCode: "abc123"}, nil
+		},
 		hardFn: func(_ context.Context, _ gen.HardDeleteURLParams) error {
 			return fmt.Errorf("db error")
 		},
@@ -2163,6 +2385,9 @@ func TestHardDeleteQueryError(t *testing.T) {
 
 func TestHardDeleteNotSoftDeleted(t *testing.T) {
 	mock := &mockQuerier{
+		softDeletedByIDFn: func(_ context.Context, _ gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+			return gen.GetSoftDeletedURLByIDRow{ID: 1, UserID: 1, ShortCode: "abc123"}, nil
+		},
 		hardFn: func(_ context.Context, _ gen.HardDeleteURLParams) error {
 			return sql.ErrNoRows
 		},
@@ -2172,6 +2397,20 @@ func TestHardDeleteNotSoftDeleted(t *testing.T) {
 	err := svc.HardDelete(context.Background(), 1, 1)
 	if err == nil {
 		t.Fatal("expected error when URL not soft-deleted")
+	}
+}
+
+func TestHardDeleteFetchError(t *testing.T) {
+	mock := &mockQuerier{
+		softDeletedByIDFn: func(_ context.Context, _ gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+			return gen.GetSoftDeletedURLByIDRow{}, sql.ErrNoRows
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	err := svc.HardDelete(context.Background(), 1, 999)
+	if err == nil {
+		t.Fatal("expected not found error when URL does not exist")
 	}
 }
 
@@ -2405,8 +2644,8 @@ func TestToResponseAllFields(t *testing.T) {
 	if resp.ClickCount != 42 {
 		t.Errorf("clickCount = %d", resp.ClickCount)
 	}
-	if resp.IsActive != true {
-		t.Error("isActive should be true")
+	if resp.Status != "ACTIVE" {
+		t.Error("status should be 'ACTIVE'")
 	}
 	if resp.IsCustom == nil || *resp.IsCustom != true {
 		t.Error("isCustom should be true")
@@ -2513,8 +2752,8 @@ func TestToResponseInactiveStatus(t *testing.T) {
 	}
 
 	resp := svc.toResponse(u, "https://example.com")
-	if resp.IsActive {
-		t.Error("isActive should be false for Disabled status")
+	if resp.Status != "DISABLED" {
+		t.Errorf("status should be 'DISABLED', got %q", resp.Status)
 	}
 }
 

@@ -30,6 +30,12 @@ func applyOptions(opts ...CacheOption) cacheOptions {
 // CacheService defines the Redis cache operations used by the application.
 // Only the commands the application actually needs are exposed.
 type CacheService interface {
+	// Get retrieves a string value by key. Returns an error on miss.
+	Get(ctx context.Context, key string) (string, error)
+
+	// Set stores a string value by key. Use WithExpiration to set a TTL.
+	Set(ctx context.Context, key, value string, opts ...CacheOption) error
+
 	// HGet retrieves a single field from a Redis hash.
 	// Returns the field value or an error on miss/connection failure.
 	HGet(ctx context.Context, key, field string) (string, error)

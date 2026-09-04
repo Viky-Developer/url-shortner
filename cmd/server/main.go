@@ -75,7 +75,7 @@ func run() error {
 	authService := service.NewAuthService(queries, database, cfg, sessionCache, log)
 	authHandler := handler.NewAuthHandler(authService, log)
 
-	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, log)
+	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, log, service.WithRedirectCache(&stringCacheAdapter{c: sessionCache}))
 	urlHandler := handler.NewURLHandler(urlService, log)
 
 	adminService := service.NewAdminService(queries)
@@ -146,8 +146,6 @@ func connectDatabase(cfg *config.Config, log logger.Logger) (*sql.DB, error) {
 	return database, nil
 }
 
-// ensureDefaultUser creates a default user from .env credentials if one does
-// not already exist, and ensures the default user always has the ADMIN role.
 func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) error {
 
 	q := gen.New(database)
@@ -222,4 +220,22 @@ func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) 
 		logger.String("userId", utils.EncodeID(row.ID, utils.UserIDPrefix, cfg.UserIDSecretKey)),
 	)
 	return nil
+}
+
+// stringCacheAdapter wraps *cache.RedisCache to implement service.URLRedirectCache,
+// adapting the variadic Set signature to a fixed two-arg Set.
+type stringCacheAdapter struct {
+	c *cache.RedisCache
+}
+
+func (a *stringCacheAdapter) Get(ctx context.Context, key string) (string, error) {
+	return a.c.Get(ctx, key)
+}
+
+func (a *stringCacheAdapter) Set(ctx context.Context, key, value string) error {
+	return a.c.Set(ctx, key, value)
+}
+
+func (a *stringCacheAdapter) Del(ctx context.Context, key string) error {
+	return a.c.Del(ctx, key)
 }

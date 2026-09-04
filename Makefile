@@ -128,6 +128,11 @@ migration-reset: ## Roll back ALL migrations
 ## Seeds (goose — internal/db/seeds)
 ## ---------------------------------------------------------------------------
 
+.PHONY: seed-create
+seed-create: ## Create a new seed file: make seed-create name=click_logs_test_data
+	@test -n "$(name)" || (echo "Usage: make seed-create name=your_seed_name"; exit 1)
+	goose -dir $(SEEDS_DIR) create $(name) sql
+
 .PHONY: seed-up
 seed-up: ## Apply seed migrations (blocked_domains, etc.)
 	goose -dir $(SEEDS_DIR) postgres "$(DB_DSN)" up

@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -240,6 +241,45 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	return enum.DestinationStatusUnhealthy, statusCode, true
 }
 
+// cacheKeyRedirectPrefix prefixes every Redis key that stores redirect
+// resolution data (keyed by short code).
+const cacheKeyRedirectPrefix = "url:redirect:"
+
+// redirectCacheData holds the redirect resolution data stored as a single
+// JSON blob per short code key.
+type redirectCacheData struct {
+	ID          int64  `json:"id"`
+	OriginalURL string `json:"original_url"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+	URLStatus   int16  `json:"url_status"`
+}
+
+// URLRedirectCache is the contract the URL service depends on for caching
+// redirect resolution data (shortCode → original URL, expiry, status).
+// It uses a single string key per short code with a JSON value.
+type URLRedirectCache interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key, value string) error
+	Del(ctx context.Context, key string) error
+}
+
+// NoopRedirectCache is a URLRedirectCache implementation that always returns
+// cache-miss. It is used as a fallback when cache is unavailable and in tests
+// that do not exercise caching.
+type NoopRedirectCache struct{}
+
+func (NoopRedirectCache) Get(context.Context, string) (string, error) { return "", fmt.Errorf("noop") }
+func (NoopRedirectCache) Set(context.Context, string, string) error   { return nil }
+func (NoopRedirectCache) Del(context.Context, string) error           { return nil }
+
+// URLOption configures optional behavior of a URLService.
+type URLOption func(*URLService)
+
+// WithRedirectCache sets the cache backend used for redirect lookups.
+func WithRedirectCache(c URLRedirectCache) URLOption {
+	return func(s *URLService) { s.cache = c }
+}
+
 // URLService implements the URL shortening business logic.
 type URLService struct {
 	queries         gen.Querier
@@ -248,21 +288,27 @@ type URLService struct {
 	secretKey       string
 	log             logger.Logger
 	blockedIPRanges []*net.IPNet
+	cache           URLRedirectCache
 }
 
 // NewURLService constructs a URLService with the given querier, DB handle
 // (used for transactions), base URL, HMAC secret key, and logger.
-func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, log logger.Logger) *URLService {
+func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, log logger.Logger, opts ...URLOption) *URLService {
 	ctx := context.Background()
 	blockedRanges := loadBlockedIPRanges(ctx, queries, log)
-	return &URLService{
+	svc := &URLService{
 		queries:         queries,
 		db:              db,
 		baseURL:         strings.TrimRight(baseURL, "/"),
 		secretKey:       secretKey,
 		log:             log,
 		blockedIPRanges: blockedRanges,
+		cache:           NoopRedirectCache{},
 	}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
 }
 
 // withTx runs fn inside a database transaction.  When s.db is nil (tests
@@ -486,14 +532,27 @@ func isDuplicateKey(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation
 }
 
-// Redirect records a click and returns the destination URL for the given short
-// code. The matching urls row is locked with SELECT ... FOR UPDATE, a click_logs
-// row is inserted, and click_count/last_accessed_at are updated before the
-// response is built, so every redirect is counted exactly once.
+// Redirect resolves a short code to its destination URL and records a click.
+//
+// It is cache-first: on a cache hit (the same shortCode resolved before) it
+// serves the redirect and records the click without taking the SELECT ...
+// FOR UPDATE row lock, avoiding the DB round trip on the hottest path. On a
+// cache miss it falls back to the transactional DB path and populates the
+// cache so subsequent requests can be served from it.
 func (s *URLService) Redirect(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, error) {
+
+	if resp, hit, err := s.redirectFromCache(ctx, shortCode, click); err != nil {
+		return nil, err
+	} else if hit {
+		s.log.Info("url redirected (cache hit)", logger.String("shortCode", utils.SanitizeLog(shortCode)), logger.Int64("id", resp.ID))
+		return resp, nil
+	}
+
 	var resp *payload.URLResponse
+	var urlRow gen.GetURLByShortCodeForUpdateRow
 
 	err := s.withTx(ctx, func(q gen.Querier) error {
+
 		row, err := q.GetURLByShortCodeForUpdate(ctx, shortCode)
 		if err != nil {
 			if err == sql.ErrNoRows {
@@ -504,33 +563,16 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 			return apperror.ErrInternal
 		}
 
-		if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now()) {
+		urlRow = row
+
+		if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now().UTC()) {
 			s.log.Warn("url expired", logger.Int64("id", row.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
 			return apperror.ErrURLExpired
 		}
 
-		if _, err := q.CreateClickLog(ctx, gen.CreateClickLogParams{
-			UrlID:      row.ID,
-			IpAddress:  inet(click.IP),
-			UserAgent:  nullString(click.UserAgent),
-			Referrer:   nullString(click.Referrer),
-			Browser:    nullString(utils.ParseBrowser(click.UserAgent)),
-			DeviceType: nullString(utils.ParseDeviceType(click.UserAgent)),
-		}); err != nil {
-			s.log.Error("failed to create click log", logger.Error(err), logger.Int64("urlID", row.ID))
-			return apperror.ErrInternal
+		if err := s.recordClick(ctx, q, row.ID, click); err != nil {
+			return err
 		}
-
-		if err := q.IncrementURLClick(ctx, row.ID); err != nil {
-			s.log.Error("failed to increment click count", logger.Error(err), logger.Int64("urlID", row.ID))
-			return apperror.ErrInternal
-		}
-
-		_ = q.UpsertDailyStats(ctx, gen.UpsertDailyStatsParams{
-			UrlID:       row.ID,
-			StatDate:    time.Now().Truncate(24 * time.Hour),
-			TotalClicks: sql.NullInt64{Int64: 1, Valid: true},
-		})
 
 		resp = s.toResponse(rowToUrlForUpdate(row), row.OriginalUrl)
 		return nil
@@ -539,8 +581,117 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 		return nil, err
 	}
 
+	// Populate the cache so subsequent redirects for this code hit cache.
+	s.cacheRedirect(ctx, shortCode, rowToUrlForUpdate(urlRow), resp.OriginalURL)
+
 	s.log.Info("url redirected", logger.String("shortCode", utils.SanitizeLog(shortCode)), logger.Int64("id", resp.ID))
 	return resp, nil
+}
+
+// redirectFromCache attempts to serve a redirect from cache. It returns the
+// response, whether it was a valid cache hit, and an error when the cached
+// entry is present but expired or inactive. When the cache is unavailable or
+// the key is missing, hit is false and err is nil so the caller falls back to
+// the DB.
+func (s *URLService) redirectFromCache(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, bool, error) {
+
+	raw, err := s.cache.Get(ctx, cacheKeyRedirectPrefix+shortCode)
+	if err != nil {
+		return nil, false, nil
+	}
+
+	var data redirectCacheData
+	if json.Unmarshal([]byte(raw), &data) != nil {
+		return nil, false, nil
+	}
+
+	if data.ExpiresAt != "" {
+		if t, parseErr := time.Parse(time.RFC3339, data.ExpiresAt); parseErr == nil && t.Before(time.Now().UTC()) {
+			s.log.Warn("cached url expired", logger.Int64("id", data.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
+			s.invalidateRedirectCache(ctx, shortCode)
+			return nil, true, apperror.ErrURLExpired
+		}
+	}
+
+	if data.URLStatus != int16(enum.URLStatusActive) {
+		s.log.Warn("cached url not active", logger.Int64("id", data.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
+		s.invalidateRedirectCache(ctx, shortCode)
+		return nil, true, apperror.ErrNotFound
+	}
+
+	// Cache hit: record the click (no row lock) and redirect.
+	if err := s.recordClick(ctx, s.queries, data.ID, click); err != nil {
+		return nil, false, nil
+	}
+
+	u := gen.Url{
+		ID:        data.ID,
+		ShortCode: shortCode,
+		UrlStatus: sql.NullInt16{Int16: data.URLStatus, Valid: true},
+	}
+
+	return s.toResponse(u, data.OriginalURL), true, nil
+}
+
+// recordClick writes a click log, increments the click counter, and upserts
+// daily stats for the given URL using the provided querier.
+func (s *URLService) recordClick(ctx context.Context, q gen.Querier, urlID int64, click payload.ClickInfo) error {
+
+	if _, err := q.CreateClickLog(ctx, gen.CreateClickLogParams{
+		UrlID:      urlID,
+		IpAddress:  inet(click.IP),
+		UserAgent:  nullString(click.UserAgent),
+		Referrer:   nullString(click.Referrer),
+		Browser:    nullString(utils.ParseBrowser(click.UserAgent)),
+		DeviceType: nullString(utils.ParseDeviceType(click.UserAgent)),
+	}); err != nil {
+		s.log.Error("failed to create click log", logger.Error(err), logger.Int64("urlID", urlID))
+		return apperror.ErrInternal
+	}
+
+	if err := q.IncrementURLClick(ctx, urlID); err != nil {
+		s.log.Error("failed to increment click count", logger.Error(err), logger.Int64("urlID", urlID))
+		return apperror.ErrInternal
+	}
+
+	_ = q.UpsertDailyStats(ctx, gen.UpsertDailyStatsParams{
+		UrlID:       urlID,
+		StatDate:    time.Now().Truncate(24 * time.Hour),
+		TotalClicks: sql.NullInt64{Int64: 1, Valid: true},
+	})
+
+	return nil
+}
+
+// cacheRedirect stores the primary redirect data for a short code as a single
+// JSON value so subsequent lookups can be served without hitting the database.
+func (s *URLService) cacheRedirect(ctx context.Context, shortCode string, u gen.Url, originalURL string) {
+	if s.cache == nil {
+		return
+	}
+	expiresAt := ""
+	if u.ExpiresAt.Valid {
+		expiresAt = u.ExpiresAt.Time.UTC().Format(time.RFC3339)
+	}
+	data := redirectCacheData{
+		ID:          u.ID,
+		OriginalURL: originalURL,
+		ExpiresAt:   expiresAt,
+		URLStatus:   u.UrlStatus.Int16,
+	}
+	b, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	_ = s.cache.Set(ctx, cacheKeyRedirectPrefix+shortCode, string(b))
+}
+
+// invalidateRedirectCache removes the cached redirect data for a short code.
+func (s *URLService) invalidateRedirectCache(ctx context.Context, shortCode string) {
+	if s.cache == nil {
+		return
+	}
+	_ = s.cache.Del(ctx, cacheKeyRedirectPrefix+shortCode)
 }
 
 // GetByID returns the URL with the given database id.
@@ -559,20 +710,31 @@ func (s *URLService) GetByID(ctx context.Context, userID int64, id int64) (*payl
 	return s.toResponse(rowToUrlByID(row), row.OriginalUrl), nil
 }
 
-// List returns a paginated list of active URLs ordered by creation time
-// descending, along with the total count and pagination metadata.
-func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offset int32) ([]any, int64, error) {
+// List returns a paginated list of URLs ordered by creation time descending,
+// along with the total count and pagination metadata. When status is non-nil,
+// only URLs matching that status are returned.
+func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offset int32, status *int16) ([]any, int64, error) {
+
+	var statusFilter sql.NullInt16
+	if status != nil {
+		statusFilter = sql.NullInt16{Int16: *status, Valid: true}
+	}
+
 	rows, err := s.queries.ListURLs(ctx, gen.ListURLsParams{
 		UserID: userID,
 		Limit:  perPage,
 		Offset: offset,
+		Status: statusFilter,
 	})
 	if err != nil {
 		s.log.Error("failed to list urls", logger.Error(err))
 		return nil, 0, apperror.ErrInternal
 	}
 
-	total, err := s.queries.CountURLs(ctx, userID)
+	total, err := s.queries.CountURLs(ctx, gen.CountURLsParams{
+		UserID: userID,
+		Status: statusFilter,
+	})
 	if err != nil {
 		s.log.Error("failed to count urls", logger.Error(err))
 		return nil, 0, apperror.ErrInternal
@@ -588,13 +750,39 @@ func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offs
 	return items, total, nil
 }
 
+// CountByStatus returns the count of URLs per status for the given user.
+func (s *URLService) CountByStatus(ctx context.Context, userID int64) (*payload.URLStatusCounts, error) {
+	row, err := s.queries.CountURLsByStatus(ctx, userID)
+	if err != nil {
+		s.log.Error("failed to count urls by status", logger.Error(err))
+		return nil, apperror.ErrInternal
+	}
+
+	s.log.Info("url status counts",
+		logger.Int64("active", row.Active),
+		logger.Int64("expired", row.Expired),
+		logger.Int64("disabled", row.Disabled),
+		logger.Int64("deleted", row.Deleted),
+	)
+
+	return &payload.URLStatusCounts{
+		Active:   row.Active,
+		Expired:  row.Expired,
+		Disabled: row.Disabled,
+		Deleted:  row.Deleted,
+	}, nil
+}
+
 // Update changes the original URL and/or expiry inside a transaction. When
 // the original URL changes, a new url_version row is appended.
 func (s *URLService) Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error) {
 
-	// Validate expiresAt
-	if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
-		return nil, apperror.ErrInvalidPayload
+	if !req.ExpiresAt.IsZero() {
+
+		// Validate expiresAt
+		if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
+			return nil, apperror.ErrInvalidPayload
+		}
 	}
 
 	// Validate blocked domain if original URL is changing
@@ -727,6 +915,9 @@ func (s *URLService) Update(ctx context.Context, userID int64, id int64, req pay
 
 	s.log.Info("url updated", logger.Int64("id", updated.ID))
 
+	// Invalidate the cache so the next redirect re-resolves from the DB.
+	s.invalidateRedirectCache(ctx, updated.ShortCode)
+
 	return s.toResponse(updated, responseOriginalURL), nil
 }
 
@@ -744,6 +935,7 @@ func (s *URLService) SoftDelete(ctx context.Context, userID int64, id int64) (*p
 	}
 
 	s.log.Info("url soft deleted", logger.Int64("id", u.ID), logger.String("shortCode", utils.SanitizeLog(u.ShortCode)))
+	s.invalidateRedirectCache(ctx, u.ShortCode)
 	return &payload.DeleteResponse{
 		ID:        u.ID,
 		ShortCode: u.ShortCode,
@@ -754,12 +946,23 @@ func (s *URLService) SoftDelete(ctx context.Context, userID int64, id int64) (*p
 
 // HardDelete permanently removes a previously soft-deleted URL from the database.
 func (s *URLService) HardDelete(ctx context.Context, userID int64, id int64) error {
+	u, err := s.queries.GetSoftDeletedURLByID(ctx, gen.GetSoftDeletedURLByIDParams{ID: id, UserID: userID})
+	if err != nil {
+		if err == sql.ErrNoRows {
+			s.log.Warn("soft-deleted url not found for hard delete", logger.Int64("id", id))
+			return apperror.ErrNotFound
+		}
+		s.log.Error("failed to fetch url for hard delete", logger.Error(err), logger.Int64("id", id))
+		return fmt.Errorf("failed to fetch url for hard delete: %w", err)
+	}
+
 	if err := s.queries.HardDeleteURL(ctx, gen.HardDeleteURLParams{ID: id, UserID: userID}); err != nil {
 		s.log.Error("failed to hard delete url", logger.Error(err), logger.Int64("id", id))
 		return fmt.Errorf("failed to hard delete url: %w", err)
 	}
 
-	s.log.Info("url hard deleted", logger.Int64("id", id))
+	s.log.Info("url hard deleted", logger.Int64("id", id), logger.String("shortCode", utils.SanitizeLog(u.ShortCode)))
+	s.invalidateRedirectCache(ctx, u.ShortCode)
 	return nil
 }
 
@@ -958,6 +1161,23 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 	hasBeenAccessed := u.LastAccessedAt.Valid
 	healthChecked := u.LastHealthCheck.Valid
 
+	// Compute URL status string from url_status and expires_at
+	urlStatus := "ACTIVE"
+	if u.UrlStatus.Valid {
+		switch enum.URLStatus(u.UrlStatus.Int16) {
+		case enum.URLStatusDisabled:
+			urlStatus = "DISABLED"
+		case enum.URLStatusExpired:
+			urlStatus = "EXPIRED"
+		case enum.URLStatusDeleted:
+			urlStatus = "DELETED"
+		case enum.URLStatusActive:
+			if u.ExpiresAt.Valid && u.ExpiresAt.Time.Before(time.Now().UTC()) {
+				urlStatus = "EXPIRED"
+			}
+		}
+	}
+
 	// Build response with all fields populated
 	resp := &payload.URLResponse{
 		ID:                      u.ID,
@@ -968,7 +1188,7 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 		Title:                   "",
 		Description:             "",
 		IsCustom:                &isCustom,
-		IsActive:                u.UrlStatus.Valid && u.UrlStatus.Int16 == int16(enum.URLStatusActive),
+		Status:                  urlStatus,
 		ClickCount:              0,
 		HasBeenAccessed:         hasBeenAccessed,
 		HealthChecked:           healthChecked,
@@ -1067,11 +1287,11 @@ func inet(ip net.IP) pqtype.Inet {
 	return pqtype.Inet{IPNet: net.IPNet{IP: ip, Mask: net.CIDRMask(len(ip)*8, len(ip)*8)}, Valid: true}
 }
 
-func nullTime(t utils.UnixMilliTime) sql.NullTime {
-	if !t.Valid {
+func nullTime(t time.Time) sql.NullTime {
+	if t.IsZero() {
 		return sql.NullTime{Valid: false}
 	}
-	return sql.NullTime{Time: t.Time, Valid: true}
+	return sql.NullTime{Time: t.UTC(), Valid: true}
 }
 
 func hashString(s string) string {

@@ -44,7 +44,7 @@ func (t *UnixMilliTime) UnmarshalJSON(b []byte) error {
 			t.Valid = false
 			return nil
 		}
-		t.Time = time.UnixMilli(ms)
+		t.Time = time.UnixMilli(ms).UTC()
 		t.Valid = true
 		return nil
 	}
@@ -54,7 +54,7 @@ func (t *UnixMilliTime) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return err
 	}
-	t.Time = parsed
+	t.Time = parsed.UTC()
 	t.Valid = true
 	return nil
 }
@@ -120,11 +120,11 @@ func ParsePositiveInt(value string, fallback int32) int32 {
 
 // ValidateExpiresAt ensures that when an expiration time is provided it is not
 // in the past (i.e. it must be the current moment or a future time).
-func ValidateExpiresAt(e UnixMilliTime) error {
-	if !e.Valid {
+func ValidateExpiresAt(e time.Time) error {
+	if e.IsZero() {
 		return nil
 	}
-	if e.Time.Before(time.Now()) {
+	if e.Before(time.Now().UTC()) {
 		return fmt.Errorf("expiresAt must be greater than the current time")
 	}
 	return nil
@@ -156,11 +156,15 @@ func ValidateEmail(email string) error {
 // - At least 1 lowercase letter
 // - At least 1 uppercase letter
 // - At least 1 number
-// - Maximum 8 characters
+// - At least 8 characters, at most 55 characters
 func ValidatePassword(password string) error {
 
 	if len(password) < 8 {
-		return fmt.Errorf("%w: password must be at most 8 characters", apperror.ErrInvalidPayload)
+		return fmt.Errorf("%w: password must be at least 8 characters", apperror.ErrInvalidPayload)
+	}
+
+	if len(password) > 55 {
+		return fmt.Errorf("%w: Password is too long", apperror.ErrInvalidPayload)
 	}
 
 	hasLower := false

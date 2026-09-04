@@ -15,6 +15,13 @@ import (
 func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, adminHandler *handler.AdminHandler, accountHandler *handler.AccountHandler, authService *service.AuthService) http.Handler {
 	mux := http.NewServeMux()
 
+	// Health check (public)
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
 	// Auth routes (public)
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
@@ -32,6 +39,7 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 
 	// URL routes (protected) — userId is derived from the JWT access token
 	mux.Handle("POST /api/v1/shorten", authMiddleware(http.HandlerFunc(urlHandler.CreateShortURL)))
+	mux.Handle("GET /api/v1/urls/status-counts", authMiddleware(http.HandlerFunc(urlHandler.GetURLStatusCounts)))
 	mux.Handle("GET /api/v1/urls", authMiddleware(http.HandlerFunc(urlHandler.ListURLs)))
 	mux.Handle("GET /api/v1/urls/{id}", authMiddleware(http.HandlerFunc(urlHandler.GetURLByID)))
 	mux.Handle("PATCH /api/v1/urls/{id}", authMiddleware(http.HandlerFunc(urlHandler.UpdateURL)))
