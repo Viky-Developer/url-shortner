@@ -523,10 +523,6 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 
 	s.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", utils.SanitizeLog(created.ShortCode)))
 
-	// Ensure no stale cache entry exists for the new short code (e.g. from a
-	// previously used custom code).
-	s.invalidateRedirectCache(ctx, created.ShortCode)
-
 	return s.toResponse(created, req.OriginalURL), nil
 }
 
@@ -569,7 +565,7 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 
 		urlRow = row
 
-		if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now()) {
+		if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now().UTC()) {
 			s.log.Warn("url expired", logger.Int64("id", row.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
 			return apperror.ErrURLExpired
 		}
@@ -610,7 +606,7 @@ func (s *URLService) redirectFromCache(ctx context.Context, shortCode string, cl
 	}
 
 	if data.ExpiresAt != "" {
-		if t, parseErr := time.Parse(time.RFC3339, data.ExpiresAt); parseErr == nil && t.Before(time.Now()) {
+		if t, parseErr := time.Parse(time.RFC3339, data.ExpiresAt); parseErr == nil && t.Before(time.Now().UTC()) {
 			s.log.Warn("cached url expired", logger.Int64("id", data.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
 			s.invalidateRedirectCache(ctx, shortCode)
 			return nil, true, apperror.ErrURLExpired
@@ -675,7 +671,7 @@ func (s *URLService) cacheRedirect(ctx context.Context, shortCode string, u gen.
 	}
 	expiresAt := ""
 	if u.ExpiresAt.Valid {
-		expiresAt = u.ExpiresAt.Time.Format(time.RFC3339)
+		expiresAt = u.ExpiresAt.Time.UTC().Format(time.RFC3339)
 	}
 	data := redirectCacheData{
 		ID:          u.ID,
@@ -714,20 +710,31 @@ func (s *URLService) GetByID(ctx context.Context, userID int64, id int64) (*payl
 	return s.toResponse(rowToUrlByID(row), row.OriginalUrl), nil
 }
 
-// List returns a paginated list of active URLs ordered by creation time
-// descending, along with the total count and pagination metadata.
-func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offset int32) ([]any, int64, error) {
+// List returns a paginated list of URLs ordered by creation time descending,
+// along with the total count and pagination metadata. When status is non-nil,
+// only URLs matching that status are returned.
+func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offset int32, status *int16) ([]any, int64, error) {
+
+	var statusFilter sql.NullInt16
+	if status != nil {
+		statusFilter = sql.NullInt16{Int16: *status, Valid: true}
+	}
+
 	rows, err := s.queries.ListURLs(ctx, gen.ListURLsParams{
 		UserID: userID,
 		Limit:  perPage,
 		Offset: offset,
+		Status: statusFilter,
 	})
 	if err != nil {
 		s.log.Error("failed to list urls", logger.Error(err))
 		return nil, 0, apperror.ErrInternal
 	}
 
-	total, err := s.queries.CountURLs(ctx, userID)
+	total, err := s.queries.CountURLs(ctx, gen.CountURLsParams{
+		UserID: userID,
+		Status: statusFilter,
+	})
 	if err != nil {
 		s.log.Error("failed to count urls", logger.Error(err))
 		return nil, 0, apperror.ErrInternal
@@ -743,13 +750,39 @@ func (s *URLService) List(ctx context.Context, userID int64, page, perPage, offs
 	return items, total, nil
 }
 
+// CountByStatus returns the count of URLs per status for the given user.
+func (s *URLService) CountByStatus(ctx context.Context, userID int64) (*payload.URLStatusCounts, error) {
+	row, err := s.queries.CountURLsByStatus(ctx, userID)
+	if err != nil {
+		s.log.Error("failed to count urls by status", logger.Error(err))
+		return nil, apperror.ErrInternal
+	}
+
+	s.log.Info("url status counts",
+		logger.Int64("active", row.Active),
+		logger.Int64("expired", row.Expired),
+		logger.Int64("disabled", row.Disabled),
+		logger.Int64("deleted", row.Deleted),
+	)
+
+	return &payload.URLStatusCounts{
+		Active:   row.Active,
+		Expired:  row.Expired,
+		Disabled: row.Disabled,
+		Deleted:  row.Deleted,
+	}, nil
+}
+
 // Update changes the original URL and/or expiry inside a transaction. When
 // the original URL changes, a new url_version row is appended.
 func (s *URLService) Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error) {
 
-	// Validate expiresAt
-	if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
-		return nil, apperror.ErrInvalidPayload
+	if !req.ExpiresAt.IsZero() {
+
+		// Validate expiresAt
+		if err := utils.ValidateExpiresAt(req.ExpiresAt); err != nil {
+			return nil, apperror.ErrInvalidPayload
+		}
 	}
 
 	// Validate blocked domain if original URL is changing
@@ -913,10 +946,10 @@ func (s *URLService) SoftDelete(ctx context.Context, userID int64, id int64) (*p
 
 // HardDelete permanently removes a previously soft-deleted URL from the database.
 func (s *URLService) HardDelete(ctx context.Context, userID int64, id int64) error {
-	u, err := s.queries.GetURLByID(ctx, gen.GetURLByIDParams{ID: id, UserID: userID})
+	u, err := s.queries.GetSoftDeletedURLByID(ctx, gen.GetSoftDeletedURLByIDParams{ID: id, UserID: userID})
 	if err != nil {
 		if err == sql.ErrNoRows {
-			s.log.Warn("url not found for hard delete", logger.Int64("id", id))
+			s.log.Warn("soft-deleted url not found for hard delete", logger.Int64("id", id))
 			return apperror.ErrNotFound
 		}
 		s.log.Error("failed to fetch url for hard delete", logger.Error(err), logger.Int64("id", id))
@@ -1128,6 +1161,23 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 	hasBeenAccessed := u.LastAccessedAt.Valid
 	healthChecked := u.LastHealthCheck.Valid
 
+	// Compute URL status string from url_status and expires_at
+	urlStatus := "ACTIVE"
+	if u.UrlStatus.Valid {
+		switch enum.URLStatus(u.UrlStatus.Int16) {
+		case enum.URLStatusDisabled:
+			urlStatus = "DISABLED"
+		case enum.URLStatusExpired:
+			urlStatus = "EXPIRED"
+		case enum.URLStatusDeleted:
+			urlStatus = "DELETED"
+		case enum.URLStatusActive:
+			if u.ExpiresAt.Valid && u.ExpiresAt.Time.Before(time.Now().UTC()) {
+				urlStatus = "EXPIRED"
+			}
+		}
+	}
+
 	// Build response with all fields populated
 	resp := &payload.URLResponse{
 		ID:                      u.ID,
@@ -1138,7 +1188,7 @@ func (s *URLService) toResponse(u gen.Url, originalURL string) *payload.URLRespo
 		Title:                   "",
 		Description:             "",
 		IsCustom:                &isCustom,
-		IsActive:                u.UrlStatus.Valid && u.UrlStatus.Int16 == int16(enum.URLStatusActive),
+		Status:                  urlStatus,
 		ClickCount:              0,
 		HasBeenAccessed:         hasBeenAccessed,
 		HealthChecked:           healthChecked,
@@ -1237,11 +1287,11 @@ func inet(ip net.IP) pqtype.Inet {
 	return pqtype.Inet{IPNet: net.IPNet{IP: ip, Mask: net.CIDRMask(len(ip)*8, len(ip)*8)}, Valid: true}
 }
 
-func nullTime(t utils.UnixMilliTime) sql.NullTime {
-	if !t.Valid {
+func nullTime(t time.Time) sql.NullTime {
+	if t.IsZero() {
 		return sql.NullTime{Valid: false}
 	}
-	return sql.NullTime{Time: t.Time, Valid: true}
+	return sql.NullTime{Time: t.UTC(), Valid: true}
 }
 
 func hashString(s string) string {

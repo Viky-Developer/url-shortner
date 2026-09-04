@@ -19,15 +19,16 @@ import (
 )
 
 type mockService struct {
-	createFn     func(context.Context, int64, payload.CreateURLRequest) (*payload.URLResponse, error)
-	redirectFn   func(context.Context, string, payload.ClickInfo) (*payload.URLResponse, error)
-	byIDFn       func(context.Context, int64, int64) (*payload.URLResponse, error)
-	listFn       func(context.Context, int64, int32, int32, int32) ([]any, int64, error)
-	updateFn     func(context.Context, int64, int64, payload.UpdateURLRequest) (*payload.URLResponse, error)
-	softDeleteFn func(context.Context, int64, int64) (*payload.DeleteResponse, error)
-	hardDeleteFn func(context.Context, int64, int64) error
-	listClicksFn func(context.Context, int64, int64, *time.Time, *time.Time, int32, int32, int32) ([]any, int64, error)
-	analyticsFn  func(context.Context, int64, int64, *time.Time, *time.Time) (*payload.AnalyticsResponse, error)
+	createFn        func(context.Context, int64, payload.CreateURLRequest) (*payload.URLResponse, error)
+	redirectFn      func(context.Context, string, payload.ClickInfo) (*payload.URLResponse, error)
+	byIDFn          func(context.Context, int64, int64) (*payload.URLResponse, error)
+	listFn          func(context.Context, int64, int32, int32, int32, *int16) ([]any, int64, error)
+	countByStatusFn func(context.Context, int64) (*payload.URLStatusCounts, error)
+	updateFn        func(context.Context, int64, int64, payload.UpdateURLRequest) (*payload.URLResponse, error)
+	softDeleteFn    func(context.Context, int64, int64) (*payload.DeleteResponse, error)
+	hardDeleteFn    func(context.Context, int64, int64) error
+	listClicksFn    func(context.Context, int64, int64, *time.Time, *time.Time, int32, int32, int32) ([]any, int64, error)
+	analyticsFn     func(context.Context, int64, int64, *time.Time, *time.Time) (*payload.AnalyticsResponse, error)
 }
 
 func (m *mockService) Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error) {
@@ -42,8 +43,12 @@ func (m *mockService) GetByID(ctx context.Context, userID int64, id int64) (*pay
 	return m.byIDFn(ctx, userID, id)
 }
 
-func (m *mockService) List(ctx context.Context, userID int64, page, perPage, offset int32) ([]any, int64, error) {
-	return m.listFn(ctx, userID, page, perPage, offset)
+func (m *mockService) List(ctx context.Context, userID int64, page, perPage, offset int32, status *int16) ([]any, int64, error) {
+	return m.listFn(ctx, userID, page, perPage, offset, status)
+}
+
+func (m *mockService) CountByStatus(ctx context.Context, userID int64) (*payload.URLStatusCounts, error) {
+	return m.countByStatusFn(ctx, userID)
 }
 
 func (m *mockService) Update(ctx context.Context, userID int64, id int64, req payload.UpdateURLRequest) (*payload.URLResponse, error) {
@@ -100,7 +105,7 @@ func sampleResponse() *payload.URLResponse {
 		ShortCode:   "abc1234567",
 		OriginalURL: "https://example.com/original",
 		ShortURL:    "http://localhost:8080/abc1234567",
-		IsActive:    true,
+		Status:      "ACTIVE",
 		CreatedAt:   now.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:   now.Format("2006-01-02T15:04:05Z"),
 	}
@@ -371,7 +376,7 @@ func TestGetURLByIDUnauthorized(t *testing.T) {
 
 func TestListURLsDefaults(t *testing.T) {
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) ([]any, int64, error) {
+		listFn: func(_ context.Context, _ int64, page, perPage, offset int32, _ *int16) ([]any, int64, error) {
 			if page != 1 {
 				t.Errorf("expected default page 1, got %d", page)
 			}
@@ -558,8 +563,8 @@ func TestCreatePassesAllFields(t *testing.T) {
 	if captured.Description != "desc" {
 		t.Errorf("description = %q", captured.Description)
 	}
-	if !captured.ExpiresAt.Valid {
-		t.Error("expiresAt should be valid")
+	if captured.ExpiresAt.IsZero() {
+		t.Error("expiresAt should be non-zero")
 	}
 }
 
@@ -779,7 +784,7 @@ func TestGetByIDPassesArgs(t *testing.T) {
 func TestListCustomPagination(t *testing.T) {
 	var capturedPage, capturedPerPage, capturedOffset int32
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) ([]any, int64, error) {
+		listFn: func(_ context.Context, _ int64, page, perPage, offset int32, _ *int16) ([]any, int64, error) {
 			capturedPage = page
 			capturedPerPage = perPage
 			capturedOffset = offset
@@ -808,7 +813,7 @@ func TestListCustomPagination(t *testing.T) {
 func TestListPerPageClamped(t *testing.T) {
 	var capturedPerPage int32
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, _, perPage, _ int32) ([]any, int64, error) {
+		listFn: func(_ context.Context, _ int64, _, perPage, _ int32, _ *int16) ([]any, int64, error) {
 			capturedPerPage = perPage
 			return []any{}, int64(0), nil
 		},
@@ -828,7 +833,7 @@ func TestListPerPageClamped(t *testing.T) {
 
 func TestListServiceError(t *testing.T) {
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, _, _, _ int32) ([]any, int64, error) {
+		listFn: func(_ context.Context, _ int64, _, _, _ int32, _ *int16) ([]any, int64, error) {
 			return nil, int64(0), apperror.ErrInternal
 		},
 	}
@@ -848,7 +853,7 @@ func TestListServiceError(t *testing.T) {
 func TestListDefaultsWhenNoQueryParams(t *testing.T) {
 	var capturedPage, capturedPerPage, capturedOffset int32
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, page, perPage, offset int32) ([]any, int64, error) {
+		listFn: func(_ context.Context, _ int64, page, perPage, offset int32, _ *int16) ([]any, int64, error) {
 			capturedPage = page
 			capturedPerPage = perPage
 			capturedOffset = offset
@@ -876,7 +881,7 @@ func TestListDefaultsWhenNoQueryParams(t *testing.T) {
 
 func TestListResponseBody(t *testing.T) {
 	mock := &mockService{
-		listFn: func(_ context.Context, _ int64, _, _, _ int32) ([]any, int64, error) {
+		listFn: func(_ context.Context, _ int64, _, _, _ int32, _ *int16) ([]any, int64, error) {
 			return []any{sampleResponse()}, int64(1), nil
 		},
 	}

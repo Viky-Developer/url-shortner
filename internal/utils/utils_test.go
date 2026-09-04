@@ -129,21 +129,21 @@ func TestParsePositiveInt(t *testing.T) {
 }
 
 func TestValidateExpiresAtNil(t *testing.T) {
-	if err := ValidateExpiresAt(UnixMilliTime{}); err != nil {
+	if err := ValidateExpiresAt(time.Time{}); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateExpiresAtFuture(t *testing.T) {
 	future := time.Now().Add(time.Hour)
-	if err := ValidateExpiresAt(UnixMilliTime{Time: future, Valid: true}); err != nil {
+	if err := ValidateExpiresAt(future); err != nil {
 		t.Errorf("unexpected error for future time: %v", err)
 	}
 }
 
 func TestValidateExpiresAtPast(t *testing.T) {
 	past := time.Now().Add(-time.Hour)
-	if err := ValidateExpiresAt(UnixMilliTime{Time: past, Valid: true}); err == nil {
+	if err := ValidateExpiresAt(past); err == nil {
 		t.Error("expected error for past time")
 	}
 }

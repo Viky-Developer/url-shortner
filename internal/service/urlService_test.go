@@ -24,8 +24,10 @@ type mockQuerier struct {
 	byCodeFn               func(context.Context, string) (gen.GetURLByShortCodeRow, error)
 	byCodeForUpdateFn      func(context.Context, string) (gen.GetURLByShortCodeForUpdateRow, error)
 	byIDFn                 func(context.Context, gen.GetURLByIDParams) (gen.GetURLByIDRow, error)
+	softDeletedByIDFn      func(context.Context, gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error)
 	listFn                 func(context.Context, gen.ListURLsParams) ([]gen.ListURLsRow, error)
-	countFn                func(context.Context, int64) (int64, error)
+	countFn                func(context.Context, gen.CountURLsParams) (int64, error)
+	countByStatusFn        func(context.Context, int64) (gen.CountURLsByStatusRow, error)
 	emailFn                func(context.Context, string) (gen.GetUserByEmailRow, error)
 	updateUserFn           func(context.Context, gen.UpdateUserDisplayIDParams) (gen.UpdateUserDisplayIDRow, error)
 	updateFn               func(context.Context, gen.UpdateURLParams) (gen.Url, error)
@@ -139,6 +141,10 @@ func (m *mockQuerier) GetURLByID(ctx context.Context, arg gen.GetURLByIDParams) 
 	return m.byIDFn(ctx, arg)
 }
 
+func (m *mockQuerier) GetSoftDeletedURLByID(ctx context.Context, arg gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+	return m.softDeletedByIDFn(ctx, arg)
+}
+
 func (m *mockQuerier) ListURLs(ctx context.Context, arg gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 	return m.listFn(ctx, arg)
 }
@@ -151,8 +157,12 @@ func (m *mockQuerier) GetDestinationByHash(ctx context.Context, urlHash string) 
 	return m.destByHashFn(ctx, urlHash)
 }
 
-func (m *mockQuerier) CountURLs(ctx context.Context, userID int64) (int64, error) {
-	return m.countFn(ctx, userID)
+func (m *mockQuerier) CountURLs(ctx context.Context, arg gen.CountURLsParams) (int64, error) {
+	return m.countFn(ctx, arg)
+}
+
+func (m *mockQuerier) CountURLsByStatus(ctx context.Context, userID int64) (gen.CountURLsByStatusRow, error) {
+	return m.countByStatusFn(ctx, userID)
 }
 
 func (m *mockQuerier) UpdateURL(ctx context.Context, arg gen.UpdateURLParams) (gen.Url, error) {
@@ -712,13 +722,13 @@ func TestListPagination(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return []gen.ListURLsRow{testListRow("abc123"), testListRow("def456")}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 25, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	resp, total, err := svc.List(context.Background(), 1, 3, 10, 20)
+	resp, total, err := svc.List(context.Background(), 1, 3, 10, 20, nil)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -840,8 +850,8 @@ func TestUpdateLeavesUrlStatusNilWhenOmitted(t *testing.T) {
 	if captured.UrlStatus.Valid {
 		t.Error("expected urlStatus param to be NULL so COALESCE preserves the existing value")
 	}
-	if !resp.IsActive {
-		t.Error("expected isActive to remain true after update without explicit isActive in the request")
+	if resp.Status != "ACTIVE" {
+		t.Error("expected status to be 'ACTIVE' after update without explicit status in the request")
 	}
 }
 
@@ -1027,7 +1037,7 @@ func TestCreateTitleDescriptionExpiresPassed(t *testing.T) {
 		OriginalURL: "https://example.com",
 		Title:       "My Title",
 		Description: "My Desc",
-		ExpiresAt:   utils.UnixMilliTime{Time: future, Valid: true},
+		ExpiresAt:   future,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1094,8 +1104,8 @@ func TestCreateResponseHasCorrectFields(t *testing.T) {
 	if resp.Description != "Test Desc" {
 		t.Errorf("description = %q", resp.Description)
 	}
-	if resp.IsActive != true {
-		t.Error("isActive should be true")
+	if resp.Status != "ACTIVE" {
+		t.Error("status should be 'ACTIVE'")
 	}
 	if resp.IsCustom == nil || *resp.IsCustom != true {
 		t.Error("isCustom should be true")
@@ -1713,13 +1723,13 @@ func TestListEmpty(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return []gen.ListURLsRow{}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 0, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, total, err := svc.List(context.Background(), 1, 1, 10, 0)
+	items, total, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1736,13 +1746,13 @@ func TestListCountFails(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return []gen.ListURLsRow{}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 0, fmt.Errorf("count error")
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	_, _, err := svc.List(context.Background(), 1, 1, 10, 0)
+	_, _, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err == nil {
 		t.Fatal("expected error when count fails")
 	}
@@ -1753,13 +1763,13 @@ func TestListQueryFails(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return nil, fmt.Errorf("list error")
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 0, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	_, _, err := svc.List(context.Background(), 1, 1, 10, 0)
+	_, _, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err == nil {
 		t.Fatal("expected error when list fails")
 	}
@@ -1773,13 +1783,13 @@ func TestListPaginationMath(t *testing.T) {
 				testListRow("def"),
 			}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 25, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, total, err := svc.List(context.Background(), 1, 3, 10, 20)
+	items, total, err := svc.List(context.Background(), 1, 3, 10, 20, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1797,13 +1807,13 @@ func TestListExactMultiple(t *testing.T) {
 		listFn: func(_ context.Context, _ gen.ListURLsParams) ([]gen.ListURLsRow, error) {
 			return []gen.ListURLsRow{testListRow("a")}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 20, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, total, err := svc.List(context.Background(), 1, 1, 10, 0)
+	items, total, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1831,13 +1841,13 @@ func TestListAllNullFields(t *testing.T) {
 				},
 			}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 1, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, total, err := svc.List(context.Background(), 1, 1, 10, 0)
+	items, total, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1893,13 +1903,13 @@ func TestListMultipleItemsWithHealthStatus(t *testing.T) {
 				},
 			}, nil
 		},
-		countFn: func(_ context.Context, _ int64) (int64, error) {
+		countFn: func(_ context.Context, _ gen.CountURLsParams) (int64, error) {
 			return 2, nil
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
-	items, _, err := svc.List(context.Background(), 1, 1, 10, 0)
+	items, _, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2212,7 +2222,7 @@ func TestUpdateExpiresAt(t *testing.T) {
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
 
 	_, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
-		ExpiresAt: utils.UnixMilliTime{Time: future, Valid: true},
+		ExpiresAt: future,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2330,8 +2340,8 @@ func TestSoftDeleteInvalidatesCache(t *testing.T) {
 func TestHardDeleteSuccess(t *testing.T) {
 	var capturedParams gen.HardDeleteURLParams
 	mock := &mockQuerier{
-		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
-			return gen.GetURLByIDRow{
+		softDeletedByIDFn: func(_ context.Context, _ gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+			return gen.GetSoftDeletedURLByIDRow{
 				ID:        42,
 				UserID:    1,
 				ShortCode: "abc123",
@@ -2358,8 +2368,8 @@ func TestHardDeleteSuccess(t *testing.T) {
 
 func TestHardDeleteQueryError(t *testing.T) {
 	mock := &mockQuerier{
-		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
-			return gen.GetURLByIDRow{ID: 1, UserID: 1, ShortCode: "abc123"}, nil
+		softDeletedByIDFn: func(_ context.Context, _ gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+			return gen.GetSoftDeletedURLByIDRow{ID: 1, UserID: 1, ShortCode: "abc123"}, nil
 		},
 		hardFn: func(_ context.Context, _ gen.HardDeleteURLParams) error {
 			return fmt.Errorf("db error")
@@ -2375,8 +2385,8 @@ func TestHardDeleteQueryError(t *testing.T) {
 
 func TestHardDeleteNotSoftDeleted(t *testing.T) {
 	mock := &mockQuerier{
-		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
-			return gen.GetURLByIDRow{ID: 1, UserID: 1, ShortCode: "abc123"}, nil
+		softDeletedByIDFn: func(_ context.Context, _ gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+			return gen.GetSoftDeletedURLByIDRow{ID: 1, UserID: 1, ShortCode: "abc123"}, nil
 		},
 		hardFn: func(_ context.Context, _ gen.HardDeleteURLParams) error {
 			return sql.ErrNoRows
@@ -2392,8 +2402,8 @@ func TestHardDeleteNotSoftDeleted(t *testing.T) {
 
 func TestHardDeleteFetchError(t *testing.T) {
 	mock := &mockQuerier{
-		byIDFn: func(_ context.Context, _ gen.GetURLByIDParams) (gen.GetURLByIDRow, error) {
-			return gen.GetURLByIDRow{}, sql.ErrNoRows
+		softDeletedByIDFn: func(_ context.Context, _ gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error) {
+			return gen.GetSoftDeletedURLByIDRow{}, sql.ErrNoRows
 		},
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
@@ -2634,8 +2644,8 @@ func TestToResponseAllFields(t *testing.T) {
 	if resp.ClickCount != 42 {
 		t.Errorf("clickCount = %d", resp.ClickCount)
 	}
-	if resp.IsActive != true {
-		t.Error("isActive should be true")
+	if resp.Status != "ACTIVE" {
+		t.Error("status should be 'ACTIVE'")
 	}
 	if resp.IsCustom == nil || *resp.IsCustom != true {
 		t.Error("isCustom should be true")
@@ -2742,8 +2752,8 @@ func TestToResponseInactiveStatus(t *testing.T) {
 	}
 
 	resp := svc.toResponse(u, "https://example.com")
-	if resp.IsActive {
-		t.Error("isActive should be false for Disabled status")
+	if resp.Status != "DISABLED" {
+		t.Errorf("status should be 'DISABLED', got %q", resp.Status)
 	}
 }
 

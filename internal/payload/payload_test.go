@@ -75,7 +75,7 @@ func TestURLResponseJSON(t *testing.T) {
 		ShortCode:   "abc123",
 		OriginalURL: "https://example.com",
 		ShortURL:    "http://localhost/abc123",
-		IsActive:    true,
+		Status:      "ACTIVE",
 		ClickCount:  10,
 		CreatedAt:   now.Format(time.RFC3339),
 		UpdatedAt:   now.Format(time.RFC3339),
@@ -97,8 +97,8 @@ func TestURLResponseJSON(t *testing.T) {
 	if decoded.ShortCode != resp.ShortCode {
 		t.Errorf("ShortCode = %q, want %q", decoded.ShortCode, resp.ShortCode)
 	}
-	if !decoded.IsActive {
-		t.Error("expected IsActive to be true")
+	if decoded.Status != "ACTIVE" {
+		t.Errorf("expected Status to be 'ACTIVE', got %q", decoded.Status)
 	}
 }
 

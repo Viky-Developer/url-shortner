@@ -39,6 +39,7 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 
 	// URL routes (protected) — userId is derived from the JWT access token
 	mux.Handle("POST /api/v1/shorten", authMiddleware(http.HandlerFunc(urlHandler.CreateShortURL)))
+	mux.Handle("GET /api/v1/urls/status-counts", authMiddleware(http.HandlerFunc(urlHandler.GetURLStatusCounts)))
 	mux.Handle("GET /api/v1/urls", authMiddleware(http.HandlerFunc(urlHandler.ListURLs)))
 	mux.Handle("GET /api/v1/urls/{id}", authMiddleware(http.HandlerFunc(urlHandler.GetURLByID)))
 	mux.Handle("PATCH /api/v1/urls/{id}", authMiddleware(http.HandlerFunc(urlHandler.UpdateURL)))

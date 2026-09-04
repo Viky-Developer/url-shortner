@@ -13,15 +13,55 @@ import (
 const countURLs = `-- name: CountURLs :one
 SELECT COUNT(*)
 FROM urls
-WHERE user_id = $1
-  AND deleted_at IS NULL
+WHERE urls.user_id = $1
+  AND (
+    $2::smallint IS NULL AND urls.deleted_at IS NULL
+    OR $2 = 1 AND urls.url_status = 1 AND (urls.expires_at IS NULL OR urls.expires_at > NOW()) AND urls.deleted_at IS NULL
+    OR $2 = 2 AND (urls.url_status = 2 OR (urls.url_status = 1 AND urls.expires_at IS NOT NULL AND urls.expires_at <= NOW())) AND urls.deleted_at IS NULL
+    OR $2 = 0 AND urls.url_status = 0 AND urls.deleted_at IS NULL
+    OR $2 = 3 AND urls.deleted_at IS NOT NULL
+  )
 `
 
-func (q *Queries) CountURLs(ctx context.Context, userID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countURLs, userID)
+type CountURLsParams struct {
+	UserID int64         `json:"user_id"`
+	Status sql.NullInt16 `json:"status"`
+}
+
+func (q *Queries) CountURLs(ctx context.Context, arg CountURLsParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countURLs, arg.UserID, arg.Status)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countURLsByStatus = `-- name: CountURLsByStatus :one
+SELECT
+  COUNT(*) FILTER (WHERE deleted_at IS NULL AND url_status = 1 AND (expires_at IS NULL OR expires_at > NOW())) AS active,
+  COUNT(*) FILTER (WHERE deleted_at IS NULL AND (url_status = 2 OR (url_status = 1 AND expires_at IS NOT NULL AND expires_at <= NOW()))) AS expired,
+  COUNT(*) FILTER (WHERE deleted_at IS NULL AND url_status = 0) AS disabled,
+  COUNT(*) FILTER (WHERE deleted_at IS NOT NULL) AS deleted
+FROM urls
+WHERE user_id = $1
+`
+
+type CountURLsByStatusRow struct {
+	Active   int64 `json:"active"`
+	Expired  int64 `json:"expired"`
+	Disabled int64 `json:"disabled"`
+	Deleted  int64 `json:"deleted"`
+}
+
+func (q *Queries) CountURLsByStatus(ctx context.Context, userID int64) (CountURLsByStatusRow, error) {
+	row := q.db.QueryRowContext(ctx, countURLsByStatus, userID)
+	var i CountURLsByStatusRow
+	err := row.Scan(
+		&i.Active,
+		&i.Expired,
+		&i.Disabled,
+		&i.Deleted,
+	)
+	return i, err
 }
 
 const createURL = `-- name: CreateURL :one
@@ -79,6 +119,73 @@ func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getSoftDeletedURLByID = `-- name: GetSoftDeletedURLByID :one
+SELECT
+  urls.id, urls.user_id, urls.short_code, urls.destination_id,
+  urls.title, urls.description, urls.is_custom, urls.is_safe,
+  urls.click_count, urls.expires_at, urls.url_status,
+  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
+  urls.created_at, urls.updated_at, urls.deleted_at,
+  destinations.original_url
+FROM urls
+JOIN destinations ON urls.destination_id = destinations.id
+WHERE urls.id = $1
+  AND urls.user_id = $2
+  AND urls.deleted_at IS NOT NULL
+`
+
+type GetSoftDeletedURLByIDParams struct {
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+}
+
+type GetSoftDeletedURLByIDRow struct {
+	ID                      int64          `json:"id"`
+	UserID                  int64          `json:"user_id"`
+	ShortCode               string         `json:"short_code"`
+	DestinationID           int64          `json:"destination_id"`
+	Title                   sql.NullString `json:"title"`
+	Description             sql.NullString `json:"description"`
+	IsCustom                sql.NullBool   `json:"is_custom"`
+	IsSafe                  sql.NullBool   `json:"is_safe"`
+	ClickCount              sql.NullInt64  `json:"click_count"`
+	ExpiresAt               sql.NullTime   `json:"expires_at"`
+	UrlStatus               sql.NullInt16  `json:"url_status"`
+	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
+	CreatedAt               sql.NullTime   `json:"created_at"`
+	UpdatedAt               sql.NullTime   `json:"updated_at"`
+	DeletedAt               sql.NullTime   `json:"deleted_at"`
+	OriginalUrl             string         `json:"original_url"`
+}
+
+func (q *Queries) GetSoftDeletedURLByID(ctx context.Context, arg GetSoftDeletedURLByIDParams) (GetSoftDeletedURLByIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getSoftDeletedURLByID, arg.ID, arg.UserID)
+	var i GetSoftDeletedURLByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ShortCode,
+		&i.DestinationID,
+		&i.Title,
+		&i.Description,
+		&i.IsCustom,
+		&i.IsSafe,
+		&i.ClickCount,
+		&i.ExpiresAt,
+		&i.UrlStatus,
+		&i.LastAccessedAt,
+		&i.DestinationHealthStatus,
+		&i.LastHealthCheck,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.OriginalUrl,
 	)
 	return i, err
 }
@@ -317,15 +424,22 @@ SELECT
 FROM urls
 JOIN destinations ON urls.destination_id = destinations.id
 WHERE urls.user_id = $1
-  AND urls.deleted_at IS NULL
+  AND (
+    $4::smallint IS NULL AND urls.deleted_at IS NULL
+    OR $4 = 1 AND urls.url_status = 1 AND (urls.expires_at IS NULL OR urls.expires_at > NOW()) AND urls.deleted_at IS NULL
+    OR $4 = 2 AND (urls.url_status = 2 OR (urls.url_status = 1 AND urls.expires_at IS NOT NULL AND urls.expires_at <= NOW())) AND urls.deleted_at IS NULL
+    OR $4 = 0 AND urls.url_status = 0 AND urls.deleted_at IS NULL
+    OR $4 = 3 AND urls.deleted_at IS NOT NULL
+  )
 ORDER BY urls.created_at DESC
 LIMIT $2 OFFSET $3
 `
 
 type ListURLsParams struct {
-	UserID int64 `json:"user_id"`
-	Limit  int32 `json:"limit"`
-	Offset int32 `json:"offset"`
+	UserID int64         `json:"user_id"`
+	Limit  int32         `json:"limit"`
+	Offset int32         `json:"offset"`
+	Status sql.NullInt16 `json:"status"`
 }
 
 type ListURLsRow struct {
@@ -350,7 +464,12 @@ type ListURLsRow struct {
 }
 
 func (q *Queries) ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listURLs, arg.UserID, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, listURLs,
+		arg.UserID,
+		arg.Limit,
+		arg.Offset,
+		arg.Status,
+	)
 	if err != nil {
 		return nil, err
 	}

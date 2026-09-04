@@ -2,24 +2,24 @@
 // the HTTP handlers and the service layer.
 package payload
 
-import "github.com/vicky/url-shortner/internal/utils"
+import "time"
 
 // CreateURLRequest is the request body for creating a short URL.
 type CreateURLRequest struct {
-	OriginalURL string              `json:"originalURL" validate:"required,url"` // The long URL to shorten. Required.
-	CustomCode  string              `json:"customCode,omitempty"`                // Optional custom short code. If empty, a random 10-char code is generated.
-	Title       string              `json:"title,omitempty"`                     // Optional title for the short URL.
-	Description string              `json:"description,omitempty"`               // Optional description for the short URL.
-	ExpiresAt   utils.UnixMilliTime `json:"expiresAt,omitempty"`                 // Optional expiration time (RFC3339 or Unix milliseconds).
+	OriginalURL string    `json:"originalURL" validate:"required,url"` // The long URL to shorten. Required.
+	CustomCode  string    `json:"customCode,omitempty"`                // Optional custom short code. If empty, a random 10-char code is generated.
+	Title       string    `json:"title,omitempty"`                     // Optional title for the short URL.
+	Description string    `json:"description,omitempty"`               // Optional description for the short URL.
+	ExpiresAt   time.Time `json:"expiresAt,omitempty"`                 // Optional expiration time (UTC RFC3339).
 }
 
 // UpdateURLRequest is the request body for updating an existing URL.
 type UpdateURLRequest struct {
-	OriginalURL string              `json:"originalURL"`           // The new long URL value.
-	Title       string              `json:"title,omitempty"`       // The new title value.
-	Description string              `json:"description,omitempty"` // The new description value.
-	Status      *int16              `json:"status,omitempty"`      // New URL status: 0=Disabled, 1=Active, 2=Expired, 3=Deleted.
-	ExpiresAt   utils.UnixMilliTime `json:"expiresAt,omitempty"`   // Optional new expiration time (RFC3339 or Unix milliseconds).
+	OriginalURL string    `json:"originalURL"`           // The new long URL value.
+	Title       string    `json:"title,omitempty"`       // The new title value.
+	Description string    `json:"description,omitempty"` // The new description value.
+	Status      *int16    `json:"status,omitempty"`      // New URL status: 0=Disabled, 1=Active, 2=Expired, 3=Deleted.
+	ExpiresAt   time.Time `json:"expiresAt,omitempty"`   // Optional new expiration time (UTC RFC3339).
 }
 
 // URLResponse represents a single URL as returned by the API.
@@ -32,7 +32,7 @@ type URLResponse struct {
 	Title                   string `json:"title"`       // Optional title.
 	Description             string `json:"description"` // Optional description.
 	IsCustom                *bool  `json:"isCustom"`    // Whether a custom code was used.
-	IsActive                bool   `json:"isActive"`    // Whether the URL is active.
+	Status                  string `json:"status"`      // URL status: active, expired, disabled, or deleted.
 	ClickCount              int64  `json:"clickCount"`  // Number of times the short URL was hit.
 	HasBeenAccessed         bool   `json:"hasBeenAccessed"`
 	HealthChecked           bool   `json:"healthChecked"`
@@ -52,6 +52,14 @@ type URLListResponse struct {
 	Page       int32         `json:"page"`       // Current page number (1-based).
 	PerPage    int32         `json:"perPage"`    // Number of items per page.
 	TotalPages int           `json:"totalPages"` // Total number of pages.
+}
+
+// URLStatusCounts holds the count of URLs per status for a user.
+type URLStatusCounts struct {
+	Active   int64 `json:"ACTIVE"`
+	Expired  int64 `json:"EXPIRED"`
+	Disabled int64 `json:"DISABLED"`
+	Deleted  int64 `json:"DELETED"`
 }
 
 // DeleteResponse describes the result of a soft delete operation.
