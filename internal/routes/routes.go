@@ -4,6 +4,7 @@ package routes
 import (
 	"net/http"
 
+	"github.com/vicky/url-shortner/external/metrics"
 	"github.com/vicky/url-shortner/internal/enum"
 	"github.com/vicky/url-shortner/internal/handler"
 	"github.com/vicky/url-shortner/internal/middleware"
@@ -12,7 +13,7 @@ import (
 
 // New builds a new ServeMux with every application route wired to the given
 // handlers and returns it as an http.Handler.
-func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, adminHandler *handler.AdminHandler, accountHandler *handler.AccountHandler, authService *service.AuthService) http.Handler {
+func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, adminHandler *handler.AdminHandler, accountHandler *handler.AccountHandler, authService *service.AuthService, m metrics.Metrics) http.Handler {
 	mux := http.NewServeMux()
 
 	// Health check (public)
@@ -21,6 +22,11 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
+
+	// Prometheus metrics endpoint (public, scraped by Prometheus)
+	if m != nil {
+		mux.Handle("GET /metrics", m.Handler())
+	}
 
 	// Auth routes (public)
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)

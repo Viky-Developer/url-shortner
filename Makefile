@@ -170,6 +170,10 @@ run: ## Build and run the server
 test: ## Run all tests
 	go test ./... -count=1
 
+.PHONY: prometheus-seed
+prometheus-seed: ## Generate traffic so the Prometheus/Grafana dashboards show data (server must be running)
+	./scripts/seed-prometheus.sh
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf bin

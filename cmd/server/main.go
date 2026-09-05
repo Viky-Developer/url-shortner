@@ -11,6 +11,7 @@ import (
 
 	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
+	"github.com/vicky/url-shortner/external/metrics"
 	"github.com/vicky/url-shortner/internal/config"
 	"github.com/vicky/url-shortner/internal/db"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
@@ -75,7 +76,9 @@ func run() error {
 	authService := service.NewAuthService(queries, database, cfg, sessionCache, log)
 	authHandler := handler.NewAuthHandler(authService, log)
 
-	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, log, service.WithRedirectCache(&stringCacheAdapter{c: sessionCache}))
+	appMetrics := metrics.New()
+
+	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, log, service.WithRedirectCache(&stringCacheAdapter{c: sessionCache}), service.WithMetrics(appMetrics))
 	urlHandler := handler.NewURLHandler(urlService, log)
 
 	adminService := service.NewAdminService(queries)
@@ -84,8 +87,9 @@ func run() error {
 	accountDeletionService := service.NewAccountDeletionService(queries, database, adminService, sessionCache, urlService, log)
 	accountHandler := handler.NewAccountHandler(accountDeletionService, log)
 
-	app := middleware.Chain(routes.New(urlHandler, authHandler, adminHandler, accountHandler, authService),
+	app := middleware.Chain(routes.New(urlHandler, authHandler, adminHandler, accountHandler, authService, appMetrics),
 		middleware.Recovery(log),
+		middleware.Metrics(appMetrics),
 		middleware.Logger(log),
 		middleware.ContentTypeJSON,
 	)
