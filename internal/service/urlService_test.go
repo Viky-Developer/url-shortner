@@ -19,58 +19,64 @@ import (
 )
 
 type mockQuerier struct {
-	createFn               func(context.Context, gen.CreateURLParams) (gen.Url, error)
-	createUserFn           func(context.Context, gen.CreateUserParams) (gen.CreateUserRow, error)
-	byCodeFn               func(context.Context, string) (gen.GetURLByShortCodeRow, error)
-	byCodeForUpdateFn      func(context.Context, string) (gen.GetURLByShortCodeForUpdateRow, error)
-	byIDFn                 func(context.Context, gen.GetURLByIDParams) (gen.GetURLByIDRow, error)
-	softDeletedByIDFn      func(context.Context, gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error)
-	listFn                 func(context.Context, gen.ListURLsParams) ([]gen.ListURLsRow, error)
-	countFn                func(context.Context, gen.CountURLsParams) (int64, error)
-	countByStatusFn        func(context.Context, int64) (gen.CountURLsByStatusRow, error)
-	emailFn                func(context.Context, string) (gen.GetUserByEmailRow, error)
-	updateUserFn           func(context.Context, gen.UpdateUserDisplayIDParams) (gen.UpdateUserDisplayIDRow, error)
-	updateFn               func(context.Context, gen.UpdateURLParams) (gen.Url, error)
-	softFn                 func(context.Context, gen.SoftDeleteURLParams) (gen.Url, error)
-	hardFn                 func(context.Context, gen.HardDeleteURLParams) error
-	createDestFn           func(context.Context, gen.CreateDestinationParams) (gen.CreateDestinationRow, error)
-	destByHashFn           func(context.Context, string) (gen.GetDestinationByHashRow, error)
-	destByIDFn             func(context.Context, int64) (gen.GetDestinationByIDRow, error)
-	blockedFn              func(context.Context, string) (gen.GetBlockedDomainRow, error)
-	createVerFn            func(context.Context, gen.CreateURLVersionParams) error
-	latestVerFn            func(context.Context, int64) (int32, error)
-	createClickFn          func(context.Context, gen.CreateClickLogParams) (gen.ClickLog, error)
-	incrementClickFn       func(context.Context, int64) error
-	updateHealthFn         func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
-	shortCodeExistsFn      func(context.Context, string) (bool, error)
-	listBlockedIPFn        func(context.Context) ([]gen.BlockedIpRange, error)
-	createSessionFn        func(context.Context, gen.CreateSessionParams) (gen.Session, error)
-	getSessionByHashFn     func(context.Context, string) (gen.Session, error)
-	getSessionByIDFn       func(context.Context, int64) (gen.Session, error)
-	getUserByIDFn          func(context.Context, int64) (gen.GetUserByIDRow, error)
-	listSessionsFn         func(context.Context, int64) ([]gen.Session, error)
-	revokeSessionFn        func(context.Context, gen.RevokeSessionParams) error
-	updateSessionFn        func(context.Context, int64) error
-	addPasswordHistoryFn   func(context.Context, gen.AddPasswordHistoryParams) error
-	updateUserPasswordFn   func(context.Context, gen.UpdateUserPasswordParams) (gen.UpdateUserPasswordRow, error)
-	listActiveSessionsFn   func(context.Context, int64) ([]gen.Session, error)
-	countClicksFn          func(context.Context, gen.CountClickLogsByURLParams) (int64, error)
-	listClicksFn           func(context.Context, gen.ListClickLogsByURLParams) ([]gen.ListClickLogsByURLRow, error)
-	clickStatsFn           func(context.Context, gen.ClickStatsByURLParams) (gen.ClickStatsByURLRow, error)
-	topReferrersFn         func(context.Context, gen.TopReferrersByURLParams) ([]gen.TopReferrersByURLRow, error)
-	clicksByDateRangeFn    func(context.Context, gen.ClicksByDateRangeParams) ([]gen.ClicksByDateRangeRow, error)
-	revokeAllSessionsFn    func(context.Context, int64) error
-	revokeOtherSessionsFn  func(context.Context, gen.RevokeOtherSessionsByUserParams) error
-	revokeSessionsExceptFn func(context.Context, gen.RevokeSessionsByUserExceptParams) error
-	expireSessionFn        func(context.Context, int64) error
-	expireSessionsByUserFn func(context.Context, int64) error
-	userStatusByIDFn       func(context.Context, int64) (gen.GetUserStatusByIDRow, error)
-	markPendingDeletionFn  func(context.Context, int64) error
-	restoreAccountFn       func(context.Context, int64) error
-	accountsDueDeletionFn  func(context.Context) ([]int64, error)
-	hardDeleteUserByIDFn   func(context.Context, int64) error
-	countAuditLogsFn       func(context.Context, gen.CountAuditLogsParams) (int64, error)
-	listAuditLogsFn        func(context.Context, gen.ListAuditLogsParams) ([]gen.AuditLog, error)
+	createFn                func(context.Context, gen.CreateURLParams) (gen.Url, error)
+	createUserFn            func(context.Context, gen.CreateUserParams) (gen.CreateUserRow, error)
+	byCodeFn                func(context.Context, string) (gen.GetURLByShortCodeRow, error)
+	byCodeForUpdateFn       func(context.Context, string) (gen.GetURLByShortCodeForUpdateRow, error)
+	byIDFn                  func(context.Context, gen.GetURLByIDParams) (gen.GetURLByIDRow, error)
+	softDeletedByIDFn       func(context.Context, gen.GetSoftDeletedURLByIDParams) (gen.GetSoftDeletedURLByIDRow, error)
+	listFn                  func(context.Context, gen.ListURLsParams) ([]gen.ListURLsRow, error)
+	countFn                 func(context.Context, gen.CountURLsParams) (int64, error)
+	countByStatusFn         func(context.Context, int64) (gen.CountURLsByStatusRow, error)
+	emailFn                 func(context.Context, string) (gen.GetUserByEmailRow, error)
+	updateUserFn            func(context.Context, gen.UpdateUserDisplayIDParams) (gen.UpdateUserDisplayIDRow, error)
+	updateFn                func(context.Context, gen.UpdateURLParams) (gen.Url, error)
+	softFn                  func(context.Context, gen.SoftDeleteURLParams) (gen.Url, error)
+	hardFn                  func(context.Context, gen.HardDeleteURLParams) error
+	createDestFn            func(context.Context, gen.CreateDestinationParams) (gen.CreateDestinationRow, error)
+	destByHashFn            func(context.Context, string) (gen.GetDestinationByHashRow, error)
+	destByIDFn              func(context.Context, int64) (gen.GetDestinationByIDRow, error)
+	blockedFn               func(context.Context, string) (gen.GetBlockedDomainRow, error)
+	createVerFn             func(context.Context, gen.CreateURLVersionParams) error
+	latestVerFn             func(context.Context, int64) (int32, error)
+	createClickFn           func(context.Context, gen.CreateClickLogParams) (gen.ClickLog, error)
+	incrementClickFn        func(context.Context, int64) error
+	updateHealthFn          func(context.Context, gen.UpdateURLHealthStatusParams) (gen.Url, error)
+	shortCodeExistsFn       func(context.Context, string) (bool, error)
+	listBlockedIPFn         func(context.Context) ([]gen.BlockedIpRange, error)
+	createSessionFn         func(context.Context, gen.CreateSessionParams) (gen.Session, error)
+	getSessionByHashFn      func(context.Context, string) (gen.Session, error)
+	getSessionByIDFn        func(context.Context, int64) (gen.Session, error)
+	getUserByIDFn           func(context.Context, int64) (gen.GetUserByIDRow, error)
+	listSessionsFn          func(context.Context, int64) ([]gen.Session, error)
+	revokeSessionFn         func(context.Context, gen.RevokeSessionParams) error
+	updateSessionFn         func(context.Context, int64) error
+	addPasswordHistoryFn    func(context.Context, gen.AddPasswordHistoryParams) error
+	updateUserPasswordFn    func(context.Context, gen.UpdateUserPasswordParams) (gen.UpdateUserPasswordRow, error)
+	listActiveSessionsFn    func(context.Context, int64) ([]gen.Session, error)
+	countClicksFn           func(context.Context, gen.CountClickLogsByURLParams) (int64, error)
+	listClicksFn            func(context.Context, gen.ListClickLogsByURLParams) ([]gen.ListClickLogsByURLRow, error)
+	clickStatsFn            func(context.Context, gen.ClickStatsByURLParams) (gen.ClickStatsByURLRow, error)
+	topReferrersFn          func(context.Context, gen.TopReferrersByURLParams) ([]gen.TopReferrersByURLRow, error)
+	clicksByDateRangeFn     func(context.Context, gen.ClicksByDateRangeParams) ([]gen.ClicksByDateRangeRow, error)
+	clickStatsByUserFn      func(context.Context, gen.ClickStatsByUserParams) (gen.ClickStatsByUserRow, error)
+	topReferrersByUserFn    func(context.Context, gen.TopReferrersByUserParams) ([]gen.TopReferrersByUserRow, error)
+	clicksByDateRangeUserFn func(context.Context, gen.ClicksByDateRangeByUserParams) ([]gen.ClicksByDateRangeByUserRow, error)
+	cumulativeClicksFn      func(context.Context, gen.CumulativeClickCountsParams) ([]gen.CumulativeClickCountsRow, error)
+	countAllClicksFn        func(context.Context, gen.CountAllClickLogsByUserParams) (int64, error)
+	listAllClicksFn         func(context.Context, gen.ListAllClickLogsByUserParams) ([]gen.ListAllClickLogsByUserRow, error)
+	revokeAllSessionsFn     func(context.Context, int64) error
+	revokeOtherSessionsFn   func(context.Context, gen.RevokeOtherSessionsByUserParams) error
+	revokeSessionsExceptFn  func(context.Context, gen.RevokeSessionsByUserExceptParams) error
+	expireSessionFn         func(context.Context, int64) error
+	expireSessionsByUserFn  func(context.Context, int64) error
+	userStatusByIDFn        func(context.Context, int64) (gen.GetUserStatusByIDRow, error)
+	markPendingDeletionFn   func(context.Context, int64) error
+	restoreAccountFn        func(context.Context, int64) error
+	accountsDueDeletionFn   func(context.Context) ([]int64, error)
+	hardDeleteUserByIDFn    func(context.Context, int64) error
+	countAuditLogsFn        func(context.Context, gen.CountAuditLogsParams) (int64, error)
+	listAuditLogsFn         func(context.Context, gen.ListAuditLogsParams) ([]gen.AuditLog, error)
 }
 
 func (m *mockQuerier) ExecContext(_ context.Context, _ string, _ ...interface{}) (sql.Result, error) {
@@ -315,6 +321,48 @@ func (m *mockQuerier) TopReferrersByURL(ctx context.Context, arg gen.TopReferrer
 func (m *mockQuerier) ClicksByDateRange(ctx context.Context, arg gen.ClicksByDateRangeParams) ([]gen.ClicksByDateRangeRow, error) {
 	if m.clicksByDateRangeFn != nil {
 		return m.clicksByDateRangeFn(ctx, arg)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) CumulativeClickCounts(ctx context.Context, arg gen.CumulativeClickCountsParams) ([]gen.CumulativeClickCountsRow, error) {
+	if m.cumulativeClicksFn != nil {
+		return m.cumulativeClicksFn(ctx, arg)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) ClickStatsByUser(ctx context.Context, arg gen.ClickStatsByUserParams) (gen.ClickStatsByUserRow, error) {
+	if m.clickStatsByUserFn != nil {
+		return m.clickStatsByUserFn(ctx, arg)
+	}
+	return gen.ClickStatsByUserRow{}, nil
+}
+
+func (m *mockQuerier) TopReferrersByUser(ctx context.Context, arg gen.TopReferrersByUserParams) ([]gen.TopReferrersByUserRow, error) {
+	if m.topReferrersByUserFn != nil {
+		return m.topReferrersByUserFn(ctx, arg)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) ClicksByDateRangeByUser(ctx context.Context, arg gen.ClicksByDateRangeByUserParams) ([]gen.ClicksByDateRangeByUserRow, error) {
+	if m.clicksByDateRangeUserFn != nil {
+		return m.clicksByDateRangeUserFn(ctx, arg)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) CountAllClickLogsByUser(ctx context.Context, arg gen.CountAllClickLogsByUserParams) (int64, error) {
+	if m.countAllClicksFn != nil {
+		return m.countAllClicksFn(ctx, arg)
+	}
+	return 0, nil
+}
+
+func (m *mockQuerier) ListAllClickLogsByUser(ctx context.Context, arg gen.ListAllClickLogsByUserParams) ([]gen.ListAllClickLogsByUserRow, error) {
+	if m.listAllClicksFn != nil {
+		return m.listAllClicksFn(ctx, arg)
 	}
 	return nil, nil
 }
@@ -2940,6 +2988,261 @@ func TestGetAnalyticsWithDailyStats(t *testing.T) {
 	}
 	if len(resp.DailyStats) != 2 {
 		t.Errorf("dailyStats = %d, want 2", len(resp.DailyStats))
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GET ALL ANALYTICS
+// ═══════════════════════════════════════════════════════════════
+
+func TestGetAllAnalyticsSuccess(t *testing.T) {
+	mock := &mockQuerier{
+		clickStatsByUserFn: func(_ context.Context, _ gen.ClickStatsByUserParams) (gen.ClickStatsByUserRow, error) {
+			return gen.ClickStatsByUserRow{
+				TotalClicks:    200,
+				UniqueVisitors: 80,
+			}, nil
+		},
+		topReferrersByUserFn: func(_ context.Context, _ gen.TopReferrersByUserParams) ([]gen.TopReferrersByUserRow, error) {
+			return []gen.TopReferrersByUserRow{
+				{Referrer: "https://google.com", Count: 60},
+				{Referrer: "https://twitter.com", Count: 40},
+			}, nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	resp, err := svc.GetAllAnalytics(context.Background(), 1, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Stats.TotalClicks != 200 {
+		t.Errorf("totalClicks = %d, want 200", resp.Stats.TotalClicks)
+	}
+	if resp.Stats.UniqueVisitors != 80 {
+		t.Errorf("uniqueVisitors = %d, want 80", resp.Stats.UniqueVisitors)
+	}
+	if len(resp.Referrers) != 2 {
+		t.Errorf("referrers = %d, want 2", len(resp.Referrers))
+	}
+	if resp.Referrers[0].Referrer != "https://google.com" {
+		t.Errorf("topReferrer = %q, want google.com", resp.Referrers[0].Referrer)
+	}
+}
+
+func TestGetAllAnalyticsWithDailyStats(t *testing.T) {
+	now := time.Now()
+	from := now.AddDate(0, 0, -7)
+	to := now
+	mock := &mockQuerier{
+		clickStatsByUserFn: func(_ context.Context, _ gen.ClickStatsByUserParams) (gen.ClickStatsByUserRow, error) {
+			return gen.ClickStatsByUserRow{TotalClicks: 50, UniqueVisitors: 25}, nil
+		},
+		topReferrersByUserFn: func(_ context.Context, _ gen.TopReferrersByUserParams) ([]gen.TopReferrersByUserRow, error) {
+			return nil, nil
+		},
+		clicksByDateRangeUserFn: func(_ context.Context, _ gen.ClicksByDateRangeByUserParams) ([]gen.ClicksByDateRangeByUserRow, error) {
+			return []gen.ClicksByDateRangeByUserRow{
+				{Date: now.AddDate(0, 0, -2).Truncate(24 * time.Hour), Clicks: 10},
+				{Date: now.Truncate(24 * time.Hour), Clicks: 15},
+			}, nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	resp, err := svc.GetAllAnalytics(context.Background(), 1, &from, &to)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.DailyStats) != 2 {
+		t.Errorf("dailyStats = %d, want 2", len(resp.DailyStats))
+	}
+}
+
+func TestGetAllAnalyticsStatsError(t *testing.T) {
+	mock := &mockQuerier{
+		clickStatsByUserFn: func(_ context.Context, _ gen.ClickStatsByUserParams) (gen.ClickStatsByUserRow, error) {
+			return gen.ClickStatsByUserRow{}, sql.ErrConnDone
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	_, err := svc.GetAllAnalytics(context.Background(), 1, nil, nil)
+	if err == nil {
+		t.Fatal("expected error when stats query fails")
+	}
+}
+
+func TestGetAllAnalyticsReferrersError(t *testing.T) {
+	mock := &mockQuerier{
+		clickStatsByUserFn: func(_ context.Context, _ gen.ClickStatsByUserParams) (gen.ClickStatsByUserRow, error) {
+			return gen.ClickStatsByUserRow{}, nil
+		},
+		topReferrersByUserFn: func(_ context.Context, _ gen.TopReferrersByUserParams) ([]gen.TopReferrersByUserRow, error) {
+			return nil, sql.ErrConnDone
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	_, err := svc.GetAllAnalytics(context.Background(), 1, nil, nil)
+	if err == nil {
+		t.Fatal("expected error when referrers query fails")
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GET CUMULATIVE CLICK COUNTS
+// ═══════════════════════════════════════════════════════════════
+
+func TestGetCumulativeClickCountsSuccess(t *testing.T) {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	mock := &mockQuerier{
+		cumulativeClicksFn: func(_ context.Context, arg gen.CumulativeClickCountsParams) ([]gen.CumulativeClickCountsRow, error) {
+			return []gen.CumulativeClickCountsRow{
+				{Date: today.AddDate(0, 0, -2), Clicks: 10},
+				{Date: today.AddDate(0, 0, -1), Clicks: 15},
+				{Date: today, Clicks: 7},
+			}, nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	resp, err := svc.GetCumulativeClickCounts(context.Background(), 1, 7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Days != 7 {
+		t.Errorf("days = %d, want 7", resp.Days)
+	}
+	if resp.Total != 32 {
+		t.Errorf("total = %d, want 32", resp.Total)
+	}
+	if len(resp.Items) != 7 {
+		t.Fatalf("items = %d, want 7", len(resp.Items))
+	}
+	if resp.Items[0].Clicks != 0 {
+		t.Errorf("expected item[0] zero-clicks, got %d", resp.Items[0].Clicks)
+	}
+	if resp.Items[len(resp.Items)-1].Clicks != 7 {
+		t.Errorf("expected item[last] 7 clicks, got %d", resp.Items[len(resp.Items)-1].Clicks)
+	}
+	wantFirst := today.AddDate(0, 0, -6).Format("2006-01-02")
+	if resp.Items[0].Date != wantFirst {
+		t.Errorf("item[0].Date = %q, want %q", resp.Items[0].Date, wantFirst)
+	}
+	wantLast := today.Format("2006-01-02")
+	if resp.Items[len(resp.Items)-1].Date != wantLast {
+		t.Errorf("item[last].Date = %q, want %q", resp.Items[len(resp.Items)-1].Date, wantLast)
+	}
+}
+
+func TestGetCumulativeClickCountsDefaultsToSeven(t *testing.T) {
+	mock := &mockQuerier{}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	resp, err := svc.GetCumulativeClickCounts(context.Background(), 1, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Days != 7 {
+		t.Errorf("days = %d, want 7", resp.Days)
+	}
+	if len(resp.Items) != 7 {
+		t.Errorf("items = %d, want 7", len(resp.Items))
+	}
+}
+
+func TestGetCumulativeClickCountsQueryError(t *testing.T) {
+	mock := &mockQuerier{
+		cumulativeClicksFn: func(_ context.Context, _ gen.CumulativeClickCountsParams) ([]gen.CumulativeClickCountsRow, error) {
+			return nil, sql.ErrConnDone
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	_, err := svc.GetCumulativeClickCounts(context.Background(), 1, 7)
+	if err == nil {
+		t.Fatal("expected error when query fails")
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LIST ALL CLICK LOGS
+// ═══════════════════════════════════════════════════════════════
+
+func TestListAllClickLogsSuccess(t *testing.T) {
+	now := time.Now()
+	mock := &mockQuerier{
+		countAllClicksFn: func(_ context.Context, _ gen.CountAllClickLogsByUserParams) (int64, error) {
+			return 2, nil
+		},
+		listAllClicksFn: func(_ context.Context, _ gen.ListAllClickLogsByUserParams) ([]gen.ListAllClickLogsByUserRow, error) {
+			return []gen.ListAllClickLogsByUserRow{
+				{
+					ID:        100,
+					UrlID:     10,
+					ShortCode: "abc123",
+					ClickedAt: sql.NullTime{Time: now, Valid: true},
+				},
+				{
+					ID:        99,
+					UrlID:     20,
+					ShortCode: "xyz789",
+					ClickedAt: sql.NullTime{Time: now.Add(-time.Hour), Valid: true},
+				},
+			}, nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	items, total, err := svc.ListAllClickLogs(context.Background(), 1, nil, nil, 1, 10, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("total = %d, want 2", total)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2", len(items))
+	}
+
+	entry, ok := items[0].(payload.ClickLogEntry)
+	if !ok {
+		t.Fatal("expected ClickLogEntry")
+	}
+	if entry.ID != 100 || entry.URLID != 10 || entry.ShortCode != "abc123" {
+		t.Errorf("unexpected entry: %+v", entry)
+	}
+}
+
+func TestListAllClickLogsCountError(t *testing.T) {
+	mock := &mockQuerier{
+		countAllClicksFn: func(_ context.Context, _ gen.CountAllClickLogsByUserParams) (int64, error) {
+			return 0, sql.ErrConnDone
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	_, _, err := svc.ListAllClickLogs(context.Background(), 1, nil, nil, 1, 10, 0)
+	if err == nil {
+		t.Fatal("expected error when count query fails")
+	}
+}
+
+func TestListAllClickLogsQueryError(t *testing.T) {
+	mock := &mockQuerier{
+		countAllClicksFn: func(_ context.Context, _ gen.CountAllClickLogsByUserParams) (int64, error) {
+			return 1, nil
+		},
+		listAllClicksFn: func(_ context.Context, _ gen.ListAllClickLogsByUserParams) ([]gen.ListAllClickLogsByUserRow, error) {
+			return nil, sql.ErrConnDone
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+
+	_, _, err := svc.ListAllClickLogs(context.Background(), 1, nil, nil, 1, 10, 0)
+	if err == nil {
+		t.Fatal("expected error when list query fails")
 	}
 }
 

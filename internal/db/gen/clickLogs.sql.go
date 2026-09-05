@@ -50,6 +50,45 @@ func (q *Queries) ClickStatsByURL(ctx context.Context, arg ClickStatsByURLParams
 	return i, err
 }
 
+const clickStatsByUser = `-- name: ClickStatsByUser :one
+SELECT
+  COUNT(*) AS total_clicks,
+  COUNT(DISTINCT cl.ip_address) AS unique_visitors,
+  MIN(cl.clicked_at) AS first_clicked_at,
+  MAX(cl.clicked_at) AS last_clicked_at
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND ($2::timestamptz IS NULL OR cl.clicked_at >= $2)
+  AND ($3::timestamptz IS NULL OR cl.clicked_at <= $3)
+`
+
+type ClickStatsByUserParams struct {
+	UserID int64        `json:"user_id"`
+	From   sql.NullTime `json:"from"`
+	To     sql.NullTime `json:"to"`
+}
+
+type ClickStatsByUserRow struct {
+	TotalClicks    int64       `json:"total_clicks"`
+	UniqueVisitors int64       `json:"unique_visitors"`
+	FirstClickedAt interface{} `json:"first_clicked_at"`
+	LastClickedAt  interface{} `json:"last_clicked_at"`
+}
+
+func (q *Queries) ClickStatsByUser(ctx context.Context, arg ClickStatsByUserParams) (ClickStatsByUserRow, error) {
+	row := q.db.QueryRowContext(ctx, clickStatsByUser, arg.UserID, arg.From, arg.To)
+	var i ClickStatsByUserRow
+	err := row.Scan(
+		&i.TotalClicks,
+		&i.UniqueVisitors,
+		&i.FirstClickedAt,
+		&i.LastClickedAt,
+	)
+	return i, err
+}
+
 const clicksByDateRange = `-- name: ClicksByDateRange :many
 SELECT
   DATE(clicked_at) AS date,
@@ -94,6 +133,77 @@ func (q *Queries) ClicksByDateRange(ctx context.Context, arg ClicksByDateRangePa
 		return nil, err
 	}
 	return items, nil
+}
+
+const clicksByDateRangeByUser = `-- name: ClicksByDateRangeByUser :many
+SELECT
+  DATE(cl.clicked_at) AS date,
+  COUNT(*) AS clicks
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND cl.clicked_at >= $2
+  AND cl.clicked_at <= $3
+GROUP BY DATE(cl.clicked_at)
+ORDER BY date ASC
+`
+
+type ClicksByDateRangeByUserParams struct {
+	UserID      int64        `json:"user_id"`
+	ClickedAt   sql.NullTime `json:"clicked_at"`
+	ClickedAt_2 sql.NullTime `json:"clicked_at_2"`
+}
+
+type ClicksByDateRangeByUserRow struct {
+	Date   time.Time `json:"date"`
+	Clicks int64     `json:"clicks"`
+}
+
+func (q *Queries) ClicksByDateRangeByUser(ctx context.Context, arg ClicksByDateRangeByUserParams) ([]ClicksByDateRangeByUserRow, error) {
+	rows, err := q.db.QueryContext(ctx, clicksByDateRangeByUser, arg.UserID, arg.ClickedAt, arg.ClickedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClicksByDateRangeByUserRow
+	for rows.Next() {
+		var i ClicksByDateRangeByUserRow
+		if err := rows.Scan(&i.Date, &i.Clicks); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const countAllClickLogsByUser = `-- name: CountAllClickLogsByUser :one
+SELECT COUNT(*)
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND ($2::timestamptz IS NULL OR cl.clicked_at >= $2)
+  AND ($3::timestamptz IS NULL OR cl.clicked_at <= $3)
+`
+
+type CountAllClickLogsByUserParams struct {
+	UserID int64        `json:"user_id"`
+	From   sql.NullTime `json:"from"`
+	To     sql.NullTime `json:"to"`
+}
+
+func (q *Queries) CountAllClickLogsByUser(ctx context.Context, arg CountAllClickLogsByUserParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAllClickLogsByUser, arg.UserID, arg.From, arg.To)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countClickLogsByURL = `-- name: CountClickLogsByURL :one
@@ -157,6 +267,54 @@ func (q *Queries) CreateClickLog(ctx context.Context, arg CreateClickLogParams) 
 	return i, err
 }
 
+const cumulativeClickCounts = `-- name: CumulativeClickCounts :many
+SELECT
+  DATE(cl.clicked_at) AS date,
+  COUNT(*) AS clicks
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND cl.clicked_at >= $2
+  AND cl.clicked_at < $3
+GROUP BY DATE(cl.clicked_at)
+ORDER BY date ASC
+`
+
+type CumulativeClickCountsParams struct {
+	UserID int64        `json:"user_id"`
+	From   sql.NullTime `json:"from"`
+	To     sql.NullTime `json:"to"`
+}
+
+type CumulativeClickCountsRow struct {
+	Date   time.Time `json:"date"`
+	Clicks int64     `json:"clicks"`
+}
+
+func (q *Queries) CumulativeClickCounts(ctx context.Context, arg CumulativeClickCountsParams) ([]CumulativeClickCountsRow, error) {
+	rows, err := q.db.QueryContext(ctx, cumulativeClickCounts, arg.UserID, arg.From, arg.To)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CumulativeClickCountsRow
+	for rows.Next() {
+		var i CumulativeClickCountsRow
+		if err := rows.Scan(&i.Date, &i.Clicks); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDailyStatsByURL = `-- name: GetDailyStatsByURL :many
 SELECT stat_date, total_clicks
 FROM daily_url_stats
@@ -187,6 +345,79 @@ func (q *Queries) GetDailyStatsByURL(ctx context.Context, arg GetDailyStatsByURL
 	for rows.Next() {
 		var i GetDailyStatsByURLRow
 		if err := rows.Scan(&i.StatDate, &i.TotalClicks); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllClickLogsByUser = `-- name: ListAllClickLogsByUser :many
+SELECT
+  cl.id, cl.url_id, cl.clicked_at, cl.ip_address, cl.user_agent,
+  cl.referrer, cl.browser, cl.device_type, u.short_code
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND ($4::timestamptz IS NULL OR cl.clicked_at >= $4)
+  AND ($5::timestamptz IS NULL OR cl.clicked_at <= $5)
+ORDER BY cl.clicked_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListAllClickLogsByUserParams struct {
+	UserID int64        `json:"user_id"`
+	Limit  int32        `json:"limit"`
+	Offset int32        `json:"offset"`
+	From   sql.NullTime `json:"from"`
+	To     sql.NullTime `json:"to"`
+}
+
+type ListAllClickLogsByUserRow struct {
+	ID         int64          `json:"id"`
+	UrlID      int64          `json:"url_id"`
+	ClickedAt  sql.NullTime   `json:"clicked_at"`
+	IpAddress  pqtype.Inet    `json:"ip_address"`
+	UserAgent  sql.NullString `json:"user_agent"`
+	Referrer   sql.NullString `json:"referrer"`
+	Browser    sql.NullString `json:"browser"`
+	DeviceType sql.NullString `json:"device_type"`
+	ShortCode  string         `json:"short_code"`
+}
+
+func (q *Queries) ListAllClickLogsByUser(ctx context.Context, arg ListAllClickLogsByUserParams) ([]ListAllClickLogsByUserRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllClickLogsByUser,
+		arg.UserID,
+		arg.Limit,
+		arg.Offset,
+		arg.From,
+		arg.To,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllClickLogsByUserRow
+	for rows.Next() {
+		var i ListAllClickLogsByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UrlID,
+			&i.ClickedAt,
+			&i.IpAddress,
+			&i.UserAgent,
+			&i.Referrer,
+			&i.Browser,
+			&i.DeviceType,
+			&i.ShortCode,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -420,6 +651,63 @@ func (q *Queries) TopReferrersByURL(ctx context.Context, arg TopReferrersByURLPa
 	var items []TopReferrersByURLRow
 	for rows.Next() {
 		var i TopReferrersByURLRow
+		if err := rows.Scan(&i.Referrer, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const topReferrersByUser = `-- name: TopReferrersByUser :many
+SELECT
+  COALESCE(cl.referrer, '') AS referrer,
+  COUNT(*) AS count
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND ($3::timestamptz IS NULL OR cl.clicked_at >= $3)
+  AND ($4::timestamptz IS NULL OR cl.clicked_at <= $4)
+  AND cl.referrer IS NOT NULL
+  AND cl.referrer != ''
+GROUP BY cl.referrer
+ORDER BY count DESC
+LIMIT $2
+`
+
+type TopReferrersByUserParams struct {
+	UserID int64        `json:"user_id"`
+	Limit  int32        `json:"limit"`
+	From   sql.NullTime `json:"from"`
+	To     sql.NullTime `json:"to"`
+}
+
+type TopReferrersByUserRow struct {
+	Referrer string `json:"referrer"`
+	Count    int64  `json:"count"`
+}
+
+func (q *Queries) TopReferrersByUser(ctx context.Context, arg TopReferrersByUserParams) ([]TopReferrersByUserRow, error) {
+	rows, err := q.db.QueryContext(ctx, topReferrersByUser,
+		arg.UserID,
+		arg.Limit,
+		arg.From,
+		arg.To,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TopReferrersByUserRow
+	for rows.Next() {
+		var i TopReferrersByUserRow
 		if err := rows.Scan(&i.Referrer, &i.Count); err != nil {
 			return nil, err
 		}

@@ -73,6 +73,8 @@ type DeleteResponse struct {
 // ClickLogEntry represents a single click log record.
 type ClickLogEntry struct {
 	ID         int64  `json:"id"`
+	URLID      int64  `json:"urlId,omitempty"`
+	ShortCode  string `json:"shortCode,omitempty"`
 	ClickedAt  string `json:"clickedAt"` // RFC3339 timestamp.
 	IPAddress  string `json:"ipAddress"`
 	UserAgent  string `json:"userAgent"`
@@ -99,6 +101,14 @@ type ReferrerStat struct {
 type DailyClickStat struct {
 	Date   string `json:"date"` // YYYY-MM-DD.
 	Clicks int64  `json:"clicks"`
+}
+
+// CumulativeClickCounts represents the per-day click totals across all of a
+// user's URLs over a rolling period (e.g. the last 7 days).
+type CumulativeClickCounts struct {
+	Days  int              `json:"days"`  // Number of days in the period.
+	Total int64            `json:"total"` // Total clicks across the whole period.
+	Items []DailyClickStat `json:"items"` // Per-day breakdown, oldest first.
 }
 
 // ClickLogsResponse is the paginated list of click logs for a URL.

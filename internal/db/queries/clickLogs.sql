@@ -101,3 +101,80 @@ WHERE url_id = $1
   AND ($2::date IS NULL OR stat_date >= $2)
   AND ($3::date IS NULL OR stat_date <= $3)
 ORDER BY stat_date ASC;
+
+-- name: CumulativeClickCounts :many
+SELECT
+  DATE(cl.clicked_at) AS date,
+  COUNT(*) AS clicks
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = sqlc.arg('user_id')
+  AND u.deleted_at IS NULL
+  AND cl.clicked_at >= sqlc.arg('from')
+  AND cl.clicked_at < sqlc.arg('to')
+GROUP BY DATE(cl.clicked_at)
+ORDER BY date ASC;
+
+-- name: ListAllClickLogsByUser :many
+SELECT
+  cl.id, cl.url_id, cl.clicked_at, cl.ip_address, cl.user_agent,
+  cl.referrer, cl.browser, cl.device_type, u.short_code
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND (sqlc.narg('from')::timestamptz IS NULL OR cl.clicked_at >= sqlc.narg('from'))
+  AND (sqlc.narg('to')::timestamptz IS NULL OR cl.clicked_at <= sqlc.narg('to'))
+ORDER BY cl.clicked_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: CountAllClickLogsByUser :one
+SELECT COUNT(*)
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND (sqlc.narg('from')::timestamptz IS NULL OR cl.clicked_at >= sqlc.narg('from'))
+  AND (sqlc.narg('to')::timestamptz IS NULL OR cl.clicked_at <= sqlc.narg('to'));
+
+-- name: ClickStatsByUser :one
+SELECT
+  COUNT(*) AS total_clicks,
+  COUNT(DISTINCT cl.ip_address) AS unique_visitors,
+  MIN(cl.clicked_at) AS first_clicked_at,
+  MAX(cl.clicked_at) AS last_clicked_at
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND (sqlc.narg('from')::timestamptz IS NULL OR cl.clicked_at >= sqlc.narg('from'))
+  AND (sqlc.narg('to')::timestamptz IS NULL OR cl.clicked_at <= sqlc.narg('to'));
+
+-- name: TopReferrersByUser :many
+SELECT
+  COALESCE(cl.referrer, '') AS referrer,
+  COUNT(*) AS count
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND (sqlc.narg('from')::timestamptz IS NULL OR cl.clicked_at >= sqlc.narg('from'))
+  AND (sqlc.narg('to')::timestamptz IS NULL OR cl.clicked_at <= sqlc.narg('to'))
+  AND cl.referrer IS NOT NULL
+  AND cl.referrer != ''
+GROUP BY cl.referrer
+ORDER BY count DESC
+LIMIT $2;
+
+-- name: ClicksByDateRangeByUser :many
+SELECT
+  DATE(cl.clicked_at) AS date,
+  COUNT(*) AS clicks
+FROM click_logs cl
+JOIN urls u ON u.id = cl.url_id
+WHERE u.user_id = $1
+  AND u.deleted_at IS NULL
+  AND cl.clicked_at >= $2
+  AND cl.clicked_at <= $3
+GROUP BY DATE(cl.clicked_at)
+ORDER BY date ASC;

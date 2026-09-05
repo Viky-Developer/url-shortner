@@ -19,16 +19,19 @@ import (
 )
 
 type mockService struct {
-	createFn        func(context.Context, int64, payload.CreateURLRequest) (*payload.URLResponse, error)
-	redirectFn      func(context.Context, string, payload.ClickInfo) (*payload.URLResponse, error)
-	byIDFn          func(context.Context, int64, int64) (*payload.URLResponse, error)
-	listFn          func(context.Context, int64, int32, int32, int32, *int16) ([]any, int64, error)
-	countByStatusFn func(context.Context, int64) (*payload.URLStatusCounts, error)
-	updateFn        func(context.Context, int64, int64, payload.UpdateURLRequest) (*payload.URLResponse, error)
-	softDeleteFn    func(context.Context, int64, int64) (*payload.DeleteResponse, error)
-	hardDeleteFn    func(context.Context, int64, int64) error
-	listClicksFn    func(context.Context, int64, int64, *time.Time, *time.Time, int32, int32, int32) ([]any, int64, error)
-	analyticsFn     func(context.Context, int64, int64, *time.Time, *time.Time) (*payload.AnalyticsResponse, error)
+	createFn           func(context.Context, int64, payload.CreateURLRequest) (*payload.URLResponse, error)
+	redirectFn         func(context.Context, string, payload.ClickInfo) (*payload.URLResponse, error)
+	byIDFn             func(context.Context, int64, int64) (*payload.URLResponse, error)
+	listFn             func(context.Context, int64, int32, int32, int32, *int16) ([]any, int64, error)
+	countByStatusFn    func(context.Context, int64) (*payload.URLStatusCounts, error)
+	updateFn           func(context.Context, int64, int64, payload.UpdateURLRequest) (*payload.URLResponse, error)
+	softDeleteFn       func(context.Context, int64, int64) (*payload.DeleteResponse, error)
+	hardDeleteFn       func(context.Context, int64, int64) error
+	listClicksFn       func(context.Context, int64, int64, *time.Time, *time.Time, int32, int32, int32) ([]any, int64, error)
+	listAllClicksFn    func(context.Context, int64, *time.Time, *time.Time, int32, int32, int32) ([]any, int64, error)
+	analyticsFn        func(context.Context, int64, int64, *time.Time, *time.Time) (*payload.AnalyticsResponse, error)
+	allAnalyticsFn     func(context.Context, int64, *time.Time, *time.Time) (*payload.AnalyticsResponse, error)
+	cumulativeClicksFn func(context.Context, int64, int) (*payload.CumulativeClickCounts, error)
 }
 
 func (m *mockService) Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error) {
@@ -67,8 +70,20 @@ func (m *mockService) ListClickLogs(ctx context.Context, userID, urlID int64, fr
 	return m.listClicksFn(ctx, userID, urlID, from, to, page, perPage, offset)
 }
 
+func (m *mockService) ListAllClickLogs(ctx context.Context, userID int64, from, to *time.Time, page, perPage, offset int32) ([]any, int64, error) {
+	return m.listAllClicksFn(ctx, userID, from, to, page, perPage, offset)
+}
+
 func (m *mockService) GetAnalytics(ctx context.Context, userID, urlID int64, from, to *time.Time) (*payload.AnalyticsResponse, error) {
 	return m.analyticsFn(ctx, userID, urlID, from, to)
+}
+
+func (m *mockService) GetAllAnalytics(ctx context.Context, userID int64, from, to *time.Time) (*payload.AnalyticsResponse, error) {
+	return m.allAnalyticsFn(ctx, userID, from, to)
+}
+
+func (m *mockService) GetCumulativeClickCounts(ctx context.Context, userID int64, days int) (*payload.CumulativeClickCounts, error) {
+	return m.cumulativeClicksFn(ctx, userID, days)
 }
 
 func testLog(t *testing.T) logger.Logger {
@@ -1419,6 +1434,226 @@ func TestGetAnalyticsServiceError(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GET ALL ANALYTICS
+// ═══════════════════════════════════════════════════════════════
+
+func TestGetAllAnalyticsSuccess(t *testing.T) {
+	var capturedUserID int64
+	mock := &mockService{
+		allAnalyticsFn: func(_ context.Context, userID int64, _, _ *time.Time) (*payload.AnalyticsResponse, error) {
+			capturedUserID = userID
+			return &payload.AnalyticsResponse{
+				Stats: payload.ClickStats{TotalClicks: 200, UniqueVisitors: 80},
+			}, nil
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/analytics", nil)
+	req = withUserID(req, 42)
+	w := httptest.NewRecorder()
+
+	h.GetAllAnalytics(w, req)
+
+	if capturedUserID != 42 {
+		t.Errorf("userID = %d, want 42", capturedUserID)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestGetAllAnalyticsUnauthorized(t *testing.T) {
+	mock := &mockService{}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/analytics", nil)
+	w := httptest.NewRecorder()
+
+	h.GetAllAnalytics(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestGetAllAnalyticsServiceError(t *testing.T) {
+	mock := &mockService{
+		allAnalyticsFn: func(_ context.Context, _ int64, _, _ *time.Time) (*payload.AnalyticsResponse, error) {
+			return nil, apperror.ErrInternal
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/analytics", nil)
+	req = withUserID(req, 1)
+	w := httptest.NewRecorder()
+
+	h.GetAllAnalytics(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", w.Code)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LIST ALL CLICK LOGS
+// ═══════════════════════════════════════════════════════════════
+
+func TestListAllClickLogsSuccess(t *testing.T) {
+	var capturedUserID int64
+	mock := &mockService{
+		listAllClicksFn: func(_ context.Context, userID int64, _, _ *time.Time, _, _, _ int32) ([]any, int64, error) {
+			capturedUserID = userID
+			return []any{
+				payload.ClickLogEntry{ID: 1, URLID: 10, ShortCode: "abc123", ClickedAt: "2026-09-01T10:00:00Z"},
+			}, 1, nil
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/clicks?page=1&perPage=10", nil)
+	req = withUserID(req, 42)
+	w := httptest.NewRecorder()
+
+	h.ListAllClickLogs(w, req)
+
+	if capturedUserID != 42 {
+		t.Errorf("userID = %d, want 42", capturedUserID)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestListAllClickLogsUnauthorized(t *testing.T) {
+	mock := &mockService{}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/clicks", nil)
+	w := httptest.NewRecorder()
+
+	h.ListAllClickLogs(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestListAllClickLogsServiceError(t *testing.T) {
+	mock := &mockService{
+		listAllClicksFn: func(_ context.Context, _ int64, _, _ *time.Time, _, _, _ int32) ([]any, int64, error) {
+			return nil, int64(0), apperror.ErrInternal
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/clicks", nil)
+	req = withUserID(req, 1)
+	w := httptest.NewRecorder()
+
+	h.ListAllClickLogs(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", w.Code)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GET CUMULATIVE CLICK COUNTS
+// ═══════════════════════════════════════════════════════════════
+
+func TestGetCumulativeClickCountsSuccess(t *testing.T) {
+	var capturedUserID int64
+	var capturedDays int
+	mock := &mockService{
+		cumulativeClicksFn: func(_ context.Context, userID int64, days int) (*payload.CumulativeClickCounts, error) {
+			capturedUserID = userID
+			capturedDays = days
+			return &payload.CumulativeClickCounts{
+				Days:  days,
+				Total: 12,
+				Items: []payload.DailyClickStat{{Date: "2026-08-30", Clicks: 12}},
+			}, nil
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/clicks/counts", nil)
+	req = withUserID(req, 42)
+	w := httptest.NewRecorder()
+
+	h.GetCumulativeClickCounts(w, req)
+
+	if capturedUserID != 42 {
+		t.Errorf("userID = %d, want 42", capturedUserID)
+	}
+	if capturedDays != 7 {
+		t.Errorf("days = %d, want 7", capturedDays)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestGetCumulativeClickCountsCustomDays(t *testing.T) {
+	var capturedDays int
+	mock := &mockService{
+		cumulativeClicksFn: func(_ context.Context, _ int64, days int) (*payload.CumulativeClickCounts, error) {
+			capturedDays = days
+			return &payload.CumulativeClickCounts{Days: days}, nil
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/clicks/counts?days=14", nil)
+	req = withUserID(req, 1)
+	w := httptest.NewRecorder()
+
+	h.GetCumulativeClickCounts(w, req)
+
+	if capturedDays != 14 {
+		t.Errorf("days = %d, want 14", capturedDays)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestGetCumulativeClickCountsUnauthorized(t *testing.T) {
+	mock := &mockService{}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/clicks/counts", nil)
+	w := httptest.NewRecorder()
+
+	h.GetCumulativeClickCounts(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestGetCumulativeClickCountsServiceError(t *testing.T) {
+	mock := &mockService{
+		cumulativeClicksFn: func(_ context.Context, _ int64, _ int) (*payload.CumulativeClickCounts, error) {
+			return nil, apperror.ErrInternal
+		},
+	}
+	h := NewURLHandler(mock, testLog(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/urls/clicks/counts", nil)
+	req = withUserID(req, 1)
+	w := httptest.NewRecorder()
+
+	h.GetCumulativeClickCounts(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", w.Code)
 	}
 }
 

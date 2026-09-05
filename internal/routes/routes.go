@@ -40,6 +40,8 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 	// URL routes (protected) — userId is derived from the JWT access token
 	mux.Handle("POST /api/v1/shorten", authMiddleware(http.HandlerFunc(urlHandler.CreateShortURL)))
 	mux.Handle("GET /api/v1/urls/status-counts", authMiddleware(http.HandlerFunc(urlHandler.GetURLStatusCounts)))
+	mux.Handle("GET /api/v1/urls/clicks", authMiddleware(http.HandlerFunc(urlHandler.ListAllClickLogs)))
+	mux.Handle("GET /api/v1/urls/analytics", authMiddleware(http.HandlerFunc(urlHandler.GetAllAnalytics)))
 	mux.Handle("GET /api/v1/urls", authMiddleware(http.HandlerFunc(urlHandler.ListURLs)))
 	mux.Handle("GET /api/v1/urls/{id}", authMiddleware(http.HandlerFunc(urlHandler.GetURLByID)))
 	mux.Handle("PATCH /api/v1/urls/{id}", authMiddleware(http.HandlerFunc(urlHandler.UpdateURL)))
@@ -47,6 +49,7 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 	mux.Handle("DELETE /api/v1/urls/{id}/approve", authMiddleware(http.HandlerFunc(urlHandler.ApproveHardDelete)))
 	mux.Handle("GET /api/v1/urls/{id}/clicks", authMiddleware(http.HandlerFunc(urlHandler.ListClickLogs)))
 	mux.Handle("GET /api/v1/urls/{id}/analytics", authMiddleware(http.HandlerFunc(urlHandler.GetAnalytics)))
+	mux.Handle("GET /api/v1/urls/clicks/counts", authMiddleware(http.HandlerFunc(urlHandler.GetCumulativeClickCounts)))
 
 	// Account routes (protected) — self-service account deletion lifecycle
 	mux.Handle("DELETE /api/v1/account", authMiddleware(http.HandlerFunc(accountHandler.DeleteAccount)))
