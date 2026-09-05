@@ -15,7 +15,7 @@ func TestNew(t *testing.T) {
 	ah := handler.NewAuthHandler(nil, log)
 	adH := handler.NewAdminHandler(nil, log)
 	accH := handler.NewAccountHandler(nil, log)
-	mux := New(h, ah, adH, accH, nil)
+	mux := New(h, ah, adH, accH, nil, nil)
 
 	if mux == nil {
 		t.Fatal("expected non-nil handler from New()")
@@ -32,7 +32,7 @@ func TestRoutesRegistered(t *testing.T) {
 	ah := handler.NewAuthHandler(nil, log)
 	adH := handler.NewAdminHandler(nil, log)
 	accH := handler.NewAccountHandler(nil, log)
-	mux := New(h, ah, adH, accH, nil)
+	mux := New(h, ah, adH, accH, nil, nil)
 
 	routes := []struct {
 		method string

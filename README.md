@@ -16,12 +16,11 @@ A URL shortening service built with **Go**, using **sqlc + goose** for type-safe
 - Type-safe SQL queries generated with sqlc
 - Database migrations managed with goose
 - Session caching with Redis
+- Observability with Prometheus metrics and Grafana dashboards
 
 ### Roadmap
 
 - Async link analytics / click tracking via RabbitMQ
-- Metrics scraping with Prometheus
-- Dashboards in Grafana
 
 ## Architecture
 
@@ -159,7 +158,7 @@ This brings up:
 | Postgres  | 5432  | urlshortner / urlshortner123 |
 | Redis     | 6379  | (no password)         |
 
-> Additional services (RabbitMQ, Prometheus, Grafana) are planned — see [Roadmap](#roadmap-1).
+> Additional services (RabbitMQ) are planned — see [Roadmap](#roadmap-1). Prometheus and Grafana are part of the [Observability](#observability-grafana--prometheus) stack.
 
 ### 2. Apply database migrations
 
@@ -266,18 +265,20 @@ rabbitmq:
 
 ### Observability (Grafana + Prometheus)
 
-The service will expose a Prometheus metrics endpoint (`/metrics`).
+The service exposes a Prometheus metrics endpoint at `/metrics` (`external/metrics` wraps the Prometheus client library, following the integration-layer conventions of `external/cache` and `external/logger`).
 
-- **Prometheus** will scrape the service metrics endpoint (scrape config: `prometheus.yml`).
-- **Grafana** will connect to Prometheus as a data source and provide:
-  - Request rate and latency dashboards
+- **Metrics collected:**
+  - HTTP request rate, latency, and status distribution (`http_requests_total`, `http_request_duration_seconds`) via a metrics middleware in `internal/middleware`
+  - Business counters for URLs created and redirects served (`shortener_urls_created_total`, `shortener_redirects_served_total`)
+- **Prometheus** scrapes the service metrics endpoint (scrape config: `deploy/prometheus/prometheus.yml`).
+- **Grafana** connects to Prometheus as a data source and auto-provisions the "URL Shortener Monitoring" dashboard (`deploy/grafana/`) with:
+  - Request rate and latency panels
   - Total URLs created / redirects served
-  - RabbitMQ queue depth and consumer health
+  - Go runtime panels (goroutines, heap)
 
-To import a dashboard in Grafana, add the Prometheus data source (`http://prometheus:9090`) and import a dashboard (JSON can be provided in `deploy/grafana/`).
+The Prometheus and Grafana services are defined in `docker-compose.yml` and start together with `make docker-up`:
 
 ```yaml
-# docker-compose.yml (planned)
 prometheus:
   image: prom/prometheus
   ports:

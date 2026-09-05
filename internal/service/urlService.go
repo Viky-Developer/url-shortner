@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/vicky/url-shortner/external/logger"
+	"github.com/vicky/url-shortner/external/metrics"
 	"github.com/vicky/url-shortner/internal/apperror"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 	"github.com/vicky/url-shortner/internal/enum"
@@ -280,6 +281,15 @@ func WithRedirectCache(c URLRedirectCache) URLOption {
 	return func(s *URLService) { s.cache = c }
 }
 
+// WithMetrics sets the metrics backend used to record business counters.
+func WithMetrics(m metrics.Metrics) URLOption {
+	return func(s *URLService) {
+		if m != nil {
+			s.metrics = m
+		}
+	}
+}
+
 // URLService implements the URL shortening business logic.
 type URLService struct {
 	queries         gen.Querier
@@ -289,6 +299,7 @@ type URLService struct {
 	log             logger.Logger
 	blockedIPRanges []*net.IPNet
 	cache           URLRedirectCache
+	metrics         metrics.Metrics
 }
 
 // NewURLService constructs a URLService with the given querier, DB handle
@@ -304,6 +315,7 @@ func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, l
 		log:             log,
 		blockedIPRanges: blockedRanges,
 		cache:           NoopRedirectCache{},
+		metrics:         metrics.Noop{},
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -521,6 +533,7 @@ func (s *URLService) Create(ctx context.Context, userID int64, req payload.Creat
 		return nil, err
 	}
 
+	s.metrics.IncURLsCreated()
 	s.log.Info("url created", logger.Int64("id", created.ID), logger.String("shortCode", utils.SanitizeLog(created.ShortCode)))
 
 	return s.toResponse(created, req.OriginalURL), nil
@@ -544,6 +557,7 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 	if resp, hit, err := s.redirectFromCache(ctx, shortCode, click); err != nil {
 		return nil, err
 	} else if hit {
+		s.metrics.IncRedirectsServed()
 		s.log.Info("url redirected (cache hit)", logger.String("shortCode", utils.SanitizeLog(shortCode)), logger.Int64("id", resp.ID))
 		return resp, nil
 	}
@@ -584,6 +598,7 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 	// Populate the cache so subsequent redirects for this code hit cache.
 	s.cacheRedirect(ctx, shortCode, rowToUrlForUpdate(urlRow), resp.OriginalURL)
 
+	s.metrics.IncRedirectsServed()
 	s.log.Info("url redirected", logger.String("shortCode", utils.SanitizeLog(shortCode)), logger.Int64("id", resp.ID))
 	return resp, nil
 }
