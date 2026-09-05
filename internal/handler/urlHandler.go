@@ -34,7 +34,10 @@ type URLService interface {
 	SoftDelete(ctx context.Context, userID int64, id int64) (*payload.DeleteResponse, error)
 	HardDelete(ctx context.Context, userID int64, id int64) error
 	ListClickLogs(ctx context.Context, userID, urlID int64, from, to *time.Time, page, perPage, offset int32) ([]any, int64, error)
+	ListAllClickLogs(ctx context.Context, userID int64, from, to *time.Time, page, perPage, offset int32) ([]any, int64, error)
 	GetAnalytics(ctx context.Context, userID, urlID int64, from, to *time.Time) (*payload.AnalyticsResponse, error)
+	GetAllAnalytics(ctx context.Context, userID int64, from, to *time.Time) (*payload.AnalyticsResponse, error)
+	GetCumulativeClickCounts(ctx context.Context, userID int64, days int) (*payload.CumulativeClickCounts, error)
 }
 
 // URLHandler holds the dependencies required by the URL HTTP handlers.
@@ -357,6 +360,40 @@ func (h *URLHandler) ListClickLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListAllClickLogs handles GET /urls/clicks and returns paginated click logs
+// across all of the authenticated user's URLs, optionally filtered by from/to
+// query parameters.
+func (h *URLHandler) ListAllClickLogs(w http.ResponseWriter, r *http.Request) {
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
+		return
+	}
+
+	from, to := utils.ParseTimeRange(r)
+	page, perPage, offset := utils.ParsePagination(r.URL.Query().Get("page"), r.URL.Query().Get("perPage"))
+
+	clicks, total, err := h.urlService.ListAllClickLogs(r.Context(), userID, from, to, page, perPage, offset)
+	if err != nil {
+		h.log.Error("failed to list all click logs", logger.Error(err), logger.Int64("userID", userID))
+		response.Error(w, response.StatusCodeFromError(err), err)
+		return
+	}
+
+	totalPages := int(total) / int(perPage)
+	if int(total)%int(perPage) > 0 {
+		totalPages++
+	}
+
+	response.Success(w, http.StatusOK, "click logs retrieved", clicks, &payload.Pagination{
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: totalPages,
+	})
+}
+
 // GetAnalytics handles GET /urls/{id}/analytics and returns aggregate click
 // analytics for a specific URL, optionally filtered by from/to query parameters.
 func (h *URLHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
@@ -384,4 +421,50 @@ func (h *URLHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.Success(w, http.StatusOK, "analytics retrieved", []any{analytics})
+}
+
+// GetAllAnalytics handles GET /urls/analytics and returns aggregate click
+// analytics across all of the authenticated user's URLs, optionally filtered
+// by from/to query parameters.
+func (h *URLHandler) GetAllAnalytics(w http.ResponseWriter, r *http.Request) {
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
+		return
+	}
+
+	from, to := utils.ParseTimeRange(r)
+
+	analytics, err := h.urlService.GetAllAnalytics(r.Context(), userID, from, to)
+	if err != nil {
+		h.log.Error("failed to get all analytics", logger.Error(err), logger.Int64("userID", userID))
+		response.Error(w, response.StatusCodeFromError(err), err)
+		return
+	}
+
+	response.Success(w, http.StatusOK, "analytics retrieved", []any{analytics})
+}
+
+// GetCumulativeClickCounts handles GET /urls/clicks/counts and returns the
+// per-day click totals across all of the user's URLs for the trailing days
+// (default 7), oldest day first.
+func (h *URLHandler) GetCumulativeClickCounts(w http.ResponseWriter, r *http.Request) {
+
+	userID, ok := utils.GetUserIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
+		return
+	}
+
+	days := int(utils.ParseDaysParam(r, 7) / (24 * time.Hour))
+
+	counts, err := h.urlService.GetCumulativeClickCounts(r.Context(), userID, days)
+	if err != nil {
+		h.log.Error("failed to get cumulative click counts", logger.Error(err), logger.Int("days", days))
+		response.Error(w, response.StatusCodeFromError(err), err)
+		return
+	}
+
+	response.Success(w, http.StatusOK, "cumulative click counts retrieved", []any{counts})
 }

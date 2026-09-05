@@ -16,18 +16,28 @@ for allowed in $ALLOWED_BRANCHES; do
   fi
 done
 
-if ! [[ "$branch" =~ ^(feat|refactor|bug|fix|chore|hotfix)/.+ ]]; then
+# feat|refactor|bug|fix|chore|hotfix / <issue_no> / <branch-name>
+if ! [[ "$branch" =~ ^(feat|refactor|bug|fix|chore|hotfix)/[0-9]+/.+ ]]; then
   echo "error: invalid branch name '$branch'" >&2
   echo "" >&2
-  echo "expected a context prefix before the branch name:" >&2
-  echo "  feat/<name>     - new features" >&2
-  echo "  refactor/<name> - refactoring existing code" >&2
-  echo "  bug/<name>      - bug fixes" >&2
-  echo "  fix/<name>      - immediate fixes merged to dev/main" >&2
-  echo "  hotfix/<name>   - urgent production fixes" >&2
-  echo "  chore/<name>    - maintenance tasks" >&2
+  echo "expected format: <type>/<issue_no>/<branch-name>" >&2
   echo "" >&2
-  echo "create a properly named branch, e.g.: git checkout -b feat/your-branch-name" >&2
-  echo "or use: make branch type=feat name=your-branch-name" >&2
+  echo "  type prefixes:" >&2
+  echo "    feat      - new features" >&2
+  echo "    refactor  - refactoring existing code" >&2
+  echo "    bug       - bug fixes" >&2
+  echo "    fix       - immediate fixes merged to dev/main" >&2
+  echo "    hotfix    - urgent production fixes" >&2
+  echo "    chore     - maintenance tasks" >&2
+  echo "" >&2
+  echo "  examples:" >&2
+  echo "    feat/42/user-login-flow" >&2
+  echo "    refactor/15/auth-cleanup" >&2
+  echo "    fix/30/redirect-loop" >&2
+  echo "" >&2
+  echo "create a properly named branch, e.g.:" >&2
+  echo "  git checkout -b feat/42/user-login-flow" >&2
+  echo "or use:" >&2
+  echo "  make branch type=feat issue=42 name=user-login-flow" >&2
   exit 1
 fi

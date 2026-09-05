@@ -1019,6 +1019,51 @@ func (s *URLService) ListClickLogs(ctx context.Context, userID, urlID int64, fro
 	return items, total, nil
 }
 
+// ListAllClickLogs returns a paginated list of click logs across all of the
+// user's URLs, optionally filtered by a time range. Results are ordered by
+// most recent click first.
+func (s *URLService) ListAllClickLogs(ctx context.Context, userID int64, from, to *time.Time, page, perPage, offset int32) ([]any, int64, error) {
+
+	total, err := s.queries.CountAllClickLogsByUser(ctx, gen.CountAllClickLogsByUserParams{
+		UserID: userID,
+		From:   nullableTime(from),
+		To:     nullableTime(to),
+	})
+	if err != nil {
+		s.log.Error("failed to count all click logs", logger.Error(err), logger.Int64("userID", userID))
+		return nil, 0, apperror.ErrInternal
+	}
+
+	rows, err := s.queries.ListAllClickLogsByUser(ctx, gen.ListAllClickLogsByUserParams{
+		UserID: userID,
+		From:   nullableTime(from),
+		To:     nullableTime(to),
+		Limit:  perPage,
+		Offset: offset,
+	})
+	if err != nil {
+		s.log.Error("failed to list all click logs", logger.Error(err), logger.Int64("userID", userID))
+		return nil, 0, apperror.ErrInternal
+	}
+
+	items := make([]any, len(rows))
+	for i, r := range rows {
+		items[i] = payload.ClickLogEntry{
+			ID:         r.ID,
+			URLID:      r.UrlID,
+			ShortCode:  r.ShortCode,
+			ClickedAt:  formatNullTime(r.ClickedAt),
+			IPAddress:  r.IpAddress.IPNet.IP.String(),
+			UserAgent:  r.UserAgent.String,
+			Referrer:   r.Referrer.String,
+			Browser:    r.Browser.String,
+			DeviceType: r.DeviceType.String,
+		}
+	}
+
+	return items, total, nil
+}
+
 // GetAnalytics returns aggregate analytics for a URL including stats,
 // top referrers, and daily click breakdown.
 func (s *URLService) GetAnalytics(ctx context.Context, userID, urlID int64, from, to *time.Time) (*payload.AnalyticsResponse, error) {
@@ -1086,6 +1131,109 @@ func (s *URLService) GetAnalytics(ctx context.Context, userID, urlID int64, from
 		Referrers:  referrers,
 		DailyStats: dailyStats,
 	}, nil
+}
+
+// GetAllAnalytics returns aggregate analytics across all of the user's URLs
+// including overall stats, top referrers, and per-day click breakdown.
+func (s *URLService) GetAllAnalytics(ctx context.Context, userID int64, from, to *time.Time) (*payload.AnalyticsResponse, error) {
+
+	stats, err := s.queries.ClickStatsByUser(ctx, gen.ClickStatsByUserParams{
+		UserID: userID,
+		From:   nullableTime(from),
+		To:     nullableTime(to),
+	})
+	if err != nil {
+		s.log.Error("failed to get click stats by user", logger.Error(err), logger.Int64("userID", userID))
+		return nil, apperror.ErrInternal
+	}
+
+	refRows, err := s.queries.TopReferrersByUser(ctx, gen.TopReferrersByUserParams{
+		UserID: userID,
+		From:   nullableTime(from),
+		To:     nullableTime(to),
+		Limit:  10,
+	})
+	if err != nil {
+		s.log.Error("failed to get top referrers by user", logger.Error(err), logger.Int64("userID", userID))
+		return nil, apperror.ErrInternal
+	}
+
+	referrers := make([]payload.ReferrerStat, len(refRows))
+	for i, r := range refRows {
+		referrers[i] = payload.ReferrerStat{
+			Referrer: r.Referrer,
+			Count:    r.Count,
+		}
+	}
+
+	var dailyStats []payload.DailyClickStat
+	if from != nil && to != nil {
+		dailyRows, dErr := s.queries.ClicksByDateRangeByUser(ctx, gen.ClicksByDateRangeByUserParams{
+			UserID:      userID,
+			ClickedAt:   nullableTime(from),
+			ClickedAt_2: nullableTime(to),
+		})
+		if dErr != nil {
+			s.log.Error("failed to get daily clicks by user", logger.Error(dErr), logger.Int64("userID", userID))
+			return nil, apperror.ErrInternal
+		}
+		dailyStats = make([]payload.DailyClickStat, len(dailyRows))
+		for i, r := range dailyRows {
+			dailyStats[i] = payload.DailyClickStat{
+				Date:   r.Date.Format("2006-01-02"),
+				Clicks: r.Clicks,
+			}
+		}
+	}
+
+	return &payload.AnalyticsResponse{
+		Stats: payload.ClickStats{
+			TotalClicks:    stats.TotalClicks,
+			UniqueVisitors: stats.UniqueVisitors,
+			FirstClickedAt: formatInterfaceTime(stats.FirstClickedAt),
+			LastClickedAt:  formatInterfaceTime(stats.LastClickedAt),
+		},
+		Referrers:  referrers,
+		DailyStats: dailyStats,
+	}, nil
+}
+
+// GetCumulativeClickCounts returns the per-day click totals across all of the
+// user's URLs for the trailing `days` days (oldest first), including days with
+// zero clicks so the caller always receives a full contiguous series.
+func (s *URLService) GetCumulativeClickCounts(ctx context.Context, userID int64, days int) (*payload.CumulativeClickCounts, error) {
+	if days <= 0 {
+		days = 7
+	}
+
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	from := today.AddDate(0, 0, -(days - 1))
+	to := today.AddDate(0, 0, 1)
+
+	rows, err := s.queries.CumulativeClickCounts(ctx, gen.CumulativeClickCountsParams{
+		UserID: userID,
+		From:   nullableTime(&from),
+		To:     nullableTime(&to),
+	})
+	if err != nil {
+		s.log.Error("failed to get cumulative click counts", logger.Error(err), logger.Int64("userID", userID), logger.Int("days", days))
+		return nil, apperror.ErrInternal
+	}
+
+	byDate := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		byDate[r.Date.Format("2006-01-02")] = r.Clicks
+	}
+
+	resp := &payload.CumulativeClickCounts{Days: days, Items: make([]payload.DailyClickStat, 0, days)}
+	for i := 0; i < days; i++ {
+		date := from.AddDate(0, 0, i).Format("2006-01-02")
+		clicks := byDate[date]
+		resp.Total += clicks
+		resp.Items = append(resp.Items, payload.DailyClickStat{Date: date, Clicks: clicks})
+	}
+
+	return resp, nil
 }
 
 // ensureOwnership verifies the URL belongs to the user. Returns nil on success.
