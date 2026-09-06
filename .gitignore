@@ -32,6 +32,15 @@ go.work.sum
 # context (do not push to GitHub)
 context/
 
+# GitNexus (local codebase index)
+.gitnexus/
+
+AGENTS.md
+CLAUDE.md
+DESIGN.md
+*.md
+!README.md
+
 # Editor/IDE
 # .idea/
 # .vscode/
