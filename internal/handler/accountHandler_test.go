@@ -13,9 +13,8 @@ import (
 )
 
 type mockAccountDeletionService struct {
-	requestFn   func(context.Context, int64) (*payload.AccountStatusResponse, error)
-	cancelFn    func(context.Context, int64) error
-	getStatusFn func(context.Context, int64) (*payload.AccountStatusResponse, error)
+	requestFn func(context.Context, int64) (*payload.AccountStatusResponse, error)
+	cancelFn  func(context.Context, int64) error
 }
 
 func (m *mockAccountDeletionService) RequestDeletion(ctx context.Context, userID int64) (*payload.AccountStatusResponse, error) {
@@ -30,13 +29,6 @@ func (m *mockAccountDeletionService) CancelDeletion(ctx context.Context, userID 
 		return m.cancelFn(ctx, userID)
 	}
 	return nil
-}
-
-func (m *mockAccountDeletionService) GetStatus(ctx context.Context, userID int64) (*payload.AccountStatusResponse, error) {
-	if m.getStatusFn != nil {
-		return m.getStatusFn(ctx, userID)
-	}
-	return &payload.AccountStatusResponse{Status: "ACTIVE"}, nil
 }
 
 func TestDeleteAccount(t *testing.T) {
@@ -133,24 +125,5 @@ func TestCancelDeletionNotPending(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409", w.Code)
-	}
-}
-
-func TestGetAccountStatus(t *testing.T) {
-	mock := &mockAccountDeletionService{
-		getStatusFn: func(_ context.Context, _ int64) (*payload.AccountStatusResponse, error) {
-			return &payload.AccountStatusResponse{Status: "PENDING_DELETION"}, nil
-		},
-	}
-	h := NewAccountHandler(mock, testLog(t))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/account/status", nil)
-	req = withUserID(req, 1)
-	w := httptest.NewRecorder()
-
-	h.GetAccountStatus(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
 	}
 }

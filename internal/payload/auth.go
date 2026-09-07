@@ -39,6 +39,7 @@ type UserResponse struct {
 	Email           string `json:"email"`
 	DisplayName     string `json:"displayName,omitempty"`
 	Role            string `json:"role,omitempty"`
+	Status          string `json:"status"`
 	PasswordAgeDays int    `json:"passwordAgeDays,omitempty"`
 	ChangeSuggested bool   `json:"changeSuggested,omitempty"`
 }

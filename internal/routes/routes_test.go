@@ -49,7 +49,6 @@ func TestRoutesRegistered(t *testing.T) {
 		// Account deletion routes
 		{http.MethodDelete, "/api/v1/account"},
 		{http.MethodPost, "/api/v1/account/cancel-deletion"},
-		{http.MethodGet, "/api/v1/account/status"},
 	}
 
 	for _, rt := range routes {
