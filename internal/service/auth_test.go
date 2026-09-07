@@ -351,6 +351,7 @@ func TestLoginSuccess(t *testing.T) {
 				ID:            1,
 				Email:         "test@example.com",
 				PasswordHash:  hash,
+				Status:        "ACTIVE",
 				DisplayUserID: utils.NullString("USR_test123"),
 			}, nil
 		},
@@ -378,6 +379,47 @@ func TestLoginSuccess(t *testing.T) {
 	}
 	if resp.User.ID != "USR_test123" {
 		t.Errorf("expected user ID 'USR_test123', got %q", resp.User.ID)
+	}
+	if resp.User.Status != "ACTIVE" {
+		t.Errorf("expected user status 'ACTIVE', got %q", resp.User.Status)
+	}
+}
+
+func TestLoginPendingDeletionAllowed(t *testing.T) {
+	cfg := testConfig()
+	hash := "$2a$10$OnmqGsLru1/LiFn7CVNsJ.N/A7BVHyLmtwt5HiE9wraOvx6OOFpNm"
+
+	mock := &mockQuerier{
+		emailFn: func(_ context.Context, _ string) (gen.GetUserByEmailRow, error) {
+			return gen.GetUserByEmailRow{
+				ID:            1,
+				Email:         "test@example.com",
+				PasswordHash:  hash,
+				Status:        "PENDING_DELETION",
+				DisplayUserID: utils.NullString("USR_test123"),
+			}, nil
+		},
+		createSessionFn: func(_ context.Context, _ gen.CreateSessionParams) (gen.Session, error) {
+			return gen.Session{ID: 1}, nil
+		},
+	}
+	svc := newAuthServiceFromQuerier(mock, cfg)
+
+	resp, err := svc.Login(context.Background(), payload.LoginRequest{
+		Email:    "test@example.com",
+		Password: "password123",
+	}, "web", "Chrome", "127.0.0.1", "", "", "Mozilla/5.0")
+	if err != nil {
+		t.Fatalf("expected login to succeed for PENDING_DELETION user, got error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if resp.Token.AccessToken == "" {
+		t.Error("expected non-empty access token")
+	}
+	if resp.User.Status != "PENDING_DELETION" {
+		t.Errorf("expected user status 'PENDING_DELETION', got %q", resp.User.Status)
 	}
 }
 

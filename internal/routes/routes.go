@@ -60,7 +60,6 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 	// Account routes (protected) — self-service account deletion lifecycle
 	mux.Handle("DELETE /api/v1/account", authMiddleware(http.HandlerFunc(accountHandler.DeleteAccount)))
 	mux.Handle("POST /api/v1/account/cancel-deletion", authMiddleware(http.HandlerFunc(accountHandler.CancelDeletion)))
-	mux.Handle("GET /api/v1/account/status", authMiddleware(http.HandlerFunc(accountHandler.GetAccountStatus)))
 
 	// Admin routes (protected) — require authentication + ADMIN role
 	adminMiddleware := middleware.RequireRole(enum.RoleAdmin, nil)

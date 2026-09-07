@@ -19,7 +19,6 @@ import (
 type AccountDeletionService interface {
 	RequestDeletion(ctx context.Context, userID int64) (*payload.AccountStatusResponse, error)
 	CancelDeletion(ctx context.Context, userID int64) error
-	GetStatus(ctx context.Context, userID int64) (*payload.AccountStatusResponse, error)
 }
 
 // AccountHandler holds the dependencies required by the account HTTP handlers.
@@ -81,23 +80,4 @@ func (h *AccountHandler) CancelDeletion(w http.ResponseWriter, r *http.Request) 
 	}
 
 	response.Success(w, http.StatusOK, "account deletion cancelled", nil)
-}
-
-// GetAccountStatus handles GET /api/v1/account/status.
-func (h *AccountHandler) GetAccountStatus(w http.ResponseWriter, r *http.Request) {
-
-	userID, ok := utils.GetUserIDFromContext(r)
-	if !ok {
-		response.Error(w, http.StatusUnauthorized, apperror.ErrUnauthorized)
-		return
-	}
-
-	resp, err := h.deletionService.GetStatus(r.Context(), userID)
-	if err != nil {
-		h.log.Error("get account status failed", logger.Error(err))
-		response.Error(w, response.StatusCodeFromError(err), err)
-		return
-	}
-
-	response.Success(w, http.StatusOK, "account status retrieved", []any{*resp})
 }

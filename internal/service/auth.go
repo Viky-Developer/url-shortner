@@ -221,6 +221,7 @@ func (s *AuthService) Register(ctx context.Context, req *payload.RegisterRequest
 			Email:       user.Email,
 			DisplayName: req.DisplayName,
 			Role:        user.Role,
+			Status:      "ACTIVE",
 		},
 	}, nil
 }
@@ -247,13 +248,6 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 		}
 		s.log.Error("failed to get user by email", logger.Error(err), logger.String("email", req.Email))
 		return nil, apperror.ErrInternal
-	}
-
-	// Block login for accounts pending deletion. Return the same generic
-	// error as bad credentials so account status is not leaked.
-	if user.Status == "PENDING_DELETION" {
-		s.log.Warn("login attempt for account pending deletion", logger.Int64("userID", user.ID))
-		return nil, apperror.ErrUnauthorized
 	}
 
 	// Verify password
@@ -308,6 +302,7 @@ func (s *AuthService) Login(ctx context.Context, req payload.LoginRequest, devic
 			Email:           user.Email,
 			DisplayName:     user.DisplayUserName.String,
 			Role:            user.Role,
+			Status:          user.Status,
 			PasswordAgeDays: passwordAgeDays,
 			ChangeSuggested: changeSuggested,
 		},

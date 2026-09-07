@@ -134,21 +134,6 @@ func (s *AccountDeletionService) CancelDeletion(ctx context.Context, userID int6
 	return nil
 }
 
-// GetStatus returns the current account status.
-func (s *AccountDeletionService) GetStatus(ctx context.Context, userID int64) (*payload.AccountStatusResponse, error) {
-
-	user, err := s.queries.GetUserStatusByID(ctx, userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, apperror.ErrNotFound
-		}
-		return nil, apperror.ErrInternal
-	}
-
-	resp := &payload.AccountStatusResponse{Status: user.Status}
-	return resp, nil
-}
-
 // ProcessDeletions hard-deletes accounts whose 30-day grace period has expired.
 // Called by the retention worker.
 func (s *AccountDeletionService) ProcessDeletions(ctx context.Context) error {

@@ -100,23 +100,6 @@ func TestAccountDeletionCancelDeletionNotPending(t *testing.T) {
 	}
 }
 
-func TestAccountDeletionGetStatus(t *testing.T) {
-	mock := &mockQuerier{
-		userStatusByIDFn: func(_ context.Context, id int64) (gen.GetUserStatusByIDRow, error) {
-			return gen.GetUserStatusByIDRow{ID: id, Status: "PENDING_DELETION"}, nil
-		},
-	}
-	svc := NewAccountDeletionService(mock, nil, nil, nil, nil, testLog(t))
-
-	resp, err := svc.GetStatus(context.Background(), int64(1))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.Status != "PENDING_DELETION" {
-		t.Errorf("status = %s, want PENDING_DELETION", resp.Status)
-	}
-}
-
 func TestAccountDeletionProcessDeletions(t *testing.T) {
 	mock := &mockQuerier{
 		accountsDueDeletionFn: func(_ context.Context) ([]int64, error) {
