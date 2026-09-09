@@ -63,7 +63,7 @@ func Load() *Config {
 		DBMaxLife:             time.Duration(getEnvInt("DB_MAX_LIFETIME", 5)) * time.Minute,
 		ServerHost:            getEnv("SERVER_HOST", "0.0.0.0"),
 		ServerPort:            getEnv("SERVER_PORT", "8085"),
-		ServerBaseURL:         getEnv("SERVER_BASE_URL", "http://localhost:8080/api/v1"),
+		ServerBaseURL:         getEnv("SERVER_BASE_URL", "http://localhost:8085/api/v1"),
 		DefaultUserEmail:      getEnv("DEFAULT_USER_EMAIL", "default@urlshortner.local"),
 		DefaultUserPassword:   getEnv("DEFAULT_USER_PASSWORD", "default123"),
 		UserIDSecretKey:       getEnv("USER_ID_SECRET_KEY", "change-me-in-production"),

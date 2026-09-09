@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vicky/url-shortner/external/logger"
+	"github.com/vicky/url-shortner/external/metrics"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 	"github.com/vicky/url-shortner/internal/enum"
 	"github.com/vicky/url-shortner/internal/payload"
@@ -572,7 +573,7 @@ func TestCreateRejectsBlockedDomain(t *testing.T) {
 			return gen.GetBlockedDomainRow{ID: 1, Domain: "blocked.example.com"}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://blocked.example.com/page",
@@ -602,7 +603,7 @@ func TestCreateGeneratesShortCode(t *testing.T) {
 			return 0, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com/long-url",
@@ -614,7 +615,7 @@ func TestCreateGeneratesShortCode(t *testing.T) {
 	if len(captured.ShortCode) != 10 {
 		t.Errorf("expected 10-char short code, got %q (len %d)", captured.ShortCode, len(captured.ShortCode))
 	}
-	if resp.ShortURL != "http://localhost:8080/"+captured.ShortCode {
+	if resp.ShortURL != "http://localhost:8085/"+captured.ShortCode {
 		t.Errorf("unexpected shortURL %q", resp.ShortURL)
 	}
 }
@@ -639,7 +640,7 @@ func TestCreateUsesCustomCode(t *testing.T) {
 			return 0, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com/long-url",
@@ -666,7 +667,7 @@ func TestRedirectNotFound(t *testing.T) {
 			return gen.GetURLByShortCodeForUpdateRow{}, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Redirect(context.Background(), "missing", payload.ClickInfo{})
 	if err == nil {
@@ -706,7 +707,7 @@ func TestRedirectRecordsClickBeforeResponse(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{
 		IP:        net.ParseIP("203.0.113.10"),
@@ -757,7 +758,7 @@ func TestRedirectFailsWhenClickLogFails(t *testing.T) {
 			return gen.ClickLog{}, fmt.Errorf("insert failed")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
 	if err == nil {
@@ -774,7 +775,7 @@ func TestListPagination(t *testing.T) {
 			return 25, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, total, err := svc.List(context.Background(), 1, 3, 10, 20, nil)
 	if err != nil {
@@ -799,7 +800,7 @@ func TestSoftDeleteSetsDeletedAt(t *testing.T) {
 			return deleted, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.SoftDelete(context.Background(), 1, 1)
 	if err != nil {
@@ -842,7 +843,7 @@ func TestUpdatePersistsUrlStatus(t *testing.T) {
 			return testURL("abc1234567"), nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
 		Status: &disabled,
@@ -888,7 +889,7 @@ func TestUpdateLeavesUrlStatusNilWhenOmitted(t *testing.T) {
 			return url, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{})
 	if err != nil {
@@ -916,7 +917,7 @@ func TestCreateCustomCodeAlreadyExists(t *testing.T) {
 			return true, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -936,7 +937,7 @@ func TestCreateCustomCodeExistsCheckFails(t *testing.T) {
 			return false, fmt.Errorf("db error")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -959,7 +960,7 @@ func TestCreateDuplicateKeyOnInsert(t *testing.T) {
 			return gen.Url{}, &pqError{code: "23505"}
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -982,7 +983,7 @@ func TestCreateDestinationLookupError(t *testing.T) {
 			return gen.GetDestinationByHashRow{}, fmt.Errorf("db error")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -1004,7 +1005,7 @@ func TestCreateDestinationCreateFails(t *testing.T) {
 			return gen.CreateDestinationRow{}, fmt.Errorf("insert failed")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -1026,7 +1027,7 @@ func TestCreateInsertFails(t *testing.T) {
 			return gen.Url{}, fmt.Errorf("insert failed")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -1051,7 +1052,7 @@ func TestCreateVersionInsertFails(t *testing.T) {
 			return fmt.Errorf("version insert failed")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -1079,7 +1080,7 @@ func TestCreateTitleDescriptionExpiresPassed(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -1128,7 +1129,7 @@ func TestCreateResponseHasCorrectFields(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -1158,7 +1159,7 @@ func TestCreateResponseHasCorrectFields(t *testing.T) {
 	if resp.IsCustom == nil || *resp.IsCustom != true {
 		t.Error("isCustom should be true")
 	}
-	if resp.ShortURL != "http://localhost:8080/abc1234567" {
+	if resp.ShortURL != "http://localhost:8085/abc1234567" {
 		t.Errorf("shortURL = %q", resp.ShortURL)
 	}
 }
@@ -1180,7 +1181,7 @@ func TestCreateHealthStatusPassedToURL(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -1212,7 +1213,7 @@ func TestCreateCodeLengthAndFormat(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Create(context.Background(), 1, payload.CreateURLRequest{
 		OriginalURL: "https://example.com",
@@ -1254,7 +1255,7 @@ func TestRedirectURLExpired(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Redirect(context.Background(), "abc", payload.ClickInfo{
 		IP:        net.ParseIP("203.0.113.10"),
@@ -1295,7 +1296,7 @@ func TestRedirectRecordsClickWithCorrectIP(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Redirect(context.Background(), "abc123", payload.ClickInfo{
 		IP:        net.ParseIP("10.20.30.40"),
@@ -1339,7 +1340,7 @@ func TestRedirectIncrementClickFails(t *testing.T) {
 			return fmt.Errorf("increment failed")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Redirect(context.Background(), "abc", payload.ClickInfo{
 		IP:        net.ParseIP("127.0.0.1"),
@@ -1376,7 +1377,7 @@ func TestRedirectResponseFields(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Redirect(context.Background(), "abc123", payload.ClickInfo{
 		IP:        net.ParseIP("127.0.0.1"),
@@ -1392,7 +1393,7 @@ func TestRedirectResponseFields(t *testing.T) {
 	if resp.ClickCount != 42 {
 		t.Errorf("clickCount = %d, want 42", resp.ClickCount)
 	}
-	if resp.ShortURL != "http://localhost:8080/abc123" {
+	if resp.ShortURL != "http://localhost:8085/abc123" {
 		t.Errorf("shortURL = %q", resp.ShortURL)
 	}
 	if resp.DestinationStatusString != "Healthy" {
@@ -1422,7 +1423,7 @@ func TestRedirectNullClickCount(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Redirect(context.Background(), "abc", payload.ClickInfo{
 		IP:        net.ParseIP("127.0.0.1"),
@@ -1452,7 +1453,7 @@ func TestRedirectClickLogFails(t *testing.T) {
 			return gen.ClickLog{}, fmt.Errorf("click log insert failed")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Redirect(context.Background(), "abc", payload.ClickInfo{
 		IP:        net.ParseIP("127.0.0.1"),
@@ -1503,7 +1504,7 @@ func TestRedirectCacheHitDoesNotHitDB(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New())
 
 	resp, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{
 		IP:        net.ParseIP("203.0.113.10"),
@@ -1549,7 +1550,7 @@ func TestRedirectCacheMissFallsBackToDBAndPopulates(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New())
 
 	_, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
 	if err != nil {
@@ -1579,7 +1580,7 @@ func TestRedirectCacheExpiredInvalidates(t *testing.T) {
 		time.Now().Add(-time.Hour).Format(time.RFC3339))
 	_ = mc.Set(context.Background(), cacheKeyRedirectPrefix+"expired", data)
 
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New())
 
 	_, err := svc.Redirect(context.Background(), "expired", payload.ClickInfo{})
 	if err == nil {
@@ -1596,7 +1597,7 @@ func TestRedirectCacheInactiveInvalidates(t *testing.T) {
 	data := `{"id":1,"original_url":"https://example.com/old","url_status":0}`
 	_ = mc.Set(context.Background(), cacheKeyRedirectPrefix+"inactive", data)
 
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New())
 
 	_, err := svc.Redirect(context.Background(), "inactive", payload.ClickInfo{})
 	if err == nil {
@@ -1631,7 +1632,7 @@ func TestRedirectCacheNotAvailableFallsBackToDB(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New())
 
 	resp, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
 	if err != nil {
@@ -1652,7 +1653,7 @@ func TestGetByIDNotFound(t *testing.T) {
 			return gen.GetURLByIDRow{}, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.GetByID(context.Background(), 1, 999)
 	if err == nil {
@@ -1666,7 +1667,7 @@ func TestGetByIDQueryError(t *testing.T) {
 			return gen.GetURLByIDRow{}, fmt.Errorf("db error")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.GetByID(context.Background(), 1, 1)
 	if err == nil {
@@ -1696,7 +1697,7 @@ func TestGetByIDResponseFields(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.GetByID(context.Background(), 1, 1)
 	if err != nil {
@@ -1741,7 +1742,7 @@ func TestGetByIDNullFields(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.GetByID(context.Background(), 1, 1)
 	if err != nil {
@@ -1775,7 +1776,7 @@ func TestListEmpty(t *testing.T) {
 			return 0, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	items, total, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
@@ -1798,7 +1799,7 @@ func TestListCountFails(t *testing.T) {
 			return 0, fmt.Errorf("count error")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, _, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err == nil {
@@ -1815,7 +1816,7 @@ func TestListQueryFails(t *testing.T) {
 			return 0, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, _, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err == nil {
@@ -1835,7 +1836,7 @@ func TestListPaginationMath(t *testing.T) {
 			return 25, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	items, total, err := svc.List(context.Background(), 1, 3, 10, 20, nil)
 	if err != nil {
@@ -1859,7 +1860,7 @@ func TestListExactMultiple(t *testing.T) {
 			return 20, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	items, total, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
@@ -1893,7 +1894,7 @@ func TestListAllNullFields(t *testing.T) {
 			return 1, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	items, total, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
@@ -1955,7 +1956,7 @@ func TestListMultipleItemsWithHealthStatus(t *testing.T) {
 			return 2, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	items, _, err := svc.List(context.Background(), 1, 1, 10, 0, nil)
 	if err != nil {
@@ -2020,7 +2021,7 @@ func TestUpdateOriginalURLChange(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
 		OriginalURL: "https://new.com",
@@ -2046,7 +2047,7 @@ func TestUpdateNotFound(t *testing.T) {
 			return gen.GetURLByIDRow{}, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Update(context.Background(), 1, 999, payload.UpdateURLRequest{
 		Title: "new title",
@@ -2065,7 +2066,7 @@ func TestUpdateGetByIDFails(t *testing.T) {
 			return gen.GetURLByIDRow{}, fmt.Errorf("db error")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
 		Title: "new",
@@ -2100,7 +2101,7 @@ func TestUpdateURLNotFoundAfterFetch(t *testing.T) {
 			return gen.Url{}, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
 		Title: "new",
@@ -2135,7 +2136,7 @@ func TestUpdateDestinationNotFound(t *testing.T) {
 			return gen.CreateDestinationRow{}, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
 		OriginalURL: "https://new.com",
@@ -2179,7 +2180,7 @@ func TestUpdateVersionInsertFails(t *testing.T) {
 			return fmt.Errorf("version insert failed")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
 		OriginalURL: "https://new.com",
@@ -2219,7 +2220,7 @@ func TestUpdateStatusChange(t *testing.T) {
 			return url, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
 		Status: &disabled,
@@ -2267,7 +2268,7 @@ func TestUpdateExpiresAt(t *testing.T) {
 			return testURL("abc"), nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
 		ExpiresAt: future,
@@ -2286,7 +2287,7 @@ func TestUpdateBlockedDomain(t *testing.T) {
 			return gen.GetBlockedDomainRow{ID: 1, Domain: "evil.com"}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.Update(context.Background(), 1, 1, payload.UpdateURLRequest{
 		OriginalURL: "https://evil.com/path",
@@ -2306,7 +2307,7 @@ func TestSoftDeleteNotFound(t *testing.T) {
 			return gen.Url{}, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.SoftDelete(context.Background(), 1, 999)
 	if err == nil {
@@ -2320,7 +2321,7 @@ func TestSoftDeleteQueryError(t *testing.T) {
 			return gen.Url{}, fmt.Errorf("db error")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.SoftDelete(context.Background(), 1, 1)
 	if err == nil {
@@ -2339,7 +2340,7 @@ func TestSoftDeleteResponse(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.SoftDelete(context.Background(), 1, 1)
 	if err != nil {
@@ -2370,7 +2371,7 @@ func TestSoftDeleteInvalidatesCache(t *testing.T) {
 			return gen.Url{ID: 1, ShortCode: "abc123"}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t), WithRedirectCache(mc))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New())
 
 	if _, err := svc.SoftDelete(context.Background(), 1, 1); err != nil {
 		t.Fatalf("soft delete: %v", err)
@@ -2400,7 +2401,7 @@ func TestHardDeleteSuccess(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	err := svc.HardDelete(context.Background(), 1, 42)
 	if err != nil {
@@ -2423,7 +2424,7 @@ func TestHardDeleteQueryError(t *testing.T) {
 			return fmt.Errorf("db error")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	err := svc.HardDelete(context.Background(), 1, 1)
 	if err == nil {
@@ -2440,7 +2441,7 @@ func TestHardDeleteNotSoftDeleted(t *testing.T) {
 			return sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	err := svc.HardDelete(context.Background(), 1, 1)
 	if err == nil {
@@ -2454,7 +2455,7 @@ func TestHardDeleteFetchError(t *testing.T) {
 			return gen.GetSoftDeletedURLByIDRow{}, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	err := svc.HardDelete(context.Background(), 1, 999)
 	if err == nil {
@@ -2467,7 +2468,7 @@ func TestHardDeleteFetchError(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════
 
 func TestGenerateShortCodeLengthAndHex(t *testing.T) {
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret-key", newMockCache(), testLog(t), metrics.New())
 	for i := 0; i < 100; i++ {
 		code, err := svc.generateShortCode()
 		if err != nil {
@@ -2485,7 +2486,7 @@ func TestGenerateShortCodeLengthAndHex(t *testing.T) {
 }
 
 func TestGenerateShortCodeUniqueness(t *testing.T) {
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret-key", newMockCache(), testLog(t), metrics.New())
 	seen := make(map[string]bool)
 	for i := 0; i < 1000; i++ {
 		code, err := svc.generateShortCode()
@@ -2504,7 +2505,7 @@ func TestGenerateShortCodeUniqueness(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════
 
 func TestResolveUserIDSuccess(t *testing.T) {
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 	encoded := utils.EncodeID(42, utils.UserIDPrefix, "test-secret")
 
 	id, err := svc.ResolveUserID(context.Background(), encoded)
@@ -2517,7 +2518,7 @@ func TestResolveUserIDSuccess(t *testing.T) {
 }
 
 func TestResolveUserIDInvalid(t *testing.T) {
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	_, err := svc.ResolveUserID(context.Background(), "invalid-token")
 	if err == nil {
@@ -2526,7 +2527,7 @@ func TestResolveUserIDInvalid(t *testing.T) {
 }
 
 func TestResolveUserIDWrongSecret(t *testing.T) {
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "secret-A", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "secret-A", newMockCache(), testLog(t), metrics.New())
 	encoded := utils.EncodeID(42, utils.UserIDPrefix, "secret-B")
 
 	id, err := svc.ResolveUserID(context.Background(), encoded)
@@ -2548,7 +2549,7 @@ func TestCheckBlockedDomainQueryError(t *testing.T) {
 			return gen.GetBlockedDomainRow{}, fmt.Errorf("db error")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	err := svc.checkBlockedDomain(context.Background(), "https://example.com")
 	if err == nil {
@@ -2557,7 +2558,7 @@ func TestCheckBlockedDomainQueryError(t *testing.T) {
 }
 
 func TestCheckBlockedDomainInvalidURL(t *testing.T) {
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	err := svc.checkBlockedDomain(context.Background(), "not-a-url")
 	if err == nil {
@@ -2580,7 +2581,7 @@ func TestFindOrCreateCacheHit(t *testing.T) {
 			return gen.CreateDestinationRow{}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	id, err := svc.findOrCreateDestination(mock, context.Background(), "https://example.com")
 	if err != nil {
@@ -2603,7 +2604,7 @@ func TestFindOrCreateCacheMiss(t *testing.T) {
 			return gen.CreateDestinationRow{ID: 99}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	id, err := svc.findOrCreateDestination(mock, context.Background(), "https://new.com")
 	if err != nil {
@@ -2620,7 +2621,7 @@ func TestFindOrCreateLookupDBError(t *testing.T) {
 			return gen.GetDestinationByHashRow{}, fmt.Errorf("db error")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	_, err := svc.findOrCreateDestination(mock, context.Background(), "https://example.com")
 	if err == nil {
@@ -2637,7 +2638,7 @@ func TestFindOrCreateCreateDBError(t *testing.T) {
 			return gen.CreateDestinationRow{}, fmt.Errorf("create failed")
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	_, err := svc.findOrCreateDestination(mock, context.Background(), "https://example.com")
 	if err == nil {
@@ -2651,7 +2652,7 @@ func TestFindOrCreateCreateDBError(t *testing.T) {
 
 func TestToResponseAllFields(t *testing.T) {
 	now := time.Now()
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	u := gen.Url{
 		ID:                        1,
@@ -2713,14 +2714,14 @@ func TestToResponseAllFields(t *testing.T) {
 	if resp.ExpiresAt == "" {
 		t.Error("expiresAt should not be empty")
 	}
-	if resp.ShortURL != "http://localhost:8080/abc" {
+	if resp.ShortURL != "http://localhost:8085/abc" {
 		t.Errorf("shortURL = %q", resp.ShortURL)
 	}
 }
 
 func TestToResponseAllNullFields(t *testing.T) {
 	now := time.Now()
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	u := gen.Url{
 		ID:        1,
@@ -2764,7 +2765,7 @@ func TestToResponseAllNullFields(t *testing.T) {
 
 func TestToResponseUnhealthyStatus(t *testing.T) {
 	now := time.Now()
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	u := gen.Url{
 		ID:                        1,
@@ -2788,7 +2789,7 @@ func TestToResponseUnhealthyStatus(t *testing.T) {
 
 func TestToResponseInactiveStatus(t *testing.T) {
 	now := time.Now()
-	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8080", "test-secret", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "http://localhost:8085", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	u := gen.Url{
 		ID:        1,
@@ -2807,7 +2808,7 @@ func TestToResponseInactiveStatus(t *testing.T) {
 
 func TestToResponseBaseURL(t *testing.T) {
 	now := time.Now()
-	svc := NewURLService(&mockQuerier{}, nil, "https://myapp.com/", "test-secret", testLog(t))
+	svc := NewURLService(&mockQuerier{}, nil, "https://myapp.com/", "test-secret", newMockCache(), testLog(t), metrics.New())
 
 	u := gen.Url{
 		ID:        1,
@@ -2861,7 +2862,7 @@ func TestListClickLogsSuccess(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	items, total, err := svc.ListClickLogs(context.Background(), 1, 1, nil, nil, 1, 10, 0)
 	if err != nil {
@@ -2888,7 +2889,7 @@ func TestListClickLogsOwnershipDenied(t *testing.T) {
 			return gen.GetURLByIDRow{}, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, _, err := svc.ListClickLogs(context.Background(), 1, 999, nil, nil, 1, 10, 0)
 	if err == nil {
@@ -2921,7 +2922,7 @@ func TestGetAnalyticsSuccess(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.GetAnalytics(context.Background(), 1, 1, nil, nil)
 	if err != nil {
@@ -2944,7 +2945,7 @@ func TestGetAnalyticsOwnershipDenied(t *testing.T) {
 			return gen.GetURLByIDRow{}, sql.ErrNoRows
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.GetAnalytics(context.Background(), 1, 999, nil, nil)
 	if err == nil {
@@ -2980,7 +2981,7 @@ func TestGetAnalyticsWithDailyStats(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.GetAnalytics(context.Background(), 1, 1, &from, &to)
 	if err != nil {
@@ -3010,7 +3011,7 @@ func TestGetAllAnalyticsSuccess(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.GetAllAnalytics(context.Background(), 1, nil, nil)
 	if err != nil {
@@ -3048,7 +3049,7 @@ func TestGetAllAnalyticsWithDailyStats(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.GetAllAnalytics(context.Background(), 1, &from, &to)
 	if err != nil {
@@ -3065,7 +3066,7 @@ func TestGetAllAnalyticsStatsError(t *testing.T) {
 			return gen.ClickStatsByUserRow{}, sql.ErrConnDone
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.GetAllAnalytics(context.Background(), 1, nil, nil)
 	if err == nil {
@@ -3082,7 +3083,7 @@ func TestGetAllAnalyticsReferrersError(t *testing.T) {
 			return nil, sql.ErrConnDone
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.GetAllAnalytics(context.Background(), 1, nil, nil)
 	if err == nil {
@@ -3105,7 +3106,7 @@ func TestGetCumulativeClickCountsSuccess(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.GetCumulativeClickCounts(context.Background(), 1, 7)
 	if err != nil {
@@ -3138,7 +3139,7 @@ func TestGetCumulativeClickCountsSuccess(t *testing.T) {
 
 func TestGetCumulativeClickCountsDefaultsToSeven(t *testing.T) {
 	mock := &mockQuerier{}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	resp, err := svc.GetCumulativeClickCounts(context.Background(), 1, 0)
 	if err != nil {
@@ -3158,7 +3159,7 @@ func TestGetCumulativeClickCountsQueryError(t *testing.T) {
 			return nil, sql.ErrConnDone
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, err := svc.GetCumulativeClickCounts(context.Background(), 1, 7)
 	if err == nil {
@@ -3193,7 +3194,7 @@ func TestListAllClickLogsSuccess(t *testing.T) {
 			}, nil
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	items, total, err := svc.ListAllClickLogs(context.Background(), 1, nil, nil, 1, 10, 0)
 	if err != nil {
@@ -3221,7 +3222,7 @@ func TestListAllClickLogsCountError(t *testing.T) {
 			return 0, sql.ErrConnDone
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, _, err := svc.ListAllClickLogs(context.Background(), 1, nil, nil, 1, 10, 0)
 	if err == nil {
@@ -3238,7 +3239,7 @@ func TestListAllClickLogsQueryError(t *testing.T) {
 			return nil, sql.ErrConnDone
 		},
 	}
-	svc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
 	_, _, err := svc.ListAllClickLogs(context.Background(), 1, nil, nil, 1, 10, 0)
 	if err == nil {

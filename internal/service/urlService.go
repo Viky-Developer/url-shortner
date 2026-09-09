@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sqlc-dev/pqtype"
+	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/external/metrics"
 	"github.com/vicky/url-shortner/internal/apperror"
@@ -31,6 +32,54 @@ import (
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/utils"
 )
+
+// cacheKeyRedirectPrefix prefixes every Redis key that stores redirect
+// resolution data (keyed by short code).
+const cacheKeyRedirectPrefix = "url:redirect:"
+
+// redirectCacheData holds the redirect resolution data stored as a single
+// JSON blob per short code key.
+type redirectCacheData struct {
+	ID          int64  `json:"id"`
+	OriginalURL string `json:"original_url"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+	URLStatus   int16  `json:"url_status"`
+}
+
+// URLService implements the URL shortening business logic.
+type URLService struct {
+	queries         gen.Querier
+	db              *sql.DB
+	baseURL         string
+	secretKey       string
+	log             logger.Logger
+	blockedIPRanges []*net.IPNet
+	cache           cache.CacheService
+	metrics         metrics.Metrics
+}
+
+// NewURLService constructs a URLService with the given querier, DB handle
+// (used for transactions), base URL, HMAC secret key, and logger.
+func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, cache cache.CacheService, log logger.Logger, m metrics.Metrics) *URLService {
+	ctx := context.Background()
+	blockedRanges := loadBlockedIPRanges(ctx, queries, log)
+
+	if m == nil {
+		m = metrics.Noop{}
+	}
+
+	return &URLService{
+		queries:         queries,
+		db:              db,
+		baseURL:         strings.TrimRight(baseURL, "/"),
+		secretKey:       secretKey,
+		log:             log,
+		blockedIPRanges: blockedRanges,
+		cache:           cache,
+		metrics:         m,
+	}
+
+}
 
 // loadBlockedIPRanges fetches the blocked IP ranges from the database and
 // returns them as *net.IPNet slices for fast containment checks.
@@ -240,87 +289,6 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusHealthy, statusCode, true
 	}
 	return enum.DestinationStatusUnhealthy, statusCode, true
-}
-
-// cacheKeyRedirectPrefix prefixes every Redis key that stores redirect
-// resolution data (keyed by short code).
-const cacheKeyRedirectPrefix = "url:redirect:"
-
-// redirectCacheData holds the redirect resolution data stored as a single
-// JSON blob per short code key.
-type redirectCacheData struct {
-	ID          int64  `json:"id"`
-	OriginalURL string `json:"original_url"`
-	ExpiresAt   string `json:"expires_at,omitempty"`
-	URLStatus   int16  `json:"url_status"`
-}
-
-// URLRedirectCache is the contract the URL service depends on for caching
-// redirect resolution data (shortCode → original URL, expiry, status).
-// It uses a single string key per short code with a JSON value.
-type URLRedirectCache interface {
-	Get(ctx context.Context, key string) (string, error)
-	Set(ctx context.Context, key, value string) error
-	Del(ctx context.Context, key string) error
-}
-
-// NoopRedirectCache is a URLRedirectCache implementation that always returns
-// cache-miss. It is used as a fallback when cache is unavailable and in tests
-// that do not exercise caching.
-type NoopRedirectCache struct{}
-
-func (NoopRedirectCache) Get(context.Context, string) (string, error) { return "", fmt.Errorf("noop") }
-func (NoopRedirectCache) Set(context.Context, string, string) error   { return nil }
-func (NoopRedirectCache) Del(context.Context, string) error           { return nil }
-
-// URLOption configures optional behavior of a URLService.
-type URLOption func(*URLService)
-
-// WithRedirectCache sets the cache backend used for redirect lookups.
-func WithRedirectCache(c URLRedirectCache) URLOption {
-	return func(s *URLService) { s.cache = c }
-}
-
-// WithMetrics sets the metrics backend used to record business counters.
-func WithMetrics(m metrics.Metrics) URLOption {
-	return func(s *URLService) {
-		if m != nil {
-			s.metrics = m
-		}
-	}
-}
-
-// URLService implements the URL shortening business logic.
-type URLService struct {
-	queries         gen.Querier
-	db              *sql.DB
-	baseURL         string
-	secretKey       string
-	log             logger.Logger
-	blockedIPRanges []*net.IPNet
-	cache           URLRedirectCache
-	metrics         metrics.Metrics
-}
-
-// NewURLService constructs a URLService with the given querier, DB handle
-// (used for transactions), base URL, HMAC secret key, and logger.
-func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, log logger.Logger, opts ...URLOption) *URLService {
-	ctx := context.Background()
-	blockedRanges := loadBlockedIPRanges(ctx, queries, log)
-	svc := &URLService{
-		queries:         queries,
-		db:              db,
-		baseURL:         strings.TrimRight(baseURL, "/"),
-		secretKey:       secretKey,
-		log:             log,
-		blockedIPRanges: blockedRanges,
-		cache:           NoopRedirectCache{},
-		metrics:         metrics.Noop{},
-	}
-	for _, opt := range opts {
-		opt(svc)
-	}
-	return svc
 }
 
 // withTx runs fn inside a database transaction.  When s.db is nil (tests
@@ -609,6 +577,9 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 // the key is missing, hit is false and err is nil so the caller falls back to
 // the DB.
 func (s *URLService) redirectFromCache(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, bool, error) {
+	if s.cache == nil {
+		return nil, false, nil
+	}
 
 	raw, err := s.cache.Get(ctx, cacheKeyRedirectPrefix+shortCode)
 	if err != nil {
