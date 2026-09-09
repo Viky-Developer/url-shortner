@@ -37,6 +37,11 @@ import (
 // resolution data (keyed by short code).
 const cacheKeyRedirectPrefix = "url:redirect:"
 
+// defaultRedirectCacheTTL is the duration cached redirect data remains valid
+// in Redis before expiring (30 minutes). After expiration, subsequent redirect
+// requests fetch fresh data from the database and re-populate the cache.
+const defaultRedirectCacheTTL = 30 * time.Minute
+
 // redirectCacheData holds the redirect resolution data stored as a single
 // JSON blob per short code key.
 type redirectCacheData struct {
@@ -650,14 +655,24 @@ func (s *URLService) recordClick(ctx context.Context, q gen.Querier, urlID int64
 }
 
 // cacheRedirect stores the primary redirect data for a short code as a single
-// JSON value so subsequent lookups can be served without hitting the database.
+// JSON value with a TTL so subsequent lookups can be served without hitting the database.
+// By default, keys expire after 30 minutes (or the URL's remaining expiration time).
+// Once expired, the next request will miss the cache, fetch from the DB, and re-cache.
 func (s *URLService) cacheRedirect(ctx context.Context, shortCode string, u gen.Url, originalURL string) {
 	if s.cache == nil {
 		return
 	}
 	expiresAt := ""
+	ttl := defaultRedirectCacheTTL
 	if u.ExpiresAt.Valid {
 		expiresAt = u.ExpiresAt.Time.UTC().Format(time.RFC3339)
+		remaining := time.Until(u.ExpiresAt.Time.UTC())
+		if remaining <= 0 {
+			return
+		}
+		if remaining < ttl {
+			ttl = remaining
+		}
 	}
 	data := redirectCacheData{
 		ID:          u.ID,
@@ -669,7 +684,7 @@ func (s *URLService) cacheRedirect(ctx context.Context, shortCode string, u gen.
 	if err != nil {
 		return
 	}
-	_ = s.cache.Set(ctx, cacheKeyRedirectPrefix+shortCode, string(b))
+	_ = s.cache.Set(ctx, cacheKeyRedirectPrefix+shortCode, string(b), cache.WithExpiration(ttl))
 }
 
 // invalidateRedirectCache removes the cached redirect data for a short code.

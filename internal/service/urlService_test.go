@@ -1572,6 +1572,129 @@ func TestRedirectCacheMissFallsBackToDBAndPopulates(t *testing.T) {
 	if data.ID != 1 {
 		t.Errorf("cached id = %d, want 1", data.ID)
 	}
+	if exp := mc.mc.expirations[cacheKeyRedirectPrefix+"abc1234567"]; exp != 30*time.Minute {
+		t.Errorf("cached TTL = %v, want %v", exp, 30*time.Minute)
+	}
+}
+
+func TestRedirectCacheExpiresAfter30MinutesAndRefetchesFromDB(t *testing.T) {
+	mc := newMockCache()
+	now := time.Now()
+
+	dbCalls := 0
+	mock := &mockQuerier{
+		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
+			dbCalls++
+			return gen.GetURLByShortCodeForUpdateRow{
+				ID:          1,
+				UserID:      1,
+				ShortCode:   code,
+				OriginalUrl: "https://example.com/target",
+				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
+				CreatedAt:   sql.NullTime{Time: now, Valid: true},
+				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
+			}, nil
+		},
+		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, _ int64) error {
+			return nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc, testLog(t), metrics.New())
+
+	// 1. Initial redirect: cache miss -> queries DB (dbCalls = 1) -> populates cache with 30m TTL.
+	resp1, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
+	if err != nil {
+		t.Fatalf("redirect 1: %v", err)
+	}
+	if resp1.OriginalURL != "https://example.com/target" {
+		t.Errorf("resp1 originalURL = %q", resp1.OriginalURL)
+	}
+	if dbCalls != 1 {
+		t.Fatalf("expected 1 DB call, got %d", dbCalls)
+	}
+	if exp := mc.expirations[cacheKeyRedirectPrefix+"abc1234567"]; exp != 30*time.Minute {
+		t.Errorf("expected 30m TTL in cache, got %v", exp)
+	}
+
+	// 2. Second redirect (within 30m): cache hit -> serves from cache, no new DB call (dbCalls remains 1).
+	resp2, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
+	if err != nil {
+		t.Fatalf("redirect 2: %v", err)
+	}
+	if resp2.OriginalURL != "https://example.com/target" {
+		t.Errorf("resp2 originalURL = %q", resp2.OriginalURL)
+	}
+	if dbCalls != 1 {
+		t.Fatalf("expected still 1 DB call on cache hit, got %d", dbCalls)
+	}
+
+	// 3. Simulate 30m expiry: after 30 minutes, Redis evicts the key.
+	_ = mc.Del(context.Background(), cacheKeyRedirectPrefix+"abc1234567")
+
+	// 4. Third redirect (at 31m): cache miss -> queries DB again (dbCalls = 2) -> re-populates cache with 30m TTL.
+	resp3, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
+	if err != nil {
+		t.Fatalf("redirect 3: %v", err)
+	}
+	if resp3.OriginalURL != "https://example.com/target" {
+		t.Errorf("resp3 originalURL = %q", resp3.OriginalURL)
+	}
+	if dbCalls != 2 {
+		t.Fatalf("expected 2 DB calls after cache expiry, got %d", dbCalls)
+	}
+	if exp := mc.expirations[cacheKeyRedirectPrefix+"abc1234567"]; exp != 30*time.Minute {
+		t.Errorf("expected 30m TTL in re-populated cache, got %v", exp)
+	}
+
+	// 5. Subsequent redirect: hits the re-populated cache again (dbCalls remains 2).
+	_, err = svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
+	if err != nil {
+		t.Fatalf("redirect 4: %v", err)
+	}
+	if dbCalls != 2 {
+		t.Fatalf("expected still 2 DB calls on second cache hit, got %d", dbCalls)
+	}
+}
+
+func TestRedirectCacheExpiresWithURLExpirationWhenShorter(t *testing.T) {
+	mc := newMockCache()
+	now := time.Now()
+	expiresAt := now.Add(10 * time.Minute)
+
+	mock := &mockQuerier{
+		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
+			return gen.GetURLByShortCodeForUpdateRow{
+				ID:          1,
+				UserID:      1,
+				ShortCode:   code,
+				OriginalUrl: "https://example.com/target",
+				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
+				ExpiresAt:   sql.NullTime{Time: expiresAt, Valid: true},
+				CreatedAt:   sql.NullTime{Time: now, Valid: true},
+				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
+			}, nil
+		},
+		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, _ int64) error {
+			return nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc, testLog(t), metrics.New())
+
+	_, err := svc.Redirect(context.Background(), "abc1234567", payload.ClickInfo{})
+	if err != nil {
+		t.Fatalf("redirect: %v", err)
+	}
+
+	exp := mc.expirations[cacheKeyRedirectPrefix+"abc1234567"]
+	if exp > 10*time.Minute || exp < 9*time.Minute {
+		t.Errorf("expected TTL around 10m, got %v", exp)
+	}
 }
 
 func TestRedirectCacheExpiredInvalidates(t *testing.T) {
