@@ -119,7 +119,7 @@ func sampleResponse() *payload.URLResponse {
 		UserID:      "USR_test123",
 		ShortCode:   "abc1234567",
 		OriginalURL: "https://example.com/original",
-		ShortURL:    "http://localhost:8080/abc1234567",
+		ShortURL:    "http://localhost:8085/abc1234567",
 		Status:      "ACTIVE",
 		CreatedAt:   now.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:   now.Format("2006-01-02T15:04:05Z"),
@@ -241,7 +241,7 @@ func TestValidateURL(t *testing.T) {
 		{name: "missing url", url: "", wantErr: true},
 		{name: "not a url", url: "not-a-url", wantErr: true},
 		{name: "missing scheme", url: "example.com/foo", wantErr: true},
-		{name: "local hostname", url: "https://localhost:8080/x", wantErr: true},
+		{name: "local hostname", url: "https://localhost:8085/x", wantErr: true},
 		{name: "local suffix", url: "https://api.internal/x", wantErr: true},
 		{name: "lan suffix", url: "https://printer.lan/x", wantErr: true},
 		{name: "home suffix", url: "https://nas.home/x", wantErr: true},
@@ -1001,6 +1001,7 @@ func TestUpdateConflict(t *testing.T) {
 }
 
 func TestUpdatePassesAllFields(t *testing.T) {
+	stubLookupIP(t)
 	var capturedID int64
 	var capturedReq payload.UpdateURLRequest
 	mock := &mockService{

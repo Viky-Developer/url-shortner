@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/vicky/url-shortner/external/metrics"
 	"github.com/vicky/url-shortner/internal/apperror"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 )
@@ -26,7 +27,7 @@ func TestAccountDeletionRequestDeletion(t *testing.T) {
 			return nil
 		},
 	}
-	urlSvc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	urlSvc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", newMockCache(), testLog(t), metrics.New())
 	svc := NewAccountDeletionService(mock, nil, NewAdminService(mock), nil, urlSvc, testLog(t))
 
 	resp, err := svc.RequestDeletion(context.Background(), int64(1))
@@ -132,7 +133,7 @@ func TestAccountDeletionRequestDeletionWithTransaction(t *testing.T) {
 			return nil
 		},
 	}
-	urlSvc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	urlSvc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", newMockCache(), testLog(t), metrics.New())
 	svc := NewAccountDeletionService(mock, nil, NewAdminService(mock), nil, urlSvc, testLog(t))
 
 	resp, err := svc.RequestDeletion(context.Background(), int64(1))
@@ -159,7 +160,7 @@ func TestAccountDeletionRequestDeletionTxRollback(t *testing.T) {
 			return fmt.Errorf("db error")
 		},
 	}
-	urlSvc := NewURLService(mock, nil, "http://localhost:8080", "test-secret-key", testLog(t))
+	urlSvc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", newMockCache(), testLog(t), metrics.New())
 	svc := NewAccountDeletionService(mock, nil, nil, nil, urlSvc, testLog(t))
 
 	_, err := svc.RequestDeletion(context.Background(), int64(1))

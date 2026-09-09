@@ -22,7 +22,7 @@ type AccountDeletionService struct {
 	db           *sql.DB
 	adminService *AdminService
 	UrlService   *URLService
-	cache        *cache.RedisCache
+	cache        cache.CacheService
 	log          logger.Logger
 }
 
@@ -31,7 +31,7 @@ func NewAccountDeletionService(
 	queries gen.Querier,
 	db *sql.DB,
 	adminService *AdminService,
-	cache *cache.RedisCache,
+	cache cache.CacheService,
 	UrlService *URLService,
 	log logger.Logger,
 ) *AccountDeletionService {

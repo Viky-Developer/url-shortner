@@ -19,6 +19,11 @@ func WithExpiration(d time.Duration) CacheOption {
 	return func(o *cacheOptions) { o.expiration = d }
 }
 
+// GetExpiration extracts the expiration duration from the provided options, if any.
+func GetExpiration(opts ...CacheOption) time.Duration {
+	return applyOptions(opts...).expiration
+}
+
 func applyOptions(opts ...CacheOption) cacheOptions {
 	var o cacheOptions
 	for _, opt := range opts {

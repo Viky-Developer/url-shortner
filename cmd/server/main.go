@@ -59,7 +59,9 @@ func run() error {
 	}()
 
 	queries := gen.New(database)
-	sessionCache, err := cache.NewRedisCache(cache.RedisConfig{
+
+	cacheWrapper := &cache.ConnectionWrapper{}
+	sessionCache, err := cacheWrapper.GetRedisCache(cache.RedisConfig{
 		Addr:       cfg.RedisHost + ":" + cfg.RedisPort,
 		UserName:   cfg.RedisUserName,
 		Password:   cfg.RedisPassword,
@@ -78,7 +80,7 @@ func run() error {
 
 	appMetrics := metrics.New()
 
-	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, log, service.WithRedirectCache(&stringCacheAdapter{c: sessionCache}), service.WithMetrics(appMetrics))
+	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, sessionCache, log, appMetrics)
 	urlHandler := handler.NewURLHandler(urlService, log)
 
 	adminService := service.NewAdminService(queries)
@@ -224,22 +226,4 @@ func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) 
 		logger.String("userId", utils.EncodeID(row.ID, utils.UserIDPrefix, cfg.UserIDSecretKey)),
 	)
 	return nil
-}
-
-// stringCacheAdapter wraps *cache.RedisCache to implement service.URLRedirectCache,
-// adapting the variadic Set signature to a fixed two-arg Set.
-type stringCacheAdapter struct {
-	c *cache.RedisCache
-}
-
-func (a *stringCacheAdapter) Get(ctx context.Context, key string) (string, error) {
-	return a.c.Get(ctx, key)
-}
-
-func (a *stringCacheAdapter) Set(ctx context.Context, key, value string) error {
-	return a.c.Set(ctx, key, value)
-}
-
-func (a *stringCacheAdapter) Del(ctx context.Context, key string) error {
-	return a.c.Del(ctx, key)
 }

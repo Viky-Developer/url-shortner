@@ -690,12 +690,17 @@ func TestClaimsStruct(t *testing.T) {
 // mockCache implements SessionCache for testing.
 // Internally stores hash fields as map[key]map[field]value.
 type mockCache struct {
-	hashes  map[string]map[string]string
-	strings map[string]string
+	hashes      map[string]map[string]string
+	strings     map[string]string
+	expirations map[string]time.Duration
 }
 
 func newMockCache() *mockCache {
-	return &mockCache{hashes: make(map[string]map[string]string), strings: make(map[string]string)}
+	return &mockCache{
+		hashes:      make(map[string]map[string]string),
+		strings:     make(map[string]string),
+		expirations: make(map[string]time.Duration),
+	}
 }
 
 func (m *mockCache) Get(_ context.Context, key string) (string, error) {
@@ -705,8 +710,11 @@ func (m *mockCache) Get(_ context.Context, key string) (string, error) {
 	return "", fmt.Errorf("redis: nil")
 }
 
-func (m *mockCache) Set(_ context.Context, key, value string, _ ...cache.CacheOption) error {
+func (m *mockCache) Set(_ context.Context, key, value string, opts ...cache.CacheOption) error {
 	m.strings[key] = value
+	if m.expirations != nil {
+		m.expirations[key] = cache.GetExpiration(opts...)
+	}
 	return nil
 }
 

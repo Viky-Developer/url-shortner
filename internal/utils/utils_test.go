@@ -217,7 +217,7 @@ func TestValidateURLMissingScheme(t *testing.T) {
 }
 
 func TestValidateURLLocalhost(t *testing.T) {
-	if err := ValidateURL("https://localhost:8080/x", nil); err == nil {
+	if err := ValidateURL("https://localhost:8085/x", nil); err == nil {
 		t.Error("expected error for localhost")
 	}
 }
