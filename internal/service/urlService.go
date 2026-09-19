@@ -26,6 +26,7 @@ import (
 	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/external/metrics"
+	"github.com/vicky/url-shortner/external/queue"
 	"github.com/vicky/url-shortner/internal/apperror"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 	"github.com/vicky/url-shortner/internal/enum"
@@ -51,6 +52,16 @@ type redirectCacheData struct {
 	URLStatus   int16  `json:"url_status"`
 }
 
+// URLOption configures optional URLService dependencies.
+type URLOption func(*URLService)
+
+// WithClickPublisher sets the asynchronous click event publisher for RabbitMQ or queue backends.
+func WithClickPublisher(publisher queue.ClickPublisher) URLOption {
+	return func(s *URLService) {
+		s.clickPublisher = publisher
+	}
+}
+
 // URLService implements the URL shortening business logic.
 type URLService struct {
 	queries         gen.Querier
@@ -61,11 +72,12 @@ type URLService struct {
 	blockedIPRanges []*net.IPNet
 	cache           cache.CacheService
 	metrics         metrics.Metrics
+	clickPublisher  queue.ClickPublisher
 }
 
 // NewURLService constructs a URLService with the given querier, DB handle
-// (used for transactions), base URL, HMAC secret key, and logger.
-func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, cache cache.CacheService, log logger.Logger, m metrics.Metrics) *URLService {
+// (used for transactions), base URL, HMAC secret key, logger, and optional functional options.
+func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, cache cache.CacheService, log logger.Logger, m metrics.Metrics, opts ...URLOption) *URLService {
 	ctx := context.Background()
 	blockedRanges := loadBlockedIPRanges(ctx, queries, log)
 
@@ -73,7 +85,7 @@ func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, c
 		m = metrics.Noop{}
 	}
 
-	return &URLService{
+	svc := &URLService{
 		queries:         queries,
 		db:              db,
 		baseURL:         strings.TrimRight(baseURL, "/"),
@@ -84,6 +96,13 @@ func NewURLService(queries gen.Querier, db *sql.DB, baseURL, secretKey string, c
 		metrics:         m,
 	}
 
+	for _, opt := range opts {
+		if opt != nil {
+			opt(svc)
+		}
+	}
+
+	return svc
 }
 
 // loadBlockedIPRanges fetches the blocked IP ranges from the database and
@@ -535,41 +554,40 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 		return resp, nil
 	}
 
-	var resp *payload.URLResponse
-	var urlRow gen.GetURLByShortCodeForUpdateRow
-
-	err := s.withTx(ctx, func(q gen.Querier) error {
-
-		row, err := q.GetURLByShortCodeForUpdate(ctx, shortCode)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				s.log.Error("url not found by shortCode", logger.String("shortCode", utils.SanitizeLog(shortCode)))
-				return apperror.ErrNotFound
-			}
-			s.log.Error("failed to get url by shortCode", logger.Error(err), logger.String("shortCode", utils.SanitizeLog(shortCode)))
-			return apperror.ErrInternal
-		}
-
-		urlRow = row
-
-		if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now().UTC()) {
-			s.log.Warn("url expired", logger.Int64("id", row.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
-			return apperror.ErrURLExpired
-		}
-
-		if err := s.recordClick(ctx, q, row.ID, click); err != nil {
-			return err
-		}
-
-		resp = s.toResponse(rowToUrlForUpdate(row), row.OriginalUrl)
-		return nil
-	})
+	row, err := s.queries.GetURLByShortCodeForUpdate(ctx, shortCode)
 	if err != nil {
-		return nil, err
+		if err == sql.ErrNoRows {
+			s.log.Error("url not found by shortCode", logger.String("shortCode", utils.SanitizeLog(shortCode)))
+			return nil, apperror.ErrNotFound
+		}
+		s.log.Error("failed to get url by shortCode", logger.Error(err), logger.String("shortCode", utils.SanitizeLog(shortCode)))
+		return nil, apperror.ErrInternal
 	}
 
+	if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now().UTC()) {
+		s.log.Warn("url expired", logger.Int64("id", row.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
+		return nil, apperror.ErrURLExpired
+	}
+
+	// Cache miss: record click asynchronously if publisher is configured, else synchronously via transaction.
+	if s.clickPublisher != nil {
+		event := toClickEvent(row.ID, click)
+		if pubErr := s.clickPublisher.PublishClick(ctx, event); pubErr != nil {
+			s.log.Error("failed to publish click event on cache miss, falling back to sync tx", logger.Error(pubErr), logger.Int64("urlID", row.ID))
+			if recErr := s.RecordClickTx(ctx, row.ID, click); recErr != nil {
+				s.log.Error("failed to record click synchronously during cache miss fallback", logger.Error(recErr), logger.Int64("urlID", row.ID))
+			}
+		}
+	} else {
+		if err := s.RecordClickTx(ctx, row.ID, click); err != nil {
+			return nil, err
+		}
+	}
+
+	resp := s.toResponse(rowToUrlForUpdate(row), row.OriginalUrl)
+
 	// Populate the cache so subsequent redirects for this code hit cache.
-	s.cacheRedirect(ctx, shortCode, rowToUrlForUpdate(urlRow), resp.OriginalURL)
+	s.cacheRedirect(ctx, shortCode, rowToUrlForUpdate(row), resp.OriginalURL)
 
 	s.metrics.IncRedirectsServed()
 	s.log.Info("url redirected", logger.String("shortCode", utils.SanitizeLog(shortCode)), logger.Int64("id", resp.ID))
@@ -610,9 +628,19 @@ func (s *URLService) redirectFromCache(ctx context.Context, shortCode string, cl
 		return nil, true, apperror.ErrNotFound
 	}
 
-	// Cache hit: record the click (no row lock) and redirect.
-	if err := s.recordClick(ctx, s.queries, data.ID, click); err != nil {
-		return nil, false, nil
+	// Cache hit: record click asynchronously if publisher is configured, else synchronously via transaction.
+	if s.clickPublisher != nil {
+		event := toClickEvent(data.ID, click)
+		if pubErr := s.clickPublisher.PublishClick(ctx, event); pubErr != nil {
+			s.log.Error("failed to publish click event on cache hit, falling back to sync tx", logger.Error(pubErr), logger.Int64("urlID", data.ID))
+			if recErr := s.RecordClickTx(ctx, data.ID, click); recErr != nil {
+				return nil, false, nil
+			}
+		}
+	} else {
+		if err := s.RecordClickTx(ctx, data.ID, click); err != nil {
+			return nil, false, nil
+		}
 	}
 
 	u := gen.Url{
@@ -624,34 +652,51 @@ func (s *URLService) redirectFromCache(ctx context.Context, shortCode string, cl
 	return s.toResponse(u, data.OriginalURL), true, nil
 }
 
-// recordClick writes a click log, increments the click counter, and upserts
-// daily stats for the given URL using the provided querier.
-func (s *URLService) recordClick(ctx context.Context, q gen.Querier, urlID int64, click payload.ClickInfo) error {
-
-	if _, err := q.CreateClickLog(ctx, gen.CreateClickLogParams{
-		UrlID:      urlID,
-		IpAddress:  inet(click.IP),
-		UserAgent:  nullString(click.UserAgent),
-		Referrer:   nullString(click.Referrer),
-		Browser:    nullString(utils.ParseBrowser(click.UserAgent)),
-		DeviceType: nullString(utils.ParseDeviceType(click.UserAgent)),
-	}); err != nil {
-		s.log.Error("failed to create click log", logger.Error(err), logger.Int64("urlID", urlID))
-		return apperror.ErrInternal
+// toClickEvent converts a URL ID and ClickInfo into a queue.ClickEvent for asynchronous processing.
+func toClickEvent(urlID int64, click payload.ClickInfo) queue.ClickEvent {
+	var ip string
+	if click.IP != nil {
+		ip = click.IP.String()
 	}
-
-	if err := q.IncrementURLClick(ctx, urlID); err != nil {
-		s.log.Error("failed to increment click count", logger.Error(err), logger.Int64("urlID", urlID))
-		return apperror.ErrInternal
+	return queue.ClickEvent{
+		URLID:     urlID,
+		IP:        ip,
+		UserAgent: click.UserAgent,
+		Referrer:  click.Referrer,
+		Timestamp: time.Now().UTC(),
 	}
+}
 
-	_ = q.UpsertDailyStats(ctx, gen.UpsertDailyStatsParams{
-		UrlID:       urlID,
-		StatDate:    time.Now().Truncate(24 * time.Hour),
-		TotalClicks: sql.NullInt64{Int64: 1, Valid: true},
+// RecordClickTx executes click logging, click count increment, and daily stats upsert
+// inside a single database transaction.
+func (s *URLService) RecordClickTx(ctx context.Context, urlID int64, click payload.ClickInfo) error {
+
+	return s.withTx(ctx, func(q gen.Querier) error {
+		if _, err := q.CreateClickLog(ctx, gen.CreateClickLogParams{
+			UrlID:      urlID,
+			IpAddress:  inet(click.IP),
+			UserAgent:  nullString(click.UserAgent),
+			Referrer:   nullString(click.Referrer),
+			Browser:    nullString(utils.ParseBrowser(click.UserAgent)),
+			DeviceType: nullString(utils.ParseDeviceType(click.UserAgent)),
+		}); err != nil {
+			s.log.Error("failed to create click log", logger.Error(err), logger.Int64("urlID", urlID))
+			return apperror.ErrInternal
+		}
+
+		if err := q.IncrementURLClick(ctx, urlID); err != nil {
+			s.log.Error("failed to increment click count", logger.Error(err), logger.Int64("urlID", urlID))
+			return apperror.ErrInternal
+		}
+
+		_ = q.UpsertDailyStats(ctx, gen.UpsertDailyStatsParams{
+			UrlID:       urlID,
+			StatDate:    time.Now().Truncate(24 * time.Hour),
+			TotalClicks: sql.NullInt64{Int64: 1, Valid: true},
+		})
+
+		return nil
 	})
-
-	return nil
 }
 
 // cacheRedirect stores the primary redirect data for a short code as a single

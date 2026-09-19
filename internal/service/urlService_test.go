@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/external/metrics"
+	"github.com/vicky/url-shortner/external/queue"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 	"github.com/vicky/url-shortner/internal/enum"
 	"github.com/vicky/url-shortner/internal/payload"
@@ -3378,5 +3380,256 @@ func TestInetHelper(t *testing.T) {
 	}
 	if result.IPNet.IP.String() != "192.168.1.1" {
 		t.Errorf("ip = %q, want 192.168.1.1", result.IPNet.IP.String())
+	}
+}
+
+type mockClickPublisher struct {
+	publishFn func(ctx context.Context, event queue.ClickEvent) error
+	events    []queue.ClickEvent
+}
+
+func (m *mockClickPublisher) PublishClick(ctx context.Context, event queue.ClickEvent) error {
+	m.events = append(m.events, event)
+	if m.publishFn != nil {
+		return m.publishFn(ctx, event)
+	}
+	return nil
+}
+
+func (m *mockClickPublisher) Close() error {
+	return nil
+}
+
+func TestRedirectWithClickPublisherCacheHitPublishesAsync(t *testing.T) {
+	mc := &redirectCacheAdapter{mc: newMockCache()}
+	data := `{"id":100,"original_url":"https://example.com/target","url_status":1}`
+	_ = mc.Set(context.Background(), cacheKeyRedirectPrefix+"async123", data)
+
+	var dbQueryCalled bool
+	var clickLogged bool
+	mock := &mockQuerier{
+		byCodeForUpdateFn: func(_ context.Context, _ string) (gen.GetURLByShortCodeForUpdateRow, error) {
+			dbQueryCalled = true
+			return gen.GetURLByShortCodeForUpdateRow{}, nil
+		},
+		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
+			clickLogged = true
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, _ int64) error {
+			clickLogged = true
+			return nil
+		},
+	}
+
+	pub := &mockClickPublisher{}
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New(), WithClickPublisher(pub))
+
+	resp, err := svc.Redirect(context.Background(), "async123", payload.ClickInfo{
+		IP:        net.ParseIP("198.51.100.25"),
+		UserAgent: "Mozilla/5.0 AsyncTest",
+		Referrer:  "https://example.com/ref",
+	})
+	if err != nil {
+		t.Fatalf("redirect failed: %v", err)
+	}
+
+	if resp.OriginalURL != "https://example.com/target" {
+		t.Errorf("originalURL = %q, want https://example.com/target", resp.OriginalURL)
+	}
+	if dbQueryCalled {
+		t.Error("expected 0 DB SELECT queries on cache hit")
+	}
+	if clickLogged {
+		t.Error("expected no synchronous DB click log calls when publisher succeeds")
+	}
+	if len(pub.events) != 1 {
+		t.Fatalf("expected 1 published event, got %d", len(pub.events))
+	}
+	evt := pub.events[0]
+	if evt.URLID != 100 {
+		t.Errorf("event.URLID = %d, want 100", evt.URLID)
+	}
+	if evt.IP != "198.51.100.25" {
+		t.Errorf("event.IP = %q, want 198.51.100.25", evt.IP)
+	}
+	if evt.UserAgent != "Mozilla/5.0 AsyncTest" {
+		t.Errorf("event.UserAgent = %q, want Mozilla/5.0 AsyncTest", evt.UserAgent)
+	}
+	if evt.Referrer != "https://example.com/ref" {
+		t.Errorf("event.Referrer = %q, want https://example.com/ref", evt.Referrer)
+	}
+}
+
+func TestRedirectWithClickPublisherCacheMissPublishesAsync(t *testing.T) {
+	mc := &redirectCacheAdapter{mc: newMockCache()}
+	var clickLogged bool
+	mock := &mockQuerier{
+		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
+			return gen.GetURLByShortCodeForUpdateRow{
+				ID:          200,
+				UserID:      1,
+				OriginalUrl: "https://example.com/db-target",
+				ShortCode:   code,
+				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
+			}, nil
+		},
+		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
+			clickLogged = true
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, _ int64) error {
+			clickLogged = true
+			return nil
+		},
+	}
+
+	pub := &mockClickPublisher{}
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New(), WithClickPublisher(pub))
+
+	resp, err := svc.Redirect(context.Background(), "miss123", payload.ClickInfo{
+		IP:        net.ParseIP("203.0.113.50"),
+		UserAgent: "MissAgent",
+	})
+	if err != nil {
+		t.Fatalf("redirect failed: %v", err)
+	}
+
+	if resp.OriginalURL != "https://example.com/db-target" {
+		t.Errorf("originalURL = %q, want https://example.com/db-target", resp.OriginalURL)
+	}
+	if clickLogged {
+		t.Error("expected no synchronous DB click log calls on cache miss when publisher succeeds")
+	}
+	if len(pub.events) != 1 {
+		t.Fatalf("expected 1 published event, got %d", len(pub.events))
+	}
+	if pub.events[0].URLID != 200 {
+		t.Errorf("event.URLID = %d, want 200", pub.events[0].URLID)
+	}
+	// Verify cache was populated
+	cached, cErr := mc.Get(context.Background(), cacheKeyRedirectPrefix+"miss123")
+	if cErr != nil || cached == "" {
+		t.Errorf("expected cache to be populated for miss123, got err=%v", cErr)
+	}
+}
+
+func TestRedirectWithClickPublisherCacheHitFallbackOnPublishError(t *testing.T) {
+	mc := &redirectCacheAdapter{mc: newMockCache()}
+	data := `{"id":300,"original_url":"https://example.com/fallback-hit","url_status":1}`
+	_ = mc.Set(context.Background(), cacheKeyRedirectPrefix+"failhit123", data)
+
+	var clickLogged bool
+	mock := &mockQuerier{
+		createClickFn: func(_ context.Context, params gen.CreateClickLogParams) (gen.ClickLog, error) {
+			clickLogged = true
+			if params.UrlID != 300 {
+				t.Errorf("UrlID = %d, want 300", params.UrlID)
+			}
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, id int64) error {
+			if id != 300 {
+				t.Errorf("id = %d, want 300", id)
+			}
+			return nil
+		},
+	}
+
+	pub := &mockClickPublisher{
+		publishFn: func(_ context.Context, _ queue.ClickEvent) error {
+			return errors.New("rabbitmq connection dropped")
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New(), WithClickPublisher(pub))
+
+	resp, err := svc.Redirect(context.Background(), "failhit123", payload.ClickInfo{
+		IP: net.ParseIP("192.0.2.1"),
+	})
+	if err != nil {
+		t.Fatalf("redirect should succeed despite publish failure: %v", err)
+	}
+	if resp.OriginalURL != "https://example.com/fallback-hit" {
+		t.Errorf("originalURL = %q, want fallback target", resp.OriginalURL)
+	}
+	if !clickLogged {
+		t.Error("expected synchronous click logging fallback when publish fails")
+	}
+}
+
+func TestRedirectWithClickPublisherCacheMissFallbackOnPublishError(t *testing.T) {
+	mc := &redirectCacheAdapter{mc: newMockCache()}
+	var clickLogged bool
+	mock := &mockQuerier{
+		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
+			return gen.GetURLByShortCodeForUpdateRow{
+				ID:          400,
+				UserID:      1,
+				OriginalUrl: "https://example.com/fallback-miss",
+				ShortCode:   code,
+				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
+			}, nil
+		},
+		createClickFn: func(_ context.Context, params gen.CreateClickLogParams) (gen.ClickLog, error) {
+			clickLogged = true
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, id int64) error {
+			return nil
+		},
+	}
+
+	pub := &mockClickPublisher{
+		publishFn: func(_ context.Context, _ queue.ClickEvent) error {
+			return errors.New("rabbitmq connection dropped")
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", mc.mc, testLog(t), metrics.New(), WithClickPublisher(pub))
+
+	resp, err := svc.Redirect(context.Background(), "failmiss123", payload.ClickInfo{})
+	if err != nil {
+		t.Fatalf("redirect should succeed despite publish failure: %v", err)
+	}
+	if resp.OriginalURL != "https://example.com/fallback-miss" {
+		t.Errorf("originalURL = %q, want fallback target", resp.OriginalURL)
+	}
+	if !clickLogged {
+		t.Error("expected synchronous click logging fallback on cache miss when publish fails")
+	}
+}
+
+func TestRecordClickTx(t *testing.T) {
+	var createCalled, incCalled bool
+	mock := &mockQuerier{
+		createClickFn: func(_ context.Context, params gen.CreateClickLogParams) (gen.ClickLog, error) {
+			createCalled = true
+			if params.UrlID != 500 {
+				t.Errorf("urlID = %d, want 500", params.UrlID)
+			}
+			return gen.ClickLog{}, nil
+		},
+		incrementClickFn: func(_ context.Context, id int64) error {
+			incCalled = true
+			if id != 500 {
+				t.Errorf("id = %d, want 500", id)
+			}
+			return nil
+		},
+	}
+	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
+
+	err := svc.RecordClickTx(context.Background(), 500, payload.ClickInfo{
+		IP:        net.ParseIP("10.0.0.1"),
+		UserAgent: "TestUA",
+		Referrer:  "https://ref.com",
+	})
+	if err != nil {
+		t.Fatalf("RecordClickTx failed: %v", err)
+	}
+	if !createCalled {
+		t.Error("expected CreateClickLog to be called")
+	}
+	if !incCalled {
+		t.Error("expected IncrementURLClick to be called")
 	}
 }

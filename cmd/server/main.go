@@ -12,6 +12,7 @@ import (
 	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/external/metrics"
+	"github.com/vicky/url-shortner/external/queue"
 	"github.com/vicky/url-shortner/internal/config"
 	"github.com/vicky/url-shortner/internal/db"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
@@ -75,13 +76,49 @@ func run() error {
 		defer func() { _ = sessionCache.Close() }()
 	}
 
+	var clickPublisher queue.ClickPublisher
+	var rabbitMQClient *queue.RabbitMQClient
+	var consumerCancel context.CancelFunc
+
+	if cfg.EnableRabbitMQ {
+		rmq, err := queue.NewRabbitMQClient(queue.RabbitMQConfig{
+			URL:        cfg.RabbitMQURL(),
+			Exchange:   cfg.RabbitMQExchangeClicks,
+			RoutingKey: cfg.RabbitMQRoutingKeyClicks,
+			QueueName:  cfg.RabbitMQQueueClicks,
+		}, log)
+		if err != nil {
+			log.Warn("rabbitmq unavailable, falling back to synchronous click tracking", logger.Error(err))
+		} else {
+			rabbitMQClient = rmq
+			clickPublisher = rmq
+			log.Info("rabbitmq connected",
+				logger.String("exchange", cfg.RabbitMQExchangeClicks),
+				logger.String("routingKey", cfg.RabbitMQRoutingKeyClicks),
+				logger.String("queue", cfg.RabbitMQQueueClicks),
+			)
+			defer func() { _ = rabbitMQClient.Close() }()
+		}
+	}
+
 	authService := service.NewAuthService(queries, database, cfg, sessionCache, log)
 	authHandler := handler.NewAuthHandler(authService, log)
 
 	appMetrics := metrics.New()
 
-	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, sessionCache, log, appMetrics)
+	var urlOpts []service.URLOption
+	if clickPublisher != nil {
+		urlOpts = append(urlOpts, service.WithClickPublisher(clickPublisher))
+	}
+	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, sessionCache, log, appMetrics, urlOpts...)
 	urlHandler := handler.NewURLHandler(urlService, log)
+
+	if rabbitMQClient != nil {
+		clickConsumer := service.NewClickConsumerWorker(rabbitMQClient, urlService, log)
+		var consumerCtx context.Context
+		consumerCtx, consumerCancel = context.WithCancel(context.Background())
+		go clickConsumer.Start(consumerCtx)
+	}
 
 	adminService := service.NewAdminService(queries)
 	adminHandler := handler.NewAdminHandler(adminService, log)
@@ -120,6 +157,9 @@ func run() error {
 
 	graceful.WaitForSignal()
 	retentionCancel() // stop the background retention worker
+	if consumerCancel != nil {
+		consumerCancel() // stop the background rabbitmq consumer worker
+	}
 	graceful.Shutdown(server, log, 10*time.Second)
 
 	return nil
