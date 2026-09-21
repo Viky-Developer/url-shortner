@@ -47,6 +47,11 @@ func (w *ClickConsumerWorker) Start(ctx context.Context) {
 			w.log.Error("failed to record click in worker", logger.Error(err), logger.Int64("urlID", event.URLID))
 			return err
 		}
+		w.log.Info("click event consumed and recorded successfully",
+			logger.Int64("urlID", event.URLID),
+			logger.String("ip", event.IP),
+			logger.String("referrer", event.Referrer),
+		)
 		return nil
 	})
 	if err != nil && !errors.Is(err, context.Canceled) {

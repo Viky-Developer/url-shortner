@@ -121,7 +121,7 @@ func (c *RabbitMQClient) PublishClick(ctx context.Context, event ClickEvent) err
 		return fmt.Errorf("failed to marshal click event: %w", err)
 	}
 
-	return c.ch.PublishWithContext(
+	err = c.ch.PublishWithContext(
 		ctx,
 		c.cfg.Exchange,   // exchange
 		c.cfg.RoutingKey, // routing key
@@ -134,6 +134,17 @@ func (c *RabbitMQClient) PublishClick(ctx context.Context, event ClickEvent) err
 			Body:         body,
 		},
 	)
+	if err != nil {
+		return err
+	}
+
+	c.log.Info("click event published successfully to rabbitmq",
+		logger.Int64("urlID", event.URLID),
+		logger.String("exchange", c.cfg.Exchange),
+		logger.String("routingKey", c.cfg.RoutingKey),
+	)
+
+	return nil
 }
 
 // ConsumeClicks starts consuming messages from the queue and calls handler for each event.
@@ -183,8 +194,8 @@ func (c *RabbitMQClient) ConsumeClicks(ctx context.Context, handler func(ctx con
 			}
 
 			var event ClickEvent
-			if err := json.Unmarshal(d.Body, &event); err != nil {
-				c.log.Error("failed to unmarshal click event from queue", logger.Error(err))
+			if unmarshalErr := json.Unmarshal(d.Body, &event); unmarshalErr != nil {
+				c.log.Error("failed to unmarshal click event from queue", logger.Error(unmarshalErr))
 				// Reject malformed message without requeue to avoid poison message loop.
 				_ = d.Nack(false, false)
 				continue
@@ -192,9 +203,9 @@ func (c *RabbitMQClient) ConsumeClicks(ctx context.Context, handler func(ctx con
 
 			// Process event in worker handler.
 			handleCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := handler(handleCtx, event); err != nil {
+			if handleErr := handler(handleCtx, event); handleErr != nil {
 				cancel()
-				c.log.Error("failed to process click event, requeuing", logger.Error(err), logger.Int64("urlID", event.URLID))
+				c.log.Error("failed to process click event, requeuing", logger.Error(handleErr), logger.Int64("urlID", event.URLID))
 				// Requeue for retry on transient database errors.
 				_ = d.Nack(false, true)
 				continue
@@ -202,6 +213,10 @@ func (c *RabbitMQClient) ConsumeClicks(ctx context.Context, handler func(ctx con
 			cancel()
 
 			_ = d.Ack(false)
+			c.log.Info("click event consumed and acknowledged from queue",
+				logger.Int64("urlID", event.URLID),
+				logger.String("queue", c.cfg.QueueName),
+			)
 		}
 	}
 }

@@ -577,6 +577,8 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 			if recErr := s.RecordClickTx(ctx, row.ID, click); recErr != nil {
 				s.log.Error("failed to record click synchronously during cache miss fallback", logger.Error(recErr), logger.Int64("urlID", row.ID))
 			}
+		} else {
+			s.log.Info("click event published asynchronously on cache miss", logger.Int64("urlID", row.ID))
 		}
 	} else {
 		if err := s.RecordClickTx(ctx, row.ID, click); err != nil {
@@ -636,6 +638,8 @@ func (s *URLService) redirectFromCache(ctx context.Context, shortCode string, cl
 			if recErr := s.RecordClickTx(ctx, data.ID, click); recErr != nil {
 				return nil, false, nil
 			}
+		} else {
+			s.log.Info("click event published asynchronously on cache hit", logger.Int64("urlID", data.ID))
 		}
 	} else {
 		if err := s.RecordClickTx(ctx, data.ID, click); err != nil {
