@@ -67,7 +67,6 @@ func TestNewWithColor(t *testing.T) {
 	}
 }
 
-
 func TestFieldConstructors(t *testing.T) {
 	f := String("key", "val")
 	if f.Key != "key" {
