@@ -40,6 +40,10 @@ type SessionCache interface {
 // Used in tests and as a fallback when cache is unavailable.
 type NoopCache struct{}
 
+func (NoopCache) Get(context.Context, string) (string, error) { return "", fmt.Errorf("noop") }
+func (NoopCache) Set(context.Context, string, string, ...cache.CacheOption) error {
+	return nil
+}
 func (NoopCache) HGet(context.Context, string, string) (string, error) { return "", fmt.Errorf("noop") }
 func (NoopCache) HMGet(context.Context, string, ...string) (map[string]string, error) {
 	return nil, fmt.Errorf("noop")
