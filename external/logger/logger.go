@@ -60,6 +60,7 @@ type Option func(*options)
 type options struct {
 	level zapcore.Level
 	json  bool
+	color bool
 }
 
 // WithLevel returns an Option that sets the minimum log level. Invalid levels
@@ -79,6 +80,13 @@ func WithJSON(enable bool) Option {
 	}
 }
 
+// WithColor returns an Option that enables or disables ANSI color codes in console output.
+func WithColor(enable bool) Option {
+	return func(o *options) {
+		o.color = enable
+	}
+}
+
 // defaultLogger is the package-level logger used by Recover.
 var defaultLogger Logger
 
@@ -86,12 +94,28 @@ var defaultLogger Logger
 // package to the resulting logger. The built logger is also stored as the
 // package default used by Recover.
 func New(opts ...Option) (Logger, error) {
-	o := options{level: zapcore.InfoLevel}
+	o := options{
+		level: zapcore.InfoLevel,
+		color: true,
+	}
 	for _, opt := range opts {
 		opt(&o)
 	}
 
-	cfg := zap.NewDevelopmentConfig()
+	var cfg zap.Config
+	if o.json {
+		cfg = zap.NewProductionConfig()
+		cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+		cfg.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+	} else {
+		cfg = zap.NewDevelopmentConfig()
+		cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+		if o.color {
+			cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+		} else {
+			cfg.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+		}
+	}
 	cfg.Level = zap.NewAtomicLevelAt(o.level)
 	cfg.OutputPaths = []string{"stdout"}
 	cfg.ErrorOutputPaths = []string{"stderr"}

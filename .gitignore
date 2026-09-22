@@ -40,7 +40,10 @@ CLAUDE.md
 DESIGN.md
 *.md
 !README.md
+!docs/*.md
 
 # Editor/IDE
 # .idea/
 # .vscode/
+# Neon CLI local context
+.neon

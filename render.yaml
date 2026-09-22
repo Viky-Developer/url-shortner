@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: url-shortner
+    runtime: go
+    plan: free
+    branch: dev
+    autoDeploy: true
+
+    # Step 1: Install goose migration CLI and compile production Go binary
+    buildCommand: go install github.com/pressly/goose/v3/cmd/goose@latest && go build -o bin/url-shortner ./cmd/server
+
+    # Step 2: Auto-run database migrations against Neon Postgres using DATABASE_URL set in Render dashboard
+    preDeployCommand: goose -dir internal/db/migrations postgres "$DATABASE_URL" up
+
+    # Step 3: Start the URL shortener web server
+    startCommand: ./bin/url-shortner

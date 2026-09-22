@@ -1,19 +1,62 @@
 package config
 
 import (
-	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
-func TestLoad(t *testing.T) {
-	t.Run("returns defaults when env is empty", func(t *testing.T) {
-		cfg := Load()
+func setValidEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("DB_HOST", "localhost")
+	t.Setenv("DB_PORT", "5432")
+	t.Setenv("DB_USER", "urlshortner")
+	t.Setenv("DB_PASSWORD", "urlshortner123")
+	t.Setenv("DB_NAME", "urlshortner")
+	t.Setenv("DB_SSLMODE", "disable")
+	t.Setenv("LOG_LEVEL", "info")
+	t.Setenv("LOG_COLOR", "true")
+	t.Setenv("DB_MAX_OPEN_CONNS", "25")
+	t.Setenv("DB_MAX_IDLE_CONNS", "25")
+	t.Setenv("DB_MAX_LIFETIME", "5")
+	t.Setenv("SERVER_HOST", "0.0.0.0")
+	t.Setenv("SERVER_PORT", "8085")
+	t.Setenv("SERVER_BASE_URL", "http://localhost:8085/api/v1")
+	t.Setenv("DEFAULT_USER_EMAIL", "default@urlshortner.local")
+	t.Setenv("DEFAULT_USER_PASSWORD", "default123")
+	t.Setenv("USER_ID_SECRET_KEY", "secret-key-12345")
+	t.Setenv("JWT_SECRET_KEY", "jwt-secret-key-67890")
+	t.Setenv("ACCESS_TOKEN_EXPIRY", "15")
+	t.Setenv("REFRESH_TOKEN_EXPIRY", "7")
+	t.Setenv("REDIS_HOST", "localhost")
+	t.Setenv("REDIS_PORT", "6379")
+	t.Setenv("REDIS_DB", "0")
+	t.Setenv("REDIS_MAX_RETRIES", "3")
+	t.Setenv("SESSION_RETENTION", "2160h")
+	t.Setenv("PASSWORD_RETENTION", "8760h")
+	t.Setenv("PASSWORD_REUSE_LIMIT", "5")
+	t.Setenv("RETENTION_RUN_INTERVAL", "24h")
+	t.Setenv("ENABLE_RETENTION_WORKER", "true")
+	t.Setenv("RABBITMQ_HOST", "localhost")
+	t.Setenv("RABBITMQ_PORT", "5672")
+	t.Setenv("RABBITMQ_USER", "guest")
+	t.Setenv("RABBITMQ_PASSWORD", "guest")
+	t.Setenv("RABBITMQ_EXCHANGE_CLICKS", "url.clicks.direct")
+	t.Setenv("RABBITMQ_ROUTING_KEY_CLICKS", "url.clicks.route")
+	t.Setenv("RABBITMQ_QUEUE_CLICKS", "url.clicks")
+	t.Setenv("ENABLE_RABBITMQ", "true")
+}
 
+func TestLoad(t *testing.T) {
+	t.Run("succeeds when all env variables are set", func(t *testing.T) {
+		setValidEnv(t)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("expected Load() to succeed, got error: %v", err)
+		}
 		if cfg.DBHost != "localhost" {
 			t.Fatalf("expected DBHost localhost, got %s", cfg.DBHost)
-		}
-		if cfg.DBPort != "5432" {
-			t.Fatalf("expected DBPort 5432, got %s", cfg.DBPort)
 		}
 		if cfg.ServerPort != "8085" {
 			t.Fatalf("expected ServerPort 8085, got %s", cfg.ServerPort)
@@ -21,88 +64,113 @@ func TestLoad(t *testing.T) {
 		if cfg.DBMaxOpen != 25 {
 			t.Fatalf("expected DBMaxOpen 25, got %d", cfg.DBMaxOpen)
 		}
+		if !cfg.LogColor {
+			t.Fatal("expected LogColor true")
+		}
+		if cfg.AccessTokenExpiry != 15*time.Minute {
+			t.Fatalf("expected AccessTokenExpiry 15m, got %v", cfg.AccessTokenExpiry)
+		}
+		if cfg.RefreshTokenExpiry != 7*24*time.Hour {
+			t.Fatalf("expected RefreshTokenExpiry 7d, got %v", cfg.RefreshTokenExpiry)
+		}
 	})
 
-	t.Run("reads from environment", func(t *testing.T) {
-		t.Setenv("DB_HOST", "remotehost")
-		t.Setenv("DB_PORT", "5433")
-		t.Setenv("SERVER_PORT", "9090")
-		t.Setenv("DB_MAX_OPEN_CONNS", "50")
+	t.Run("returns error when required env variable is missing", func(t *testing.T) {
+		setValidEnv(t)
+		t.Setenv("JWT_SECRET_KEY", "")
 
-		cfg := Load()
+		cfg, err := Load()
+		if err == nil {
+			t.Fatal("expected Load() to fail when JWT_SECRET_KEY is empty, but got nil error")
+		}
+		if cfg != nil {
+			t.Fatal("expected cfg to be nil on error")
+		}
+		if !strings.Contains(err.Error(), "JWT_SECRET_KEY is required but not set") {
+			t.Fatalf("expected error message to mention JWT_SECRET_KEY, got: %v", err)
+		}
+	})
 
-		if cfg.DBHost != "remotehost" {
-			t.Fatalf("expected DBHost remotehost, got %s", cfg.DBHost)
+	t.Run("returns error for invalid integer", func(t *testing.T) {
+		setValidEnv(t)
+		t.Setenv("DB_MAX_OPEN_CONNS", "notanumber")
+
+		_, err := Load()
+		if err == nil {
+			t.Fatal("expected Load() to fail for invalid integer")
 		}
-		if cfg.DBPort != "5433" {
-			t.Fatalf("expected DBPort 5433, got %s", cfg.DBPort)
+		if !strings.Contains(err.Error(), "DB_MAX_OPEN_CONNS must be a valid integer") {
+			t.Fatalf("unexpected error message: %v", err)
 		}
-		if cfg.ServerPort != "9090" {
-			t.Fatalf("expected ServerPort 9090, got %s", cfg.ServerPort)
+	})
+
+	t.Run("returns error for invalid boolean", func(t *testing.T) {
+		setValidEnv(t)
+		t.Setenv("ENABLE_RABBITMQ", "notabool")
+
+		_, err := Load()
+		if err == nil {
+			t.Fatal("expected Load() to fail for invalid boolean")
 		}
-		if cfg.DBMaxOpen != 50 {
-			t.Fatalf("expected DBMaxOpen 50, got %d", cfg.DBMaxOpen)
+		if !strings.Contains(err.Error(), "ENABLE_RABBITMQ must be a boolean") {
+			t.Fatalf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("returns error for invalid duration", func(t *testing.T) {
+		setValidEnv(t)
+		t.Setenv("SESSION_RETENTION", "invalid-duration")
+
+		_, err := Load()
+		if err == nil {
+			t.Fatal("expected Load() to fail for invalid duration")
+		}
+		if !strings.Contains(err.Error(), "SESSION_RETENTION must be a valid duration") {
+			t.Fatalf("unexpected error message: %v", err)
 		}
 	})
 }
 
 func TestDSN(t *testing.T) {
+	t.Run("constructs standard DSN", func(t *testing.T) {
+		cfg := &Config{
+			DBHost:     "myhost",
+			DBPort:     "5432",
+			DBUser:     "myuser",
+			DBPassword: "mypass",
+			DBName:     "mydb",
+			SSLMode:    "require",
+		}
+
+		dsn := cfg.DSN()
+		expected := "host=myhost port=5432 user=myuser password=mypass dbname=mydb sslmode=require"
+		if dsn != expected {
+			t.Fatalf("expected DSN %q, got %q", expected, dsn)
+		}
+	})
+
+	t.Run("DATABASE_URL overrides standard DSN", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://custom-user:custom-pass@cloud-host:5432/cloud-db")
+		cfg := &Config{
+			DBHost: "myhost",
+		}
+		if cfg.DSN() != "postgres://custom-user:custom-pass@cloud-host:5432/cloud-db" {
+			t.Fatalf("expected DATABASE_URL to override DSN, got %q", cfg.DSN())
+		}
+	})
+}
+
+func TestRabbitMQURL(t *testing.T) {
 	cfg := &Config{
-		DBHost:     "myhost",
-		DBPort:     "5432",
-		DBUser:     "myuser",
-		DBPassword: "mypass",
-		DBName:     "mydb",
-		SSLMode:    "require",
+		RabbitMQUser:     "testuser",
+		RabbitMQPassword: "testpassword",
+		RabbitMQHost:     "testhost",
+		RabbitMQPort:     "5672",
 	}
 
-	dsn := cfg.DSN()
-	expected := "host=myhost port=5432 user=myuser password=mypass dbname=mydb sslmode=require"
-	if dsn != expected {
-		t.Fatalf("expected DSN %q, got %q", expected, dsn)
+	url := cfg.RabbitMQURL()
+	expected := "amqp://testuser:testpassword@testhost:5672/"
+	if url != expected {
+		t.Fatalf("expected RabbitMQURL %q, got %q", expected, url)
 	}
-}
-
-func TestGetEnv(t *testing.T) {
-	t.Run("returns value when set", func(t *testing.T) {
-		t.Setenv("TEST_GET_ENV_KEY", "hello")
-		got := getEnv("TEST_GET_ENV_KEY", "fallback")
-		if got != "hello" {
-			t.Fatalf("expected hello, got %s", got)
-		}
-	})
-
-	t.Run("returns fallback when empty", func(t *testing.T) {
-		_ = os.Unsetenv("TEST_GET_ENV_KEY_EMPTY")
-		got := getEnv("TEST_GET_ENV_KEY_EMPTY", "fallback")
-		if got != "fallback" {
-			t.Fatalf("expected fallback, got %s", got)
-		}
-	})
-}
-
-func TestGetEnvInt(t *testing.T) {
-	t.Run("returns parsed int", func(t *testing.T) {
-		t.Setenv("TEST_GET_ENV_INT_KEY", "42")
-		got := getEnvInt("TEST_GET_ENV_INT_KEY", 0)
-		if got != 42 {
-			t.Fatalf("expected 42, got %d", got)
-		}
-	})
-
-	t.Run("returns fallback for empty", func(t *testing.T) {
-		_ = os.Unsetenv("TEST_GET_ENV_INT_EMPTY")
-		got := getEnvInt("TEST_GET_ENV_INT_EMPTY", 99)
-		if got != 99 {
-			t.Fatalf("expected 99, got %d", got)
-		}
-	})
-
-	t.Run("returns fallback for invalid", func(t *testing.T) {
-		t.Setenv("TEST_GET_ENV_INT_BAD", "notanumber")
-		got := getEnvInt("TEST_GET_ENV_INT_BAD", 77)
-		if got != 77 {
-			t.Fatalf("expected 77, got %d", got)
-		}
-	})
 }

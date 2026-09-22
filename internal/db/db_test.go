@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vicky/url-shortner/internal/config"
+	_ "github.com/jackc/pgx/v5/stdlib"
+
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 )
 
@@ -24,9 +25,31 @@ func setup(t *testing.T) *sql.DB {
 	if os.Getenv("RUN_DB_TESTS") == "" {
 		t.Skip("set RUN_DB_TESTS=1 to run database integration tests")
 	}
-	database, err := config.Load().Connect()
+
+	// Prefer DATABASE_URL (Render/Neon); fall back to individual DB_* vars (CI).
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		host := os.Getenv("DB_HOST")
+		port := os.Getenv("DB_PORT")
+		user := os.Getenv("DB_USER")
+		password := os.Getenv("DB_PASSWORD")
+		name := os.Getenv("DB_NAME")
+		sslmode := os.Getenv("DB_SSLMODE")
+		if sslmode == "" {
+			sslmode = "disable"
+		}
+		dsn = fmt.Sprintf(
+			"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+			host, port, user, password, name, sslmode,
+		)
+	}
+
+	database, err := sql.Open("pgx", dsn)
 	if err != nil {
-		t.Fatalf("connect to database: %v", err)
+		t.Fatalf("open database: %v", err)
+	}
+	if err := database.Ping(); err != nil {
+		t.Fatalf("ping database: %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	return database

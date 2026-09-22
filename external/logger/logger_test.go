@@ -49,6 +49,24 @@ func TestNewWithJSON(t *testing.T) {
 	}
 }
 
+func TestNewWithColor(t *testing.T) {
+	l1, err := New(WithColor(false))
+	if err != nil {
+		t.Fatalf("New(WithColor(false)): %v", err)
+	}
+	if l1 == nil {
+		t.Fatal("expected non-nil logger")
+	}
+
+	l2, err := New(WithColor(true))
+	if err != nil {
+		t.Fatalf("New(WithColor(true)): %v", err)
+	}
+	if l2 == nil {
+		t.Fatal("expected non-nil logger")
+	}
+}
+
 func TestFieldConstructors(t *testing.T) {
 	f := String("key", "val")
 	if f.Key != "key" {
