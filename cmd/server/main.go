@@ -77,11 +77,10 @@ func run() error {
 		TLS:        cfg.RedisTLS,
 	})
 	if err != nil {
-		log.Warn("redis unavailable, falling back to no cache", logger.Error(err))
-	} else {
-		log.Info("redis connected", logger.String("addr", cfg.RedisHost+":"+cfg.RedisPort))
-		defer func() { _ = sessionCache.Close() }()
+		return fmt.Errorf("failed to connect to redis: %w", err)
 	}
+	log.Info("redis connected", logger.String("addr", cfg.RedisHost+":"+cfg.RedisPort))
+	defer func() { _ = sessionCache.Close() }()
 
 	var clickPublisher queue.ClickPublisher
 	var rabbitMQClient *queue.RabbitMQClient
@@ -95,17 +94,16 @@ func run() error {
 			QueueName:  cfg.RabbitMQQueueClicks,
 		}, log)
 		if err != nil {
-			log.Warn("rabbitmq unavailable, falling back to synchronous click tracking", logger.Error(err))
-		} else {
-			rabbitMQClient = rmq
-			clickPublisher = rmq
-			log.Info("rabbitmq connected",
-				logger.String("exchange", cfg.RabbitMQExchangeClicks),
-				logger.String("routingKey", cfg.RabbitMQRoutingKeyClicks),
-				logger.String("queue", cfg.RabbitMQQueueClicks),
-			)
-			defer func() { _ = rabbitMQClient.Close() }()
+			return fmt.Errorf("failed to connect to rabbitmq: %w", err)
 		}
+		rabbitMQClient = rmq
+		clickPublisher = rmq
+		log.Info("rabbitmq connected",
+			logger.String("exchange", cfg.RabbitMQExchangeClicks),
+			logger.String("routingKey", cfg.RabbitMQRoutingKeyClicks),
+			logger.String("queue", cfg.RabbitMQQueueClicks),
+		)
+		defer func() { _ = rabbitMQClient.Close() }()
 	}
 
 	authService := service.NewAuthService(queries, database, cfg, sessionCache, log)
