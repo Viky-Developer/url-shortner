@@ -208,11 +208,9 @@ The application is configured through environment variables loaded from `.env`:
 | `REDIS_PASSWORD` | `""` | Redis authentication password (if required) |
 | `REDIS_DB` | `0` | Redis logical database index |
 | `REDIS_MAX_RETRIES` | `3` | Maximum retry attempts for Redis operations |
+| `REDIS_TLS` | `false` | Enable TLS for Redis (required by providers like Upstash) |
 | `ENABLE_RABBITMQ` | `true` | Toggle asynchronous RabbitMQ click tracking |
-| `RABBITMQ_HOST` | `localhost` | RabbitMQ broker host |
-| `RABBITMQ_PORT` | `5672` | RabbitMQ AMQP port |
-| `RABBITMQ_USER` | `guest` | RabbitMQ username |
-| `RABBITMQ_PASSWORD` | `guest` | RabbitMQ password |
+| `RABBITMQ_URL` | `amqp://guest:guest@localhost:5672/` | Full AMQP connection URL (supports `amqp://` and `amqps://`) |
 | `RABBITMQ_EXCHANGE_CLICKS` | `url.clicks.direct` | Direct exchange for click events |
 | `RABBITMQ_ROUTING_KEY_CLICKS` | `url.clicks.route` | Routing key for click events |
 | `RABBITMQ_QUEUE_CLICKS` | `url.clicks` | Durable queue for click consumer |
