@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -21,6 +23,7 @@ type Config struct {
 	DBName                   string        // Postgres database name.
 	SSLMode                  string        // Postgres sslmode.
 	LogLevel                 string        // Minimum log level (debug, info, warn, error).
+	LogColor                 bool          // Whether console logs should use ANSI colors.
 	DBMaxOpen                int           // Maximum number of open connections.
 	DBMaxIdle                int           // Maximum number of idle connections.
 	DBMaxLife                time.Duration // Maximum connection lifetime.
@@ -55,49 +58,66 @@ type Config struct {
 }
 
 // Load reads configuration from the .env file (if present) and the process
-// environment, applying sensible defaults for any missing values.
-func Load() *Config {
+// environment. It strictly enforces that all required environment variables
+// are present and valid, returning an error if any variables are missing or unparsable.
+func Load() (*Config, error) {
 	_ = godotenv.Load()
-	return &Config{
-		DBHost:                   getEnv("DB_HOST", "localhost"),
-		DBPort:                   getEnv("DB_PORT", "5432"),
-		DBUser:                   getEnv("DB_USER", "urlshortner"),
-		DBPassword:               getEnv("DB_PASSWORD", "urlshortner123"),
-		DBName:                   getEnv("DB_NAME", "urlshortner"),
-		SSLMode:                  getEnv("DB_SSLMODE", "disable"),
-		LogLevel:                 getEnv("LOG_LEVEL", "info"),
-		DBMaxOpen:                getEnvInt("DB_MAX_OPEN_CONNS", 25),
-		DBMaxIdle:                getEnvInt("DB_MAX_IDLE_CONNS", 25),
-		DBMaxLife:                time.Duration(getEnvInt("DB_MAX_LIFETIME", 5)) * time.Minute,
-		ServerHost:               getEnv("SERVER_HOST", "0.0.0.0"),
-		ServerPort:               getEnv("PORT", getEnv("SERVER_PORT", "8085")),
-		ServerBaseURL:            getEnv("SERVER_BASE_URL", "http://localhost:8085/api/v1"),
-		DefaultUserEmail:         getEnv("DEFAULT_USER_EMAIL", "default@urlshortner.local"),
-		DefaultUserPassword:      getEnv("DEFAULT_USER_PASSWORD", "default123"),
-		UserIDSecretKey:          getEnv("USER_ID_SECRET_KEY", "change-me-in-production"),
-		JWTSecretKey:             getEnv("JWT_SECRET_KEY", "7zj79jrenafbvwsjp6hf2j4uv"),
-		AccessTokenExpiry:        getEnvDuration("ACCESS_TOKEN_EXPIRY", 15*time.Minute),
-		RefreshTokenExpiry:       getEnvDuration("REFRESH_TOKEN_EXPIRY", 7*24*time.Hour),
-		RedisHost:                getEnv("REDIS_HOST", "localhost"),
-		RedisPort:                getEnv("REDIS_PORT", "6379"),
-		RedisUserName:            getEnv("REDIS_USERNAME", ""),
-		RedisPassword:            getEnv("REDIS_PASSWORD", "password"),
-		RedisDB:                  getEnvInt("REDIS_DB", 0),
-		RedisMaxRetries:          getEnvInt("REDIS_MAX_RETRIES", 3),
-		SessionRetention:         getEnvDuration("SESSION_RETENTION", 90*24*time.Hour),
-		PasswordRetention:        getEnvDuration("PASSWORD_RETENTION", 365*24*time.Hour),
-		PasswordReuseLimit:       getEnvInt("PASSWORD_REUSE_LIMIT", 5),
-		RetentionRunInterval:     getEnvDuration("RETENTION_RUN_INTERVAL", 24*time.Hour),
-		EnableRetentionWorker:    getEnv("ENABLE_RETENTION_WORKER", "true") == "true",
-		RabbitMQHost:             getEnv("RABBITMQ_HOST", "localhost"),
-		RabbitMQPort:             getEnv("RABBITMQ_PORT", "5672"),
-		RabbitMQUser:             getEnv("RABBITMQ_USER", "guest"),
-		RabbitMQPassword:         getEnv("RABBITMQ_PASSWORD", "guest"),
-		RabbitMQExchangeClicks:   getEnv("RABBITMQ_EXCHANGE_CLICKS", "url.clicks.direct"),
-		RabbitMQRoutingKeyClicks: getEnv("RABBITMQ_ROUTING_KEY_CLICKS", "url.clicks.route"),
-		RabbitMQQueueClicks:      getEnv("RABBITMQ_QUEUE_CLICKS", "url.clicks"),
-		EnableRabbitMQ:           getEnv("ENABLE_RABBITMQ", "true") == "true",
+	l := &envLoader{}
+
+	// Server Port: on cloud hosting platforms (like Render), PORT is dynamically assigned;
+	// otherwise SERVER_PORT is used.
+	serverPort := os.Getenv("PORT")
+	if serverPort == "" {
+		serverPort = l.require("SERVER_PORT")
 	}
+
+	cfg := &Config{
+		DBHost:                   l.require("DB_HOST"),
+		DBPort:                   l.require("DB_PORT"),
+		DBUser:                   l.require("DB_USER"),
+		DBPassword:               l.require("DB_PASSWORD"),
+		DBName:                   l.require("DB_NAME"),
+		SSLMode:                  l.require("DB_SSLMODE"),
+		LogLevel:                 l.require("LOG_LEVEL"),
+		LogColor:                 l.requireBool("LOG_COLOR"),
+		DBMaxOpen:                l.requireInt("DB_MAX_OPEN_CONNS"),
+		DBMaxIdle:                l.requireInt("DB_MAX_IDLE_CONNS"),
+		DBMaxLife:                l.requireDurationMinutes("DB_MAX_LIFETIME"),
+		ServerHost:               l.require("SERVER_HOST"),
+		ServerPort:               serverPort,
+		ServerBaseURL:            l.require("SERVER_BASE_URL"),
+		DefaultUserEmail:         l.require("DEFAULT_USER_EMAIL"),
+		DefaultUserPassword:      l.require("DEFAULT_USER_PASSWORD"),
+		UserIDSecretKey:          l.require("USER_ID_SECRET_KEY"),
+		JWTSecretKey:             l.require("JWT_SECRET_KEY"),
+		AccessTokenExpiry:        l.requireDurationMinutes("ACCESS_TOKEN_EXPIRY"),
+		RefreshTokenExpiry:       l.requireDurationDays("REFRESH_TOKEN_EXPIRY"),
+		RedisHost:                l.require("REDIS_HOST"),
+		RedisPort:                l.require("REDIS_PORT"),
+		RedisUserName:            l.optional("REDIS_USERNAME"),
+		RedisPassword:            l.optional("REDIS_PASSWORD"),
+		RedisDB:                  l.requireInt("REDIS_DB"),
+		RedisMaxRetries:          l.requireInt("REDIS_MAX_RETRIES"),
+		SessionRetention:         l.requireDuration("SESSION_RETENTION"),
+		PasswordRetention:        l.requireDuration("PASSWORD_RETENTION"),
+		PasswordReuseLimit:       l.requireInt("PASSWORD_REUSE_LIMIT"),
+		RetentionRunInterval:     l.requireDuration("RETENTION_RUN_INTERVAL"),
+		EnableRetentionWorker:    l.requireBool("ENABLE_RETENTION_WORKER"),
+		RabbitMQHost:             l.require("RABBITMQ_HOST"),
+		RabbitMQPort:             l.require("RABBITMQ_PORT"),
+		RabbitMQUser:             l.require("RABBITMQ_USER"),
+		RabbitMQPassword:         l.require("RABBITMQ_PASSWORD"),
+		RabbitMQExchangeClicks:   l.require("RABBITMQ_EXCHANGE_CLICKS"),
+		RabbitMQRoutingKeyClicks: l.require("RABBITMQ_ROUTING_KEY_CLICKS"),
+		RabbitMQQueueClicks:      l.require("RABBITMQ_QUEUE_CLICKS"),
+		EnableRabbitMQ:           l.requireBool("ENABLE_RABBITMQ"),
+	}
+
+	if len(l.errors) > 0 {
+		return nil, fmt.Errorf("configuration errors:\n  - %s", strings.Join(l.errors, "\n  - "))
+	}
+
+	return cfg, nil
 }
 
 // RabbitMQURL returns the amqp connection string built from the config values.
@@ -139,39 +159,90 @@ func (c *Config) Connect() (*sql.DB, error) {
 	return db, nil
 }
 
-// getEnv returns the value of the environment variable key, or fallback when
-// the variable is empty or unset.
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+type envLoader struct {
+	errors []string
 }
 
-// getEnvInt returns the integer value of the environment variable key, or
-// fallback when the variable is empty or unparsable.
-func getEnvInt(key string, fallback int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
+func (l *envLoader) require(key string) string {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		l.errors = append(l.errors, fmt.Sprintf("%s is required but not set", key))
+		return ""
 	}
-	var n int
-	if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
-		return fallback
+	return v
+}
+
+func (l *envLoader) optional(key string) string {
+	return os.Getenv(key)
+}
+
+func (l *envLoader) requireInt(key string) int {
+	v := l.require(key)
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		l.errors = append(l.errors, fmt.Sprintf("%s must be a valid integer, got %q: %v", key, v, err))
+		return 0
 	}
 	return n
 }
 
-// getEnvDuration returns the duration value of the environment variable key, or
-// fallback when the variable is empty or unparsable.
-func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	v := os.Getenv(key)
+func (l *envLoader) requireBool(key string) bool {
+	v := l.require(key)
 	if v == "" {
-		return fallback
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		l.errors = append(l.errors, fmt.Sprintf("%s must be a boolean (true/false), got %q: %v", key, v, err))
+		return false
+	}
+	return b
+}
+
+func (l *envLoader) requireDurationMinutes(key string) time.Duration {
+	v := l.require(key)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return time.Duration(n) * time.Minute
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
-		return fallback
+		l.errors = append(l.errors, fmt.Sprintf("%s must be a valid duration or minutes integer, got %q: %v", key, v, err))
+		return 0
+	}
+	return d
+}
+
+func (l *envLoader) requireDurationDays(key string) time.Duration {
+	v := l.require(key)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return time.Duration(n) * 24 * time.Hour
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		l.errors = append(l.errors, fmt.Sprintf("%s must be a valid duration or days integer, got %q: %v", key, v, err))
+		return 0
+	}
+	return d
+}
+
+func (l *envLoader) requireDuration(key string) time.Duration {
+	v := l.require(key)
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		l.errors = append(l.errors, fmt.Sprintf("%s must be a valid duration, got %q: %v", key, v, err))
+		return 0
 	}
 	return d
 }

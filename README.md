@@ -188,10 +188,11 @@ The application is configured through environment variables loaded from `.env`:
 |---|---|---|
 | `SERVER_BASE_URL` | `http://localhost:8080` | Base URL used to construct short link redirects |
 | `LOG_LEVEL` | `info` | Logging verbosity (`debug`, `info`, `warn`, `error`) |
+| `LOG_COLOR` | `true` | Enable or disable ANSI colors in console output (`true`, `false`) |
 | `DB_HOST` | `localhost` | PostgreSQL host |
 | `DB_PORT` | `5432` | PostgreSQL port |
 | `DB_USER` | `urlshortner` | PostgreSQL username |
-| `DB_PASSWORD` | `urlshortner123` | PostgreSQL password |
+| `DB_PASSWORD` | *(required)* | PostgreSQL password |
 | `DB_NAME` | `urlshortner` | Database name |
 | `DB_SSLMODE` | `disable` | PostgreSQL SSL mode (`disable`, `require`, etc.) |
 | `DB_MAX_OPEN_CONNS` | `25` | Maximum database open connection pool size |

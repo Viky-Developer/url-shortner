@@ -24,7 +24,11 @@ func setup(t *testing.T) *sql.DB {
 	if os.Getenv("RUN_DB_TESTS") == "" {
 		t.Skip("set RUN_DB_TESTS=1 to run database integration tests")
 	}
-	database, err := config.Load().Connect()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	database, err := cfg.Connect()
 	if err != nil {
 		t.Fatalf("connect to database: %v", err)
 	}

@@ -39,9 +39,15 @@ func main() {
 // run wires configuration, logging, database, handlers, routes, and the HTTP
 // server together, then blocks until the server shuts down gracefully.
 func run() error {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
 
-	log, err := logger.New(logger.WithLevel(cfg.LogLevel))
+	log, err := logger.New(
+		logger.WithLevel(cfg.LogLevel),
+		logger.WithColor(cfg.LogColor),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
