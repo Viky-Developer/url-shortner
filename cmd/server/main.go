@@ -74,6 +74,7 @@ func run() error {
 		Password:   cfg.RedisPassword,
 		DB:         cfg.RedisDB,
 		MaxRetries: cfg.RedisMaxRetries,
+		TLS:        cfg.RedisTLS,
 	})
 	if err != nil {
 		log.Warn("redis unavailable, falling back to no cache", logger.Error(err))
@@ -88,7 +89,7 @@ func run() error {
 
 	if cfg.EnableRabbitMQ {
 		rmq, err := queue.NewRabbitMQClient(queue.RabbitMQConfig{
-			URL:        cfg.RabbitMQURL(),
+			URL:        cfg.RabbitMQURL,
 			Exchange:   cfg.RabbitMQExchangeClicks,
 			RoutingKey: cfg.RabbitMQRoutingKeyClicks,
 			QueueName:  cfg.RabbitMQQueueClicks,

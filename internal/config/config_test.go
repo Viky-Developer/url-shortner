@@ -37,10 +37,7 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("PASSWORD_REUSE_LIMIT", "5")
 	t.Setenv("RETENTION_RUN_INTERVAL", "24h")
 	t.Setenv("ENABLE_RETENTION_WORKER", "true")
-	t.Setenv("RABBITMQ_HOST", "localhost")
-	t.Setenv("RABBITMQ_PORT", "5672")
-	t.Setenv("RABBITMQ_USER", "guest")
-	t.Setenv("RABBITMQ_PASSWORD", "guest")
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 	t.Setenv("RABBITMQ_EXCHANGE_CLICKS", "url.clicks.direct")
 	t.Setenv("RABBITMQ_ROUTING_KEY_CLICKS", "url.clicks.route")
 	t.Setenv("RABBITMQ_QUEUE_CLICKS", "url.clicks")
@@ -72,6 +69,12 @@ func TestLoad(t *testing.T) {
 		}
 		if cfg.RefreshTokenExpiry != 7*24*time.Hour {
 			t.Fatalf("expected RefreshTokenExpiry 7d, got %v", cfg.RefreshTokenExpiry)
+		}
+		if cfg.RabbitMQURL != "amqp://guest:guest@localhost:5672/" {
+			t.Fatalf("expected RabbitMQURL amqp://guest:guest@localhost:5672/, got %s", cfg.RabbitMQURL)
+		}
+		if cfg.RedisTLS {
+			t.Fatal("expected RedisTLS false by default")
 		}
 	})
 
@@ -158,19 +161,4 @@ func TestDSN(t *testing.T) {
 			t.Fatalf("expected DATABASE_URL to override DSN, got %q", cfg.DSN())
 		}
 	})
-}
-
-func TestRabbitMQURL(t *testing.T) {
-	cfg := &Config{
-		RabbitMQUser:     "testuser",
-		RabbitMQPassword: "testpassword",
-		RabbitMQHost:     "testhost",
-		RabbitMQPort:     "5672",
-	}
-
-	url := cfg.RabbitMQURL()
-	expected := "amqp://testuser:testpassword@testhost:5672/"
-	if url != expected {
-		t.Fatalf("expected RabbitMQURL %q, got %q", expected, url)
-	}
 }

@@ -2,7 +2,9 @@ package cache
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -20,18 +22,27 @@ type RedisConfig struct {
 	Password   string // Redis AUTH password (empty = no password)
 	DB         int    // Redis database number (default 0)
 	MaxRetries int    // Max retries for failed commands.
+	TLS        bool   // Whether to connect over TLS (e.g. for Upstash).
 }
 
 // NewRedisCache creates a Redis-backed cache and pings the server
 // to verify connectivity. Returns an error if unreachable.
 func NewRedisCache(cfg RedisConfig) (*RedisCache, error) {
-	client := redis.NewClient(&redis.Options{
+	opts := &redis.Options{
 		Addr:       cfg.Addr,
 		Username:   cfg.UserName,
 		Password:   cfg.Password,
 		DB:         cfg.DB,
 		MaxRetries: cfg.MaxRetries,
-	})
+	}
+
+	if cfg.TLS || strings.Contains(cfg.Addr, "upstash.io") {
+		opts.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
+	}
+
+	client := redis.NewClient(opts)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

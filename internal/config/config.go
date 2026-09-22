@@ -47,14 +47,12 @@ type Config struct {
 	PasswordReuseLimit       int           // Number of recent password hashes to keep (reuse check window).
 	RetentionRunInterval     time.Duration // Interval between scheduled retention cleanup runs.
 	EnableRetentionWorker    bool          // Whether the background retention worker runs.
-	RabbitMQHost             string        // RabbitMQ host.
-	RabbitMQPort             string        // RabbitMQ port.
-	RabbitMQUser             string        // RabbitMQ username.
-	RabbitMQPassword         string        // RabbitMQ password.
+	RabbitMQURL              string        // Full amqp(s):// connection URL (e.g. from CloudAMQP).
 	RabbitMQExchangeClicks   string        // RabbitMQ exchange name for click events.
 	RabbitMQRoutingKeyClicks string        // RabbitMQ routing key for click events.
 	RabbitMQQueueClicks      string        // RabbitMQ queue name for click events.
 	EnableRabbitMQ           bool          // Whether RabbitMQ async queuing is enabled.
+	RedisTLS                 bool          // Whether to use TLS for Redis (required by Upstash).
 }
 
 // Load reads configuration from the .env file (if present) and the process
@@ -103,14 +101,12 @@ func Load() (*Config, error) {
 		PasswordReuseLimit:       l.requireInt("PASSWORD_REUSE_LIMIT"),
 		RetentionRunInterval:     l.requireDuration("RETENTION_RUN_INTERVAL"),
 		EnableRetentionWorker:    l.requireBool("ENABLE_RETENTION_WORKER"),
-		RabbitMQHost:             l.require("RABBITMQ_HOST"),
-		RabbitMQPort:             l.require("RABBITMQ_PORT"),
-		RabbitMQUser:             l.require("RABBITMQ_USER"),
-		RabbitMQPassword:         l.require("RABBITMQ_PASSWORD"),
+		RabbitMQURL:              l.require("RABBITMQ_URL"),
 		RabbitMQExchangeClicks:   l.require("RABBITMQ_EXCHANGE_CLICKS"),
 		RabbitMQRoutingKeyClicks: l.require("RABBITMQ_ROUTING_KEY_CLICKS"),
 		RabbitMQQueueClicks:      l.require("RABBITMQ_QUEUE_CLICKS"),
 		EnableRabbitMQ:           l.requireBool("ENABLE_RABBITMQ"),
+		RedisTLS:                 l.optionalBool("REDIS_TLS"),
 	}
 
 	if len(l.errors) > 0 {
@@ -118,13 +114,6 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
-}
-
-// RabbitMQURL returns the amqp connection string built from the config values.
-func (c *Config) RabbitMQURL() string {
-	return fmt.Sprintf("amqp://%s:%s@%s:%s/",
-		c.RabbitMQUser, c.RabbitMQPassword, c.RabbitMQHost, c.RabbitMQPort,
-	)
 }
 
 // DSN returns the Postgres connection string built from the config values,
@@ -174,6 +163,20 @@ func (l *envLoader) require(key string) string {
 
 func (l *envLoader) optional(key string) string {
 	return os.Getenv(key)
+}
+
+// optionalBool returns false if key is not set; returns parsed bool if set.
+func (l *envLoader) optionalBool(key string) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		l.errors = append(l.errors, fmt.Sprintf("%s must be a boolean (true/false), got %q: %v", key, v, err))
+		return false
+	}
+	return b
 }
 
 func (l *envLoader) requireInt(key string) int {
