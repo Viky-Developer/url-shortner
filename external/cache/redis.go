@@ -29,7 +29,7 @@ type RedisConfig struct {
 // NewRedisCache creates a Redis-backed cache and pings the server
 // to verify connectivity. Returns an error if unreachable.
 func NewRedisCache(cfg RedisConfig) (*RedisCache, error) {
-	
+
 	var tlsConfig *tls.Config
 	if cfg.TLS || strings.Contains(cfg.Addr, "upstash.io") {
 		host, _, err := net.SplitHostPort(cfg.Addr)
