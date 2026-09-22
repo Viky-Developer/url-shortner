@@ -70,7 +70,7 @@ func Load() *Config {
 		DBMaxIdle:                getEnvInt("DB_MAX_IDLE_CONNS", 25),
 		DBMaxLife:                time.Duration(getEnvInt("DB_MAX_LIFETIME", 5)) * time.Minute,
 		ServerHost:               getEnv("SERVER_HOST", "0.0.0.0"),
-		ServerPort:               getEnv("SERVER_PORT", "8085"),
+		ServerPort:               getEnv("PORT", getEnv("SERVER_PORT", "8085")),
 		ServerBaseURL:            getEnv("SERVER_BASE_URL", "http://localhost:8085/api/v1"),
 		DefaultUserEmail:         getEnv("DEFAULT_USER_EMAIL", "default@urlshortner.local"),
 		DefaultUserPassword:      getEnv("DEFAULT_USER_PASSWORD", "default123"),
@@ -107,8 +107,12 @@ func (c *Config) RabbitMQURL() string {
 	)
 }
 
-// DSN returns the Postgres connection string built from the config values.
+// DSN returns the Postgres connection string built from the config values,
+// or returns DATABASE_URL directly if set (standard in cloud environments like Render).
 func (c *Config) DSN() string {
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		return dbURL
+	}
 	return fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		c.DBHost, c.DBPort, c.DBUser, c.DBPassword, c.DBName, c.SSLMode,

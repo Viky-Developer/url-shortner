@@ -45,3 +45,5 @@ DESIGN.md
 # Editor/IDE
 # .idea/
 # .vscode/
+# Neon CLI local context
+.neon
