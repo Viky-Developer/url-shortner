@@ -40,7 +40,6 @@ func TestRoutesRegistered(t *testing.T) {
 	}{
 		{http.MethodGet, "/health"},
 		{http.MethodPost, "/api/v1/shorten"},
-		{http.MethodGet, "/api/v1/abc"},
 		{http.MethodGet, "/abc"},
 		{http.MethodGet, "/api/v1/urls"},
 		{http.MethodGet, "/api/v1/urls/456"},

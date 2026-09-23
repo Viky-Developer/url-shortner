@@ -83,7 +83,7 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, http.StatusCreated, "url created", []any{created})
 }
 
-// RedirectShortURL handles GET /api/v1/{shortCode}, records a click, and
+// RedirectShortURL handles GET /{shortCode}, records a click, and
 // issues an HTTP 302 redirect to the destination URL. The browser reads the
 // Location header and follows the redirect automatically.
 func (h *URLHandler) RedirectShortURL(w http.ResponseWriter, r *http.Request) {
