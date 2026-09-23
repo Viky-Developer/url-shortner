@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"testing"
 	"time"
 
@@ -678,7 +679,6 @@ func TestRedirectNotFound(t *testing.T) {
 }
 
 func TestRedirectRecordsClickBeforeResponse(t *testing.T) {
-	now := time.Now()
 	var clickLogCreated, clickIncremented bool
 	var capturedClick gen.CreateClickLogParams
 
@@ -686,14 +686,8 @@ func TestRedirectRecordsClickBeforeResponse(t *testing.T) {
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				UserID:      1,
-				ShortCode:   code,
 				OriginalUrl: "https://example.com/target",
-				ClickCount:  sql.NullInt64{Int64: 3, Valid: true},
-				IsCustom:    sql.NullBool{Bool: false, Valid: true},
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				CreatedAt:   sql.NullTime{Time: now, Valid: true},
-				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, arg gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -720,11 +714,8 @@ func TestRedirectRecordsClickBeforeResponse(t *testing.T) {
 		t.Fatalf("redirect: %v", err)
 	}
 
-	if resp.OriginalURL != "https://example.com/target" {
-		t.Errorf("unexpected originalURL %q", resp.OriginalURL)
-	}
-	if resp.ClickCount != 3 {
-		t.Errorf("expected clickCount 3, got %d", resp.ClickCount)
+	if resp != "https://example.com/target" {
+		t.Errorf("unexpected originalURL %q", resp)
 	}
 	if !clickLogCreated {
 		t.Error("expected click log to be created before response")
@@ -751,8 +742,6 @@ func TestRedirectFailsWhenClickLogFails(t *testing.T) {
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:        1,
-				UserID:    1,
-				ShortCode: code,
 				UrlStatus: sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 			}, nil
 		},
@@ -1242,11 +1231,8 @@ func TestRedirectURLExpired(t *testing.T) {
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				ShortCode:   code,
 				ExpiresAt:   sql.NullTime{Time: past, Valid: true},
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				CreatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
-				UpdatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
 				OriginalUrl: "https://example.com",
 			}, nil
 		},
@@ -1277,12 +1263,8 @@ func TestRedirectRecordsClickWithCorrectIP(t *testing.T) {
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				ShortCode:   code,
 				OriginalUrl: "https://example.com",
-				ClickCount:  sql.NullInt64{Int64: 5, Valid: true},
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				CreatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
-				UpdatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, arg gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -1300,7 +1282,7 @@ func TestRedirectRecordsClickWithCorrectIP(t *testing.T) {
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
-	resp, err := svc.Redirect(context.Background(), "abc123", payload.ClickInfo{
+	origURL, err := svc.Redirect(context.Background(), "abc123", payload.ClickInfo{
 		IP:        net.ParseIP("10.20.30.40"),
 		UserAgent: "Mozilla/5.0",
 		Referrer:  "https://google.com",
@@ -1318,8 +1300,8 @@ func TestRedirectRecordsClickWithCorrectIP(t *testing.T) {
 	if capturedRef != "https://google.com" {
 		t.Errorf("referrer = %q, want 'https://google.com'", capturedRef)
 	}
-	if resp.ClickCount != 5 {
-		t.Errorf("clickCount = %d, want 5", resp.ClickCount)
+	if origURL != "https://example.com" {
+		t.Errorf("origURL = %q, want 'https://example.com'", origURL)
 	}
 }
 
@@ -1328,11 +1310,8 @@ func TestRedirectIncrementClickFails(t *testing.T) {
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				ShortCode:   code,
 				OriginalUrl: "https://example.com",
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				CreatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
-				UpdatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -1353,69 +1332,13 @@ func TestRedirectIncrementClickFails(t *testing.T) {
 	}
 }
 
-func TestRedirectResponseFields(t *testing.T) {
-	now := time.Now()
-	mock := &mockQuerier{
-		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
-			return gen.GetURLByShortCodeForUpdateRow{
-				ID:                      1,
-				UserID:                  1,
-				ShortCode:               code,
-				DestinationID:           100,
-				OriginalUrl:             "https://example.com",
-				ClickCount:              sql.NullInt64{Int64: 42, Valid: true},
-				IsCustom:                sql.NullBool{Bool: true, Valid: true},
-				UrlStatus:               sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				DestinationHealthStatus: sql.NullInt16{Int16: int16(enum.DestinationStatusHealthy), Valid: true},
-				LastHealthCheck:         sql.NullTime{Time: now, Valid: true},
-				CreatedAt:               sql.NullTime{Time: now, Valid: true},
-				UpdatedAt:               sql.NullTime{Time: now, Valid: true},
-			}, nil
-		},
-		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
-			return gen.ClickLog{}, nil
-		},
-		incrementClickFn: func(_ context.Context, _ int64) error {
-			return nil
-		},
-	}
-	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
-
-	resp, err := svc.Redirect(context.Background(), "abc123", payload.ClickInfo{
-		IP:        net.ParseIP("127.0.0.1"),
-		UserAgent: "test",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if resp.OriginalURL != "https://example.com" {
-		t.Errorf("originalURL = %q", resp.OriginalURL)
-	}
-	if resp.ClickCount != 42 {
-		t.Errorf("clickCount = %d, want 42", resp.ClickCount)
-	}
-	if resp.ShortURL != "http://localhost:8085/abc123" {
-		t.Errorf("shortURL = %q", resp.ShortURL)
-	}
-	if resp.DestinationStatusString != "Healthy" {
-		t.Errorf("healthStatus = %q, want 'Healthy'", resp.DestinationStatusString)
-	}
-	if resp.DestinationHttpCode != "" {
-		t.Errorf("httpCode = %q, want empty (field not in query)", resp.DestinationHttpCode)
-	}
-}
-
-func TestRedirectNullClickCount(t *testing.T) {
+func TestRedirectReturnsOriginalURL(t *testing.T) {
 	mock := &mockQuerier{
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				ShortCode:   code,
 				OriginalUrl: "https://example.com",
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				CreatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
-				UpdatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -1427,15 +1350,16 @@ func TestRedirectNullClickCount(t *testing.T) {
 	}
 	svc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", nil, testLog(t), nil)
 
-	resp, err := svc.Redirect(context.Background(), "abc", payload.ClickInfo{
+	origURL, err := svc.Redirect(context.Background(), "abc123", payload.ClickInfo{
 		IP:        net.ParseIP("127.0.0.1"),
 		UserAgent: "test",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.ClickCount != 0 {
-		t.Errorf("clickCount = %d, want 0 for null", resp.ClickCount)
+
+	if origURL != "https://example.com" {
+		t.Errorf("originalURL = %q, want 'https://example.com'", origURL)
 	}
 }
 
@@ -1444,11 +1368,8 @@ func TestRedirectClickLogFails(t *testing.T) {
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				ShortCode:   code,
 				OriginalUrl: "https://example.com",
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				CreatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
-				UpdatedAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -1521,28 +1442,20 @@ func TestRedirectCacheHitDoesNotHitDB(t *testing.T) {
 	if !clickLogged {
 		t.Error("expected click to be logged on cache hit")
 	}
-	if resp.OriginalURL != "https://example.com/cached-target" {
-		t.Errorf("originalURL = %q, want cached target", resp.OriginalURL)
-	}
-	if resp.ShortCode != "abc1234567" {
-		t.Errorf("shortCode = %q, want abc1234567", resp.ShortCode)
+	if resp != "https://example.com/cached-target" {
+		t.Errorf("originalURL = %q, want cached target", resp)
 	}
 }
 
 func TestRedirectCacheMissFallsBackToDBAndPopulates(t *testing.T) {
 	mc := &redirectCacheAdapter{mc: newMockCache()}
-	now := time.Now()
 
 	mock := &mockQuerier{
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				UserID:      1,
-				ShortCode:   code,
 				OriginalUrl: "https://example.com/db-target",
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				CreatedAt:   sql.NullTime{Time: now, Valid: true},
-				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -1581,7 +1494,6 @@ func TestRedirectCacheMissFallsBackToDBAndPopulates(t *testing.T) {
 
 func TestRedirectCacheExpiresAfter30MinutesAndRefetchesFromDB(t *testing.T) {
 	mc := newMockCache()
-	now := time.Now()
 
 	dbCalls := 0
 	mock := &mockQuerier{
@@ -1589,12 +1501,8 @@ func TestRedirectCacheExpiresAfter30MinutesAndRefetchesFromDB(t *testing.T) {
 			dbCalls++
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				UserID:      1,
-				ShortCode:   code,
 				OriginalUrl: "https://example.com/target",
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				CreatedAt:   sql.NullTime{Time: now, Valid: true},
-				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -1611,8 +1519,8 @@ func TestRedirectCacheExpiresAfter30MinutesAndRefetchesFromDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("redirect 1: %v", err)
 	}
-	if resp1.OriginalURL != "https://example.com/target" {
-		t.Errorf("resp1 originalURL = %q", resp1.OriginalURL)
+	if resp1 != "https://example.com/target" {
+		t.Errorf("resp1 originalURL = %q", resp1)
 	}
 	if dbCalls != 1 {
 		t.Fatalf("expected 1 DB call, got %d", dbCalls)
@@ -1626,8 +1534,8 @@ func TestRedirectCacheExpiresAfter30MinutesAndRefetchesFromDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("redirect 2: %v", err)
 	}
-	if resp2.OriginalURL != "https://example.com/target" {
-		t.Errorf("resp2 originalURL = %q", resp2.OriginalURL)
+	if resp2 != "https://example.com/target" {
+		t.Errorf("resp2 originalURL = %q", resp2)
 	}
 	if dbCalls != 1 {
 		t.Fatalf("expected still 1 DB call on cache hit, got %d", dbCalls)
@@ -1641,8 +1549,8 @@ func TestRedirectCacheExpiresAfter30MinutesAndRefetchesFromDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("redirect 3: %v", err)
 	}
-	if resp3.OriginalURL != "https://example.com/target" {
-		t.Errorf("resp3 originalURL = %q", resp3.OriginalURL)
+	if resp3 != "https://example.com/target" {
+		t.Errorf("resp3 originalURL = %q", resp3)
 	}
 	if dbCalls != 2 {
 		t.Fatalf("expected 2 DB calls after cache expiry, got %d", dbCalls)
@@ -1670,13 +1578,9 @@ func TestRedirectCacheExpiresWithURLExpirationWhenShorter(t *testing.T) {
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				UserID:      1,
-				ShortCode:   code,
 				OriginalUrl: "https://example.com/target",
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 				ExpiresAt:   sql.NullTime{Time: expiresAt, Valid: true},
-				CreatedAt:   sql.NullTime{Time: now, Valid: true},
-				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -1736,18 +1640,13 @@ func TestRedirectCacheInactiveInvalidates(t *testing.T) {
 
 func TestRedirectCacheNotAvailableFallsBackToDB(t *testing.T) {
 	mc := &redirectCacheAdapter{mc: newMockCache()}
-	now := time.Now()
 
 	mock := &mockQuerier{
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          1,
-				UserID:      1,
-				ShortCode:   code,
 				OriginalUrl: "https://example.com/db-target",
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
-				CreatedAt:   sql.NullTime{Time: now, Valid: true},
-				UpdatedAt:   sql.NullTime{Time: now, Valid: true},
 			}, nil
 		},
 		createClickFn: func(_ context.Context, _ gen.CreateClickLogParams) (gen.ClickLog, error) {
@@ -1763,8 +1662,8 @@ func TestRedirectCacheNotAvailableFallsBackToDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("redirect: %v", err)
 	}
-	if resp.OriginalURL != "https://example.com/db-target" {
-		t.Errorf("originalURL = %q, want db-target", resp.OriginalURL)
+	if resp != "https://example.com/db-target" {
+		t.Errorf("originalURL = %q, want db-target", resp)
 	}
 }
 
@@ -3434,8 +3333,8 @@ func TestRedirectWithClickPublisherCacheHitPublishesAsync(t *testing.T) {
 		t.Fatalf("redirect failed: %v", err)
 	}
 
-	if resp.OriginalURL != "https://example.com/target" {
-		t.Errorf("originalURL = %q, want https://example.com/target", resp.OriginalURL)
+	if resp != "https://example.com/target" {
+		t.Errorf("originalURL = %q, want https://example.com/target", resp)
 	}
 	if dbQueryCalled {
 		t.Error("expected 0 DB SELECT queries on cache hit")
@@ -3468,9 +3367,7 @@ func TestRedirectWithClickPublisherCacheMissPublishesAsync(t *testing.T) {
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          200,
-				UserID:      1,
 				OriginalUrl: "https://example.com/db-target",
-				ShortCode:   code,
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 			}, nil
 		},
@@ -3495,8 +3392,8 @@ func TestRedirectWithClickPublisherCacheMissPublishesAsync(t *testing.T) {
 		t.Fatalf("redirect failed: %v", err)
 	}
 
-	if resp.OriginalURL != "https://example.com/db-target" {
-		t.Errorf("originalURL = %q, want https://example.com/db-target", resp.OriginalURL)
+	if resp != "https://example.com/db-target" {
+		t.Errorf("originalURL = %q, want https://example.com/db-target", resp)
 	}
 	if clickLogged {
 		t.Error("expected no synchronous DB click log calls on cache miss when publisher succeeds")
@@ -3549,8 +3446,8 @@ func TestRedirectWithClickPublisherCacheHitFallbackOnPublishError(t *testing.T) 
 	if err != nil {
 		t.Fatalf("redirect should succeed despite publish failure: %v", err)
 	}
-	if resp.OriginalURL != "https://example.com/fallback-hit" {
-		t.Errorf("originalURL = %q, want fallback target", resp.OriginalURL)
+	if resp != "https://example.com/fallback-hit" {
+		t.Errorf("originalURL = %q, want fallback target", resp)
 	}
 	if !clickLogged {
 		t.Error("expected synchronous click logging fallback when publish fails")
@@ -3564,9 +3461,7 @@ func TestRedirectWithClickPublisherCacheMissFallbackOnPublishError(t *testing.T)
 		byCodeForUpdateFn: func(_ context.Context, code string) (gen.GetURLByShortCodeForUpdateRow, error) {
 			return gen.GetURLByShortCodeForUpdateRow{
 				ID:          400,
-				UserID:      1,
 				OriginalUrl: "https://example.com/fallback-miss",
-				ShortCode:   code,
 				UrlStatus:   sql.NullInt16{Int16: int16(enum.URLStatusActive), Valid: true},
 			}, nil
 		},
@@ -3590,8 +3485,8 @@ func TestRedirectWithClickPublisherCacheMissFallbackOnPublishError(t *testing.T)
 	if err != nil {
 		t.Fatalf("redirect should succeed despite publish failure: %v", err)
 	}
-	if resp.OriginalURL != "https://example.com/fallback-miss" {
-		t.Errorf("originalURL = %q, want fallback target", resp.OriginalURL)
+	if resp != "https://example.com/fallback-miss" {
+		t.Errorf("originalURL = %q, want fallback target", resp)
 	}
 	if !clickLogged {
 		t.Error("expected synchronous click logging fallback on cache miss when publish fails")
@@ -3631,5 +3526,41 @@ func TestRecordClickTx(t *testing.T) {
 	}
 	if !incCalled {
 		t.Error("expected IncrementURLClick to be called")
+	}
+}
+
+func TestNewSafeHTTPClient_DoesNotFollowRedirects(t *testing.T) {
+	svc := &URLService{}
+	client := svc.newSafeHTTPClient("")
+
+	if client.CheckRedirect == nil {
+		t.Fatal("expected CheckRedirect to be configured on safe HTTP client")
+	}
+
+	req, err := http.NewRequest(http.MethodHead, "https://example.com/target", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	via := []*http.Request{req}
+	err = client.CheckRedirect(req, via)
+	if !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("expected http.ErrUseLastResponse, got: %v", err)
+	}
+}
+
+func TestCheckDestinationHealth_InvalidURL(t *testing.T) {
+	svc := &URLService{log: testLog(t)}
+	status, code, responded := svc.checkDestinationHealth("invalid-url")
+	if status != enum.DestinationStatusUnknown || code != 0 || responded {
+		t.Errorf("expected unknown/0/false for invalid URL, got %v/%d/%v", status, code, responded)
+	}
+}
+
+func TestCheckDestinationHealth_BlockedLoopbackIP(t *testing.T) {
+	svc := &URLService{log: testLog(t)}
+	status, code, responded := svc.checkDestinationHealth("http://127.0.0.1:8080")
+	if status != enum.DestinationStatusUnknown || code != 0 || responded {
+		t.Errorf("expected unknown/0/false for blocked loopback, got %v/%d/%v", status, code, responded)
 	}
 }

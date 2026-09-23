@@ -109,11 +109,9 @@ WHERE urls.user_id = $1
 
 -- name: GetURLByShortCodeForUpdate :one
 SELECT
-  urls.id, urls.user_id, urls.short_code, urls.destination_id,
-  urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.url_status,
-  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
-  urls.created_at, urls.updated_at, urls.deleted_at,
+  urls.id,
+  urls.expires_at,
+  urls.url_status,
   destinations.original_url
 FROM urls
 JOIN destinations ON urls.destination_id = destinations.id

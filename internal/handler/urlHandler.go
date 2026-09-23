@@ -26,7 +26,7 @@ var lookupIP = net.LookupIP
 // It is satisfied by *service.URLService and can be mocked in tests.
 type URLService interface {
 	Create(ctx context.Context, userID int64, req payload.CreateURLRequest) (*payload.URLResponse, error)
-	Redirect(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, error)
+	Redirect(ctx context.Context, shortCode string, click payload.ClickInfo) (string, error)
 	GetByID(ctx context.Context, userID int64, id int64) (*payload.URLResponse, error)
 	List(ctx context.Context, userID int64, page, perPage, offset int32, status *int16) ([]any, int64, error)
 	CountByStatus(ctx context.Context, userID int64) (*payload.URLStatusCounts, error)
@@ -88,7 +88,7 @@ func (h *URLHandler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 // Location header and follows the redirect automatically.
 func (h *URLHandler) RedirectShortURL(w http.ResponseWriter, r *http.Request) {
 
-	u, err := h.urlService.Redirect(r.Context(), r.PathValue("shortCode"), payload.ClickInfo{
+	originalURL, err := h.urlService.Redirect(r.Context(), r.PathValue("shortCode"), payload.ClickInfo{
 		IP:        utils.ClientIP(r),
 		UserAgent: r.UserAgent(),
 		Referrer:  r.Referer(),
@@ -99,7 +99,7 @@ func (h *URLHandler) RedirectShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, u.OriginalURL, http.StatusFound)
+	http.Redirect(w, r, originalURL, http.StatusFound)
 }
 
 // GetURLByID handles GET /urls/{id} and returns the URL details.

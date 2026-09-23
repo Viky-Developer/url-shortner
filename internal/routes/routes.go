@@ -75,7 +75,9 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 	mux.Handle("POST /api/v1/admin/maintenance/purge-password-history", authMiddleware(adminMiddleware(http.HandlerFunc(adminHandler.PurgePasswordHistory))))
 
 	// Public redirect (no auth needed)
+	// Supports both API-prefixed and root domain short links.
 	mux.HandleFunc("GET /api/v1/{shortCode}", urlHandler.RedirectShortURL)
+	mux.HandleFunc("GET /{shortCode}", urlHandler.RedirectShortURL)
 
 	return mux
 }
