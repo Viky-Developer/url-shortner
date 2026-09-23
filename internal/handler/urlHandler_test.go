@@ -20,7 +20,7 @@ import (
 
 type mockService struct {
 	createFn           func(context.Context, int64, payload.CreateURLRequest) (*payload.URLResponse, error)
-	redirectFn         func(context.Context, string, payload.ClickInfo) (*payload.URLResponse, error)
+	redirectFn         func(context.Context, string, payload.ClickInfo) (string, error)
 	byIDFn             func(context.Context, int64, int64) (*payload.URLResponse, error)
 	listFn             func(context.Context, int64, int32, int32, int32, *int16) ([]any, int64, error)
 	countByStatusFn    func(context.Context, int64) (*payload.URLStatusCounts, error)
@@ -38,7 +38,7 @@ func (m *mockService) Create(ctx context.Context, userID int64, req payload.Crea
 	return m.createFn(ctx, userID, req)
 }
 
-func (m *mockService) Redirect(ctx context.Context, code string, click payload.ClickInfo) (*payload.URLResponse, error) {
+func (m *mockService) Redirect(ctx context.Context, code string, click payload.ClickInfo) (string, error) {
 	return m.redirectFn(ctx, code, click)
 }
 
@@ -299,8 +299,8 @@ func TestValidateURLRejectsUnresolvableHost(t *testing.T) {
 
 func TestRedirectShortURL(t *testing.T) {
 	mock := &mockService{
-		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (*payload.URLResponse, error) {
-			return &payload.URLResponse{OriginalURL: "https://example.com/target"}, nil
+		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (string, error) {
+			return "https://example.com/target", nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -321,8 +321,8 @@ func TestRedirectShortURL(t *testing.T) {
 
 func TestRedirectShortURLNotFound(t *testing.T) {
 	mock := &mockService{
-		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (*payload.URLResponse, error) {
-			return nil, fmt.Errorf("%w: missing", apperror.ErrNotFound)
+		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (string, error) {
+			return "", fmt.Errorf("%w: missing", apperror.ErrNotFound)
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -611,9 +611,9 @@ func TestCreateSuccessReturns201(t *testing.T) {
 func TestRedirectPassesClickInfo(t *testing.T) {
 	var capturedClick payload.ClickInfo
 	mock := &mockService{
-		redirectFn: func(_ context.Context, code string, click payload.ClickInfo) (*payload.URLResponse, error) {
+		redirectFn: func(_ context.Context, code string, click payload.ClickInfo) (string, error) {
 			capturedClick = click
-			return sampleResponse(), nil
+			return "https://example.com/target", nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -637,8 +637,8 @@ func TestRedirectPassesClickInfo(t *testing.T) {
 
 func TestRedirectServiceExpired(t *testing.T) {
 	mock := &mockService{
-		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (*payload.URLResponse, error) {
-			return nil, apperror.ErrURLExpired
+		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (string, error) {
+			return "", apperror.ErrURLExpired
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -657,8 +657,8 @@ func TestRedirectServiceExpired(t *testing.T) {
 
 func TestRedirectServiceNotFound(t *testing.T) {
 	mock := &mockService{
-		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (*payload.URLResponse, error) {
-			return nil, apperror.ErrNotFound
+		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (string, error) {
+			return "", apperror.ErrNotFound
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -677,8 +677,8 @@ func TestRedirectServiceNotFound(t *testing.T) {
 
 func TestRedirectServiceInternalError(t *testing.T) {
 	mock := &mockService{
-		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (*payload.URLResponse, error) {
-			return nil, apperror.ErrInternal
+		redirectFn: func(_ context.Context, _ string, _ payload.ClickInfo) (string, error) {
+			return "", apperror.ErrInternal
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -698,9 +698,9 @@ func TestRedirectServiceInternalError(t *testing.T) {
 func TestRedirectUsesXForwardedFor(t *testing.T) {
 	var capturedIP net.IP
 	mock := &mockService{
-		redirectFn: func(_ context.Context, _ string, click payload.ClickInfo) (*payload.URLResponse, error) {
+		redirectFn: func(_ context.Context, _ string, click payload.ClickInfo) (string, error) {
 			capturedIP = click.IP
-			return sampleResponse(), nil
+			return "https://example.com/target", nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))
@@ -1279,9 +1279,9 @@ func TestUpdateUnauthorized(t *testing.T) {
 func TestRedirectXForwardedForMultiple(t *testing.T) {
 	var capturedIP net.IP
 	mock := &mockService{
-		redirectFn: func(_ context.Context, _ string, click payload.ClickInfo) (*payload.URLResponse, error) {
+		redirectFn: func(_ context.Context, _ string, click payload.ClickInfo) (string, error) {
 			capturedIP = click.IP
-			return sampleResponse(), nil
+			return "https://example.com/target", nil
 		},
 	}
 	h := NewURLHandler(mock, testLog(t))

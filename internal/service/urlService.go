@@ -208,12 +208,11 @@ func (s *URLService) newSafeHTTPClient(customHost string) *http.Client {
 	return &http.Client{
 		Timeout:   10 * time.Second,
 		Transport: rt,
-		// Re-validate on every redirect hop instead of following blindly.
+		// Do not follow redirects: receiving a 3xx redirect status code (e.g. 301/302)
+		// means the destination server is alive and responding. http.ErrUseLastResponse
+		// causes the client to return the redirect response directly without looping.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("stopped after 5 redirects")
-			}
-			return validateRequestURL(req.URL)
+			return http.ErrUseLastResponse
 		},
 	}
 }
@@ -259,11 +258,11 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil {
-		s.log.Error("invalid URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
+		s.log.Warn("invalid URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0, false
 	}
 	if err := validateRequestURL(parsedURL); err != nil {
-		s.log.Error("rejected URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
+		s.log.Warn("rejected URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0, false
 	}
 
@@ -273,7 +272,7 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	host := parsedURL.Hostname()
 	ips, dnsErr := net.DefaultResolver.LookupIP(context.Background(), "ip", host)
 	if dnsErr != nil {
-		s.log.Error("DNS resolution failed for health check", logger.Error(dnsErr), logger.String("host", utils.SanitizeLog(host)))
+		s.log.Warn("DNS resolution failed for health check", logger.Error(dnsErr), logger.String("host", utils.SanitizeLog(host)))
 		return enum.DestinationStatusUnknown, 0, false
 	}
 	var safeIP net.IP
@@ -284,7 +283,7 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		}
 	}
 	if safeIP == nil {
-		s.log.Error("all resolved IPs are blocked for health check", logger.String("host", utils.SanitizeLog(host)))
+		s.log.Warn("all resolved IPs are blocked for health check", logger.String("host", utils.SanitizeLog(host)))
 		return enum.DestinationStatusUnknown, 0, false
 	}
 
@@ -297,13 +296,13 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 	client := s.newSafeHTTPClient(host)
 	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
 	if err != nil {
-		s.log.Error("failed to build health check request", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
+		s.log.Warn("failed to build health check request", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0, false
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		s.log.Error("health check failed", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
+		s.log.Warn("health check failed", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0, false
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -543,30 +542,31 @@ func isDuplicateKey(err error) bool {
 // serves the redirect and records the click without taking the SELECT ...
 // FOR UPDATE row lock, avoiding the DB round trip on the hottest path. On a
 // cache miss it falls back to the transactional DB path and populates the
-// cache so subsequent requests can be served from it.
-func (s *URLService) Redirect(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, error) {
+// Redirect resolves a short code to its destination URL, records a click event,
+// and returns the original URL string for HTTP redirection.
+func (s *URLService) Redirect(ctx context.Context, shortCode string, click payload.ClickInfo) (string, error) {
 
-	if resp, hit, err := s.redirectFromCache(ctx, shortCode, click); err != nil {
-		return nil, err
+	if originalURL, hit, err := s.redirectFromCache(ctx, shortCode, click); err != nil {
+		return "", err
 	} else if hit {
 		s.metrics.IncRedirectsServed()
-		s.log.Info("url redirected (cache hit)", logger.String("shortCode", utils.SanitizeLog(shortCode)), logger.Int64("id", resp.ID))
-		return resp, nil
+		s.log.Info("url redirected (cache hit)", logger.String("shortCode", utils.SanitizeLog(shortCode)))
+		return originalURL, nil
 	}
 
 	row, err := s.queries.GetURLByShortCodeForUpdate(ctx, shortCode)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			s.log.Error("url not found by shortCode", logger.String("shortCode", utils.SanitizeLog(shortCode)))
-			return nil, apperror.ErrNotFound
+			return "", apperror.ErrNotFound
 		}
 		s.log.Error("failed to get url by shortCode", logger.Error(err), logger.String("shortCode", utils.SanitizeLog(shortCode)))
-		return nil, apperror.ErrInternal
+		return "", apperror.ErrInternal
 	}
 
 	if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now().UTC()) {
 		s.log.Warn("url expired", logger.Int64("id", row.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
-		return nil, apperror.ErrURLExpired
+		return "", apperror.ErrURLExpired
 	}
 
 	// Cache miss: record click asynchronously if publisher is configured, else synchronously via transaction.
@@ -582,52 +582,50 @@ func (s *URLService) Redirect(ctx context.Context, shortCode string, click paylo
 		}
 	} else {
 		if err := s.RecordClickTx(ctx, row.ID, click); err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 
-	resp := s.toResponse(rowToUrlForUpdate(row), row.OriginalUrl)
-
 	// Populate the cache so subsequent redirects for this code hit cache.
-	s.cacheRedirect(ctx, shortCode, rowToUrlForUpdate(row), resp.OriginalURL)
+	s.cacheRedirect(ctx, shortCode, row.ID, row.ExpiresAt, row.UrlStatus.Int16, row.OriginalUrl)
 
 	s.metrics.IncRedirectsServed()
-	s.log.Info("url redirected", logger.String("shortCode", utils.SanitizeLog(shortCode)), logger.Int64("id", resp.ID))
-	return resp, nil
+	s.log.Info("url redirected", logger.String("shortCode", utils.SanitizeLog(shortCode)), logger.Int64("id", row.ID))
+	return row.OriginalUrl, nil
 }
 
 // redirectFromCache attempts to serve a redirect from cache. It returns the
-// response, whether it was a valid cache hit, and an error when the cached
+// original URL, whether it was a valid cache hit, and an error when the cached
 // entry is present but expired or inactive. When the cache is unavailable or
 // the key is missing, hit is false and err is nil so the caller falls back to
 // the DB.
-func (s *URLService) redirectFromCache(ctx context.Context, shortCode string, click payload.ClickInfo) (*payload.URLResponse, bool, error) {
+func (s *URLService) redirectFromCache(ctx context.Context, shortCode string, click payload.ClickInfo) (string, bool, error) {
 	if s.cache == nil {
-		return nil, false, nil
+		return "", false, nil
 	}
 
 	raw, err := s.cache.Get(ctx, cacheKeyRedirectPrefix+shortCode)
 	if err != nil {
-		return nil, false, nil
+		return "", false, nil
 	}
 
 	var data redirectCacheData
 	if json.Unmarshal([]byte(raw), &data) != nil {
-		return nil, false, nil
+		return "", false, nil
 	}
 
 	if data.ExpiresAt != "" {
 		if t, parseErr := time.Parse(time.RFC3339, data.ExpiresAt); parseErr == nil && t.Before(time.Now().UTC()) {
 			s.log.Warn("cached url expired", logger.Int64("id", data.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
 			s.invalidateRedirectCache(ctx, shortCode)
-			return nil, true, apperror.ErrURLExpired
+			return "", true, apperror.ErrURLExpired
 		}
 	}
 
 	if data.URLStatus != int16(enum.URLStatusActive) {
 		s.log.Warn("cached url not active", logger.Int64("id", data.ID), logger.String("shortCode", utils.SanitizeLog(shortCode)))
 		s.invalidateRedirectCache(ctx, shortCode)
-		return nil, true, apperror.ErrNotFound
+		return "", true, apperror.ErrNotFound
 	}
 
 	// Cache hit: record click asynchronously if publisher is configured, else synchronously via transaction.
@@ -636,24 +634,18 @@ func (s *URLService) redirectFromCache(ctx context.Context, shortCode string, cl
 		if pubErr := s.clickPublisher.PublishClick(ctx, event); pubErr != nil {
 			s.log.Error("failed to publish click event on cache hit, falling back to sync tx", logger.Error(pubErr), logger.Int64("urlID", data.ID))
 			if recErr := s.RecordClickTx(ctx, data.ID, click); recErr != nil {
-				return nil, false, nil
+				return "", false, nil
 			}
 		} else {
 			s.log.Info("click event published asynchronously on cache hit", logger.Int64("urlID", data.ID))
 		}
 	} else {
 		if err := s.RecordClickTx(ctx, data.ID, click); err != nil {
-			return nil, false, nil
+			return "", false, nil
 		}
 	}
 
-	u := gen.Url{
-		ID:        data.ID,
-		ShortCode: shortCode,
-		UrlStatus: sql.NullInt16{Int16: data.URLStatus, Valid: true},
-	}
-
-	return s.toResponse(u, data.OriginalURL), true, nil
+	return data.OriginalURL, true, nil
 }
 
 // toClickEvent converts a URL ID and ClickInfo into a queue.ClickEvent for asynchronous processing.
@@ -707,15 +699,15 @@ func (s *URLService) RecordClickTx(ctx context.Context, urlID int64, click paylo
 // JSON value with a TTL so subsequent lookups can be served without hitting the database.
 // By default, keys expire after 30 minutes (or the URL's remaining expiration time).
 // Once expired, the next request will miss the cache, fetch from the DB, and re-cache.
-func (s *URLService) cacheRedirect(ctx context.Context, shortCode string, u gen.Url, originalURL string) {
+func (s *URLService) cacheRedirect(ctx context.Context, shortCode string, id int64, expiresAt sql.NullTime, urlStatus int16, originalURL string) {
 	if s.cache == nil {
 		return
 	}
-	expiresAt := ""
+	expStr := ""
 	ttl := defaultRedirectCacheTTL
-	if u.ExpiresAt.Valid {
-		expiresAt = u.ExpiresAt.Time.UTC().Format(time.RFC3339)
-		remaining := time.Until(u.ExpiresAt.Time.UTC())
+	if expiresAt.Valid {
+		expStr = expiresAt.Time.UTC().Format(time.RFC3339)
+		remaining := time.Until(expiresAt.Time.UTC())
 		if remaining <= 0 {
 			return
 		}
@@ -724,10 +716,10 @@ func (s *URLService) cacheRedirect(ctx context.Context, shortCode string, u gen.
 		}
 	}
 	data := redirectCacheData{
-		ID:          u.ID,
+		ID:          id,
 		OriginalURL: originalURL,
-		ExpiresAt:   expiresAt,
-		URLStatus:   u.UrlStatus.Int16,
+		ExpiresAt:   expStr,
+		URLStatus:   urlStatus,
 	}
 	b, err := json.Marshal(data)
 	if err != nil {
@@ -1443,17 +1435,6 @@ func rowToUrlByID(row gen.GetURLByIDRow) gen.Url {
 }
 
 func rowToUrlList(row gen.ListURLsRow) gen.Url {
-	return gen.Url{
-		ID: row.ID, UserID: row.UserID, ShortCode: row.ShortCode,
-		DestinationID: row.DestinationID, Title: row.Title, Description: row.Description,
-		IsCustom: row.IsCustom, IsSafe: row.IsSafe, ClickCount: row.ClickCount,
-		ExpiresAt: row.ExpiresAt, UrlStatus: row.UrlStatus, LastAccessedAt: row.LastAccessedAt,
-		DestinationHealthStatus: row.DestinationHealthStatus, LastHealthCheck: row.LastHealthCheck,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
-	}
-}
-
-func rowToUrlForUpdate(row gen.GetURLByShortCodeForUpdateRow) gen.Url {
 	return gen.Url{
 		ID: row.ID, UserID: row.UserID, ShortCode: row.ShortCode,
 		DestinationID: row.DestinationID, Title: row.Title, Description: row.Description,

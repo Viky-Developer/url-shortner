@@ -322,11 +322,9 @@ func (q *Queries) GetURLByShortCode(ctx context.Context, shortCode string) (GetU
 
 const getURLByShortCodeForUpdate = `-- name: GetURLByShortCodeForUpdate :one
 SELECT
-  urls.id, urls.user_id, urls.short_code, urls.destination_id,
-  urls.title, urls.description, urls.is_custom, urls.is_safe,
-  urls.click_count, urls.expires_at, urls.url_status,
-  urls.last_accessed_at, urls.destination_health_status, urls.last_health_check,
-  urls.created_at, urls.updated_at, urls.deleted_at,
+  urls.id,
+  urls.expires_at,
+  urls.url_status,
   destinations.original_url
 FROM urls
 JOIN destinations ON urls.destination_id = destinations.id
@@ -338,24 +336,10 @@ FOR UPDATE OF urls
 `
 
 type GetURLByShortCodeForUpdateRow struct {
-	ID                      int64          `json:"id"`
-	UserID                  int64          `json:"user_id"`
-	ShortCode               string         `json:"short_code"`
-	DestinationID           int64          `json:"destination_id"`
-	Title                   sql.NullString `json:"title"`
-	Description             sql.NullString `json:"description"`
-	IsCustom                sql.NullBool   `json:"is_custom"`
-	IsSafe                  sql.NullBool   `json:"is_safe"`
-	ClickCount              sql.NullInt64  `json:"click_count"`
-	ExpiresAt               sql.NullTime   `json:"expires_at"`
-	UrlStatus               sql.NullInt16  `json:"url_status"`
-	LastAccessedAt          sql.NullTime   `json:"last_accessed_at"`
-	DestinationHealthStatus sql.NullInt16  `json:"destination_health_status"`
-	LastHealthCheck         sql.NullTime   `json:"last_health_check"`
-	CreatedAt               sql.NullTime   `json:"created_at"`
-	UpdatedAt               sql.NullTime   `json:"updated_at"`
-	DeletedAt               sql.NullTime   `json:"deleted_at"`
-	OriginalUrl             string         `json:"original_url"`
+	ID          int64         `json:"id"`
+	ExpiresAt   sql.NullTime  `json:"expires_at"`
+	UrlStatus   sql.NullInt16 `json:"url_status"`
+	OriginalUrl string        `json:"original_url"`
 }
 
 func (q *Queries) GetURLByShortCodeForUpdate(ctx context.Context, shortCode string) (GetURLByShortCodeForUpdateRow, error) {
@@ -363,22 +347,8 @@ func (q *Queries) GetURLByShortCodeForUpdate(ctx context.Context, shortCode stri
 	var i GetURLByShortCodeForUpdateRow
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
-		&i.ShortCode,
-		&i.DestinationID,
-		&i.Title,
-		&i.Description,
-		&i.IsCustom,
-		&i.IsSafe,
-		&i.ClickCount,
 		&i.ExpiresAt,
 		&i.UrlStatus,
-		&i.LastAccessedAt,
-		&i.DestinationHealthStatus,
-		&i.LastHealthCheck,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
 		&i.OriginalUrl,
 	)
 	return i, err
