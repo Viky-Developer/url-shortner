@@ -26,6 +26,7 @@ type Querier interface {
 	CreateBlockedIPRange(ctx context.Context, arg CreateBlockedIPRangeParams) (BlockedIpRange, error)
 	CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error)
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error)
+	CreateOAuthAccount(ctx context.Context, arg CreateOAuthAccountParams) error
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateURL(ctx context.Context, arg CreateURLParams) (Url, error)
 	CreateURLVersion(ctx context.Context, arg CreateURLVersionParams) error
@@ -42,6 +43,7 @@ type Querier interface {
 	GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error)
 	GetDestinationByID(ctx context.Context, id int64) (GetDestinationByIDRow, error)
 	GetLatestURLVersion(ctx context.Context, urlID int64) (int32, error)
+	GetOAuthUser(ctx context.Context, arg GetOAuthUserParams) (GetOAuthUserRow, error)
 	GetSessionByID(ctx context.Context, id int64) (Session, error)
 	GetSessionByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (Session, error)
 	GetSoftDeletedURLByID(ctx context.Context, arg GetSoftDeletedURLByIDParams) (GetSoftDeletedURLByIDRow, error)

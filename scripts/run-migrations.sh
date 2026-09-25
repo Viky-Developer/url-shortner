@@ -52,10 +52,10 @@ MIGRATIONS_DIR="internal/db/migrations"
 SEEDS_DIR="internal/db/seeds"
 
 echo "==> Running schema migrations from ${MIGRATIONS_DIR}..."
-"$GOOSE_BIN" -dir "$MIGRATIONS_DIR" postgres "$DSN_MIGRATE" up
+"$GOOSE_BIN" -allow-missing -dir "$MIGRATIONS_DIR" postgres "$DSN_MIGRATE" up
 
 echo "==> Running seed migrations from ${SEEDS_DIR}..."
-"$GOOSE_BIN" -dir "$SEEDS_DIR" postgres "$DSN_MIGRATE" up
+"$GOOSE_BIN" -table goose_seed_version -allow-missing -dir "$SEEDS_DIR" postgres "$DSN_MIGRATE" up
 
 echo "==> Migrations and seeds applied successfully!"
 

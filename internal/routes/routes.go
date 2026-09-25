@@ -32,6 +32,8 @@ func New(urlHandler *handler.URLHandler, authHandler *handler.AuthHandler, admin
 	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
 	mux.HandleFunc("POST /api/v1/auth/forgot-password", authHandler.ForgotPassword)
+	mux.HandleFunc("GET /api/v1/auth/google", authHandler.GoogleLogin)
+	mux.HandleFunc("GET /api/v1/auth/google/callback", authHandler.GoogleCallback)
 
 	// Protected auth routes (need access token)
 	authMiddleware := middleware.AuthMiddleware(authService, nil)

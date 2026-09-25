@@ -41,6 +41,7 @@ DESIGN.md
 *.md
 !README.md
 !docs/*.md
+!AI_USAGE.md
 
 # Editor/IDE
 # .idea/

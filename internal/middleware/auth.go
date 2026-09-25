@@ -38,9 +38,13 @@ func AuthMiddleware(authService *service.AuthService, log logger.Logger) func(ht
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				log.Warn("missing authorization header")
-				writeJSONError(w, http.StatusUnauthorized, "authorization header required")
-				return
+				if cookie, err := r.Cookie("access_token"); err == nil && cookie.Value != "" {
+					authHeader = "Bearer " + cookie.Value
+				} else {
+					log.Warn("missing authorization header")
+					writeJSONError(w, http.StatusUnauthorized, "authorization header required")
+					return
+				}
 			}
 
 			parts := strings.SplitN(authHeader, " ", 2)

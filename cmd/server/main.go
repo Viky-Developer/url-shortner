@@ -12,6 +12,7 @@ import (
 	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/external/metrics"
+	externaloauth "github.com/vicky/url-shortner/external/oauth"
 	"github.com/vicky/url-shortner/external/queue"
 	"github.com/vicky/url-shortner/internal/config"
 	"github.com/vicky/url-shortner/internal/db"
@@ -106,8 +107,15 @@ func run() error {
 		defer func() { _ = rabbitMQClient.Close() }()
 	}
 
-	authService := service.NewAuthService(queries, database, cfg, sessionCache, log)
-	authHandler := handler.NewAuthHandler(authService, log)
+	googleOAuth := externaloauth.NewGoogle(externaloauth.GoogleConfig{
+		ClientID: cfg.GoogleClientID, ClientSecret: cfg.GoogleClientSecret, RedirectURL: cfg.GoogleRedirectURL,
+		AuthURL: cfg.GoogleAuthURL, TokenURL: cfg.GoogleTokenURL, UserInfoURL: cfg.GoogleUserInfoURL,
+	})
+
+	log.Info("OAuth connected successfully...")
+
+	authService := service.NewAuthService(queries, database, cfg, sessionCache, log, googleOAuth)
+	authHandler := handler.NewAuthHandler(authService, log, cfg.FrontendURL)
 
 	appMetrics := metrics.New()
 
@@ -189,6 +197,12 @@ func connectDatabase(cfg *config.Config, log logger.Logger) (*sql.DB, error) {
 	}
 
 	log.Info("migrations applied successfully")
+
+	if err := db.Seed(database, "internal/db/seeds"); err != nil {
+		return nil, err
+	}
+
+	log.Info("seed data applied successfully")
 
 	if err := ensureDefaultUser(database, cfg, log); err != nil {
 		return nil, err

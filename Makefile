@@ -136,15 +136,15 @@ seed-create: ## Create a new seed file: make seed-create name=click_logs_test_da
 
 .PHONY: seed-up
 seed-up: ## Apply seed migrations (blocked_domains, etc.)
-	goose -dir $(SEEDS_DIR) postgres "$(DB_DSN)" up
+	goose -table goose_seed_version -allow-missing -dir $(SEEDS_DIR) postgres "$(DB_DSN)" up
 
 .PHONY: seed-down
 seed-down: ## Roll back the last seed migration
-	goose -dir $(SEEDS_DIR) postgres "$(DB_DSN)" down
+	goose -table goose_seed_version -dir $(SEEDS_DIR) postgres "$(DB_DSN)" down
 
 .PHONY: seed-status
 seed-status: ## Show applied vs pending seed migrations
-	goose -dir $(SEEDS_DIR) postgres "$(DB_DSN)" status
+	goose -table goose_seed_version -dir $(SEEDS_DIR) postgres "$(DB_DSN)" status
 
 ## ---------------------------------------------------------------------------
 ## Build & run

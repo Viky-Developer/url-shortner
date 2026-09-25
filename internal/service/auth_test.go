@@ -10,6 +10,7 @@ import (
 
 	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
+	externaloauth "github.com/vicky/url-shortner/external/oauth"
 	"github.com/vicky/url-shortner/internal/apperror"
 	"github.com/vicky/url-shortner/internal/config"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
@@ -23,6 +24,184 @@ func testConfig() *config.Config {
 		JWTSecretKey:       "test-jwt-secret-key-for-testing-32ch",
 		AccessTokenExpiry:  15 * time.Minute,
 		RefreshTokenExpiry: 7 * 24 * time.Hour,
+	}
+}
+
+type mockGoogleProvider struct {
+	identity *externaloauth.Identity
+	err      error
+	state    string
+	code     string
+}
+
+func (m *mockGoogleProvider) AuthorizationURL(state string) string {
+	m.state = state
+	return "https://google.test/auth?state=" + state
+}
+func (m *mockGoogleProvider) Identity(_ context.Context, code string) (*externaloauth.Identity, error) {
+	m.code = code
+	return m.identity, m.err
+}
+
+func TestGoogleAuthURLDelegatesToProvider(t *testing.T) {
+	provider := &mockGoogleProvider{}
+	svc := NewAuthService(nil, nil, testConfig(), NoopCache{}, testLog(t), provider)
+	url := svc.GoogleAuthURL("secure-state")
+	if provider.state != "secure-state" || url == "" {
+		t.Fatalf("provider delegation failed: state=%q url=%q", provider.state, url)
+	}
+}
+
+func TestLoginWithGoogleProviderFailure(t *testing.T) {
+	provider := &mockGoogleProvider{err: errors.New("provider unavailable")}
+	svc := NewAuthService(&mockQuerier{}, nil, testConfig(), NoopCache{}, testLog(t), provider)
+	_, err := svc.LoginWithGoogle(context.Background(), "bad-code", "", "", "", "", "", "")
+	if !errors.Is(err, apperror.ErrUnauthorized) || provider.code != "bad-code" {
+		t.Fatalf("expected unauthorized provider failure, got %v", err)
+	}
+}
+
+func TestLoginWithGoogleDatabaseLookupFailure(t *testing.T) {
+	q := &mockQuerier{getOAuthUserFn: func(context.Context, gen.GetOAuthUserParams) (gen.GetOAuthUserRow, error) {
+		return gen.GetOAuthUserRow{}, errors.New("database unavailable")
+	}}
+	provider := &mockGoogleProvider{identity: &externaloauth.Identity{Subject: "sub", Email: "user@example.com", EmailVerified: true}}
+	svc := NewAuthService(q, nil, testConfig(), NoopCache{}, testLog(t), provider)
+	_, err := svc.LoginWithGoogle(context.Background(), "code", "", "", "", "", "", "")
+	if !errors.Is(err, apperror.ErrInternal) {
+		t.Fatalf("expected internal database error, got %v", err)
+	}
+}
+
+func TestLoginWithGoogleExistingIdentity(t *testing.T) {
+	q := &mockQuerier{
+		getOAuthUserFn: func(context.Context, gen.GetOAuthUserParams) (gen.GetOAuthUserRow, error) {
+			return gen.GetOAuthUserRow{
+				ID: 42, Email: "user@example.com", DisplayUserID: sql.NullString{String: "USR_existing", Valid: true},
+				DisplayUserName: sql.NullString{String: "Google User", Valid: true}, Role: "USER", Status: "ACTIVE",
+			}, nil
+		},
+		createSessionFn: func(context.Context, gen.CreateSessionParams) (gen.Session, error) {
+			return gen.Session{
+				ID: 9, UserID: 42, LastActiveAt: sql.NullTime{Time: time.Now(), Valid: true},
+				SessionStatus: sql.NullInt16{Int16: 1, Valid: true}, ExpiresAt: sql.NullTime{Time: time.Now().Add(time.Hour), Valid: true},
+			}, nil
+		},
+	}
+	svc := NewAuthService(q, nil, testConfig(), NoopCache{}, testLog(t))
+	svc.googleOAuth = &mockGoogleProvider{identity: &externaloauth.Identity{
+		Subject: "google-sub", Email: "user@example.com", EmailVerified: true, Name: "Google User",
+	}}
+
+	result, err := svc.LoginWithGoogle(context.Background(), "code", "web", "browser", "127.0.0.1", "", "", "agent")
+	if err != nil {
+		t.Fatalf("LoginWithGoogle: %v", err)
+	}
+	if result.User.ID != "USR_existing" || result.Token.AccessToken == "" || result.Token.RefreshToken == "" {
+		t.Fatalf("unexpected OAuth login result: %+v", result)
+	}
+}
+
+func TestLoginWithGoogleLinksExistingEmailAccount(t *testing.T) {
+	lookups := 0
+	linkedUserID := int64(0)
+	q := &mockQuerier{
+		getOAuthUserFn: func(context.Context, gen.GetOAuthUserParams) (gen.GetOAuthUserRow, error) {
+			lookups++
+			if lookups == 1 {
+				return gen.GetOAuthUserRow{}, sql.ErrNoRows
+			}
+			return gen.GetOAuthUserRow{ID: 55, Email: "linked@example.com", DisplayUserID: sql.NullString{String: "USR_linked", Valid: true}, Role: "USER", Status: "ACTIVE"}, nil
+		},
+		emailFn: func(context.Context, string) (gen.GetUserByEmailRow, error) {
+			return gen.GetUserByEmailRow{ID: 55, Email: "linked@example.com"}, nil
+		},
+		createOAuthAccountFn: func(_ context.Context, arg gen.CreateOAuthAccountParams) error {
+			linkedUserID = arg.UserID
+			return nil
+		},
+		createSessionFn: successfulOAuthSession(55),
+	}
+	provider := &mockGoogleProvider{identity: &externaloauth.Identity{Subject: "subject", Email: "linked@example.com", EmailVerified: true}}
+	svc := NewAuthService(q, nil, testConfig(), NoopCache{}, testLog(t), provider)
+	result, err := svc.LoginWithGoogle(context.Background(), "code", "", "", "", "", "", "")
+	if err != nil || linkedUserID != 55 || result.User.ID != "USR_linked" {
+		t.Fatalf("existing account was not linked: userID=%d result=%+v err=%v", linkedUserID, result, err)
+	}
+}
+
+func TestLoginWithGoogleCreatesNewUser(t *testing.T) {
+	lookups := 0
+	createdUser := false
+	q := &mockQuerier{
+		getOAuthUserFn: func(context.Context, gen.GetOAuthUserParams) (gen.GetOAuthUserRow, error) {
+			lookups++
+			if lookups == 1 {
+				return gen.GetOAuthUserRow{}, sql.ErrNoRows
+			}
+			return gen.GetOAuthUserRow{ID: 77, Email: "new@example.com", DisplayUserName: sql.NullString{String: "New User", Valid: true}, DisplayUserID: sql.NullString{String: "USR_new", Valid: true}, Role: "USER", Status: "ACTIVE"}, nil
+		},
+		emailFn: func(context.Context, string) (gen.GetUserByEmailRow, error) {
+			return gen.GetUserByEmailRow{}, sql.ErrNoRows
+		},
+		createUserFn: func(_ context.Context, arg gen.CreateUserParams) (gen.CreateUserRow, error) {
+			createdUser = arg.Email == "new@example.com" && arg.PasswordHash != "" && arg.DisplayUserName.String == "New User"
+			return gen.CreateUserRow{ID: 77, Email: arg.Email}, nil
+		},
+		createOAuthAccountFn: func(context.Context, gen.CreateOAuthAccountParams) error { return nil },
+		createSessionFn:      successfulOAuthSession(77),
+	}
+	provider := &mockGoogleProvider{identity: &externaloauth.Identity{Subject: "new-subject", Email: "new@example.com", EmailVerified: true, Name: "New User"}}
+	svc := NewAuthService(q, nil, testConfig(), NoopCache{}, testLog(t), provider)
+	result, err := svc.LoginWithGoogle(context.Background(), "code", "", "", "", "", "", "")
+	if err != nil || !createdUser || result.User.Email != "new@example.com" {
+		t.Fatalf("new OAuth user was not created: created=%v result=%+v err=%v", createdUser, result, err)
+	}
+}
+
+func TestLoginWithGoogleRepairsMissingDisplayID(t *testing.T) {
+	updated := false
+	q := &mockQuerier{
+		getOAuthUserFn: func(context.Context, gen.GetOAuthUserParams) (gen.GetOAuthUserRow, error) {
+			return gen.GetOAuthUserRow{ID: 88, Email: "user@example.com", Role: "USER", Status: "ACTIVE"}, nil
+		},
+		updateUserFn: func(_ context.Context, arg gen.UpdateUserDisplayIDParams) (gen.UpdateUserDisplayIDRow, error) {
+			updated = arg.ID == 88 && arg.DisplayUserID.Valid
+			return gen.UpdateUserDisplayIDRow{ID: arg.ID, DisplayUserID: arg.DisplayUserID}, nil
+		},
+		createSessionFn: successfulOAuthSession(88),
+	}
+	provider := &mockGoogleProvider{identity: &externaloauth.Identity{Subject: "subject", Email: "user@example.com", EmailVerified: true}}
+	svc := NewAuthService(q, nil, testConfig(), NoopCache{}, testLog(t), provider)
+	result, err := svc.LoginWithGoogle(context.Background(), "code", "", "", "", "", "", "")
+	if err != nil || !updated || result.User.ID == "" {
+		t.Fatalf("display ID was not repaired: updated=%v result=%+v err=%v", updated, result, err)
+	}
+}
+
+func TestLoginWithGoogleSessionFailure(t *testing.T) {
+	q := &mockQuerier{
+		getOAuthUserFn: func(context.Context, gen.GetOAuthUserParams) (gen.GetOAuthUserRow, error) {
+			return gen.GetOAuthUserRow{ID: 99, Email: "user@example.com", DisplayUserID: sql.NullString{String: "USR_user", Valid: true}, Role: "USER", Status: "ACTIVE"}, nil
+		},
+		createSessionFn: func(context.Context, gen.CreateSessionParams) (gen.Session, error) {
+			return gen.Session{}, errors.New("session failure")
+		},
+	}
+	provider := &mockGoogleProvider{identity: &externaloauth.Identity{Subject: "subject", Email: "user@example.com", EmailVerified: true}}
+	svc := NewAuthService(q, nil, testConfig(), NoopCache{}, testLog(t), provider)
+	_, err := svc.LoginWithGoogle(context.Background(), "code", "", "", "", "", "", "")
+	if !errors.Is(err, apperror.ErrInternal) {
+		t.Fatalf("expected session failure to return internal error, got %v", err)
+	}
+}
+
+func successfulOAuthSession(userID int64) func(context.Context, gen.CreateSessionParams) (gen.Session, error) {
+	return func(context.Context, gen.CreateSessionParams) (gen.Session, error) {
+		return gen.Session{
+			ID: 10, UserID: userID, LastActiveAt: sql.NullTime{Time: time.Now(), Valid: true},
+			SessionStatus: sql.NullInt16{Int16: 1, Valid: true}, ExpiresAt: sql.NullTime{Time: time.Now().Add(time.Hour), Valid: true},
+		}, nil
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
+	externaloauth "github.com/vicky/url-shortner/external/oauth"
 	"github.com/vicky/url-shortner/internal/apperror"
 	"github.com/vicky/url-shortner/internal/config"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
@@ -69,23 +70,29 @@ const (
 
 // AuthService provides authentication business logic.
 type AuthService struct {
-	queries gen.Querier
-	db      *sql.DB
-	cfg     *config.Config
-	cache   SessionCache
-	log     logger.Logger
+	queries     gen.Querier
+	db          *sql.DB
+	cfg         *config.Config
+	cache       SessionCache
+	log         logger.Logger
+	googleOAuth externaloauth.Provider
 }
 
-func NewAuthService(queries gen.Querier, db *sql.DB, cfg *config.Config, cache SessionCache, log logger.Logger) *AuthService {
+func NewAuthService(queries gen.Querier, db *sql.DB, cfg *config.Config, cache SessionCache, log logger.Logger, oauthProviders ...externaloauth.Provider) *AuthService {
 	if log == nil {
 		log, _ = logger.New()
 	}
+	var googleOAuth externaloauth.Provider
+	if len(oauthProviders) > 0 {
+		googleOAuth = oauthProviders[0]
+	}
 	return &AuthService{
-		queries: queries,
-		db:      db,
-		cfg:     cfg,
-		cache:   cache,
-		log:     log,
+		queries:     queries,
+		db:          db,
+		cfg:         cfg,
+		cache:       cache,
+		log:         log,
+		googleOAuth: googleOAuth,
 	}
 }
 

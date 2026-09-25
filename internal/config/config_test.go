@@ -42,6 +42,13 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("RABBITMQ_ROUTING_KEY_CLICKS", "url.clicks.route")
 	t.Setenv("RABBITMQ_QUEUE_CLICKS", "url.clicks")
 	t.Setenv("ENABLE_RABBITMQ", "true")
+	t.Setenv("GOOGLE_CLIENT_ID", "test-client.apps.googleusercontent.com")
+	t.Setenv("GOOGLE_CLIENT_SECRET", "test-client-secret")
+	t.Setenv("GOOGLE_REDIRECT_URL", "http://localhost:8080/api/v1/auth/google/callback")
+	t.Setenv("GOOGLE_AUTH_URL", "https://provider.test/auth")
+	t.Setenv("GOOGLE_TOKEN_URL", "https://provider.test/token")
+	t.Setenv("GOOGLE_USER_INFO_URL", "https://provider.test/userinfo")
+	t.Setenv("FRONTEND_URL", "http://localhost:5173")
 }
 
 func TestLoad(t *testing.T) {
@@ -76,6 +83,12 @@ func TestLoad(t *testing.T) {
 		if cfg.RedisTLS {
 			t.Fatal("expected RedisTLS false by default")
 		}
+		if cfg.GoogleRedirectURL != "http://localhost:8080/api/v1/auth/google/callback" {
+			t.Fatalf("unexpected GoogleRedirectURL: %s", cfg.GoogleRedirectURL)
+		}
+		if cfg.GoogleAuthURL == "" || cfg.GoogleTokenURL == "" || cfg.GoogleUserInfoURL == "" {
+			t.Fatal("expected all Google OAuth endpoint URLs to be loaded")
+		}
 	})
 
 	t.Run("returns error when required env variable is missing", func(t *testing.T) {
@@ -91,6 +104,15 @@ func TestLoad(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "JWT_SECRET_KEY is required but not set") {
 			t.Fatalf("expected error message to mention JWT_SECRET_KEY, got: %v", err)
+		}
+	})
+
+	t.Run("returns error when a Google endpoint URL is missing", func(t *testing.T) {
+		setValidEnv(t)
+		t.Setenv("GOOGLE_TOKEN_URL", "")
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), "GOOGLE_TOKEN_URL is required but not set") {
+			t.Fatalf("expected missing Google token URL error, got %v", err)
 		}
 	})
 
