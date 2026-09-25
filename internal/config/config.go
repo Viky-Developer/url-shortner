@@ -53,6 +53,13 @@ type Config struct {
 	RabbitMQQueueClicks      string        // RabbitMQ queue name for click events.
 	EnableRabbitMQ           bool          // Whether RabbitMQ async queuing is enabled.
 	RedisTLS                 bool          // Whether to use TLS for Redis (required by Upstash).
+	GoogleClientID           string        // Google OAuth web client ID.
+	GoogleClientSecret       string        // Google OAuth web client secret.
+	GoogleRedirectURL        string        // Google OAuth callback URL.
+	GoogleAuthURL            string        // Google OAuth authorization endpoint.
+	GoogleTokenURL           string        // Google OAuth token endpoint.
+	GoogleUserInfoURL        string        // Google OpenID Connect user-info endpoint.
+	FrontendURL              string        // Frontend URL used after browser authentication.
 }
 
 // Load reads configuration from the .env file (if present) and the process
@@ -107,6 +114,13 @@ func Load() (*Config, error) {
 		RabbitMQQueueClicks:      l.require("RABBITMQ_QUEUE_CLICKS"),
 		EnableRabbitMQ:           l.requireBool("ENABLE_RABBITMQ"),
 		RedisTLS:                 l.optionalBool("REDIS_TLS"),
+		GoogleClientID:           l.require("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret:       l.require("GOOGLE_CLIENT_SECRET"),
+		GoogleRedirectURL:        l.require("GOOGLE_REDIRECT_URL"),
+		GoogleAuthURL:            l.require("GOOGLE_AUTH_URL"),
+		GoogleTokenURL:           l.require("GOOGLE_TOKEN_URL"),
+		GoogleUserInfoURL:        l.require("GOOGLE_USER_INFO_URL"),
+		FrontendURL:              l.require("FRONTEND_URL"),
 	}
 
 	if len(l.errors) > 0 {

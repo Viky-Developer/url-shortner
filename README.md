@@ -202,6 +202,13 @@ The application is configured through environment variables loaded from `.env`:
 | `USER_ID_SECRET_KEY` | *(required)* | Secret key for obfuscating internal user IDs |
 | `ACCESS_TOKEN_EXPIRY` | `15` | Access token lifespan (in minutes) |
 | `REFRESH_TOKEN_EXPIRY`| `7` | Refresh token lifespan (in days) |
+| `GOOGLE_CLIENT_ID` | *(required)* | Google OAuth web client ID |
+| `GOOGLE_CLIENT_SECRET` | *(required)* | Google OAuth web client secret; never commit it |
+| `GOOGLE_REDIRECT_URL` | *(required)* | Exact authorized Google callback URI |
+| `GOOGLE_AUTH_URL` | *(required)* | Google OAuth authorization endpoint |
+| `GOOGLE_TOKEN_URL` | *(required)* | Google OAuth token endpoint |
+| `GOOGLE_USER_INFO_URL` | *(required)* | Google OpenID Connect user-info endpoint |
+| `FRONTEND_URL` | *(required)* | Frontend dashboard URL used after successful authentication |
 | `REDIS_HOST` | `localhost` | Redis host |
 | `REDIS_PORT` | `6379` | Redis port |
 | `REDIS_USERNAME` | `""` | Redis authentication username (if required) |
@@ -232,6 +239,8 @@ The service exposes RESTful JSON endpoints under the `/api/v1` prefix.
 | **Redirect** | `GET` | `/api/v1/{shortCode}` | Public | 302/307 Redirect (Redis cached, RabbitMQ async clicks) |
 | **Auth** | `POST` | `/api/v1/auth/register` | Public | Create new user account |
 | **Auth** | `POST` | `/api/v1/auth/login` | Public | Authenticate user, issue JWT access + refresh tokens |
+| **Auth** | `GET` | `/api/v1/auth/google` | Public | Start server-side Google OAuth login |
+| **Auth** | `GET` | `/api/v1/auth/google/callback` | Public | Complete Google OAuth and issue application tokens |
 | **Auth** | `POST` | `/api/v1/auth/refresh` | Bearer Token | Rotate expired access token |
 | **Sessions** | `GET` | `/api/v1/auth/sessions` | Bearer Token | Multi-device session tracking & revocation |
 | **URLs** | `POST` | `/api/v1/shorten` | Bearer Token | Shorten URL (with target health checks & domain validation) |
@@ -243,6 +252,20 @@ The service exposes RESTful JSON endpoints under the `/api/v1` prefix.
 | **Admin** | `POST` | `/api/v1/admin/blocked-ip-ranges`| Admin Role | Block abusive CIDR IP ranges |
 
 👉 *For the full list of all 25+ endpoints with request and response examples, refer to [docs/api.md](docs/api.md).*
+
+### Google OAuth login
+
+Configure a Google OAuth web client and register `GOOGLE_REDIRECT_URL` as an authorized redirect URI. All provider endpoints and application redirect URLs are required environment variables; credentials and URLs are not hard-coded in the service.
+
+Start browser login at:
+
+```text
+GET /api/v1/auth/google
+```
+
+After Google authentication, the backend validates the state cookie, exchanges the authorization code, resolves or creates the local account, creates the normal application session, stores access and refresh tokens in HTTP-only cookies, and redirects the browser to `FRONTEND_URL`.
+
+Protected endpoints accept either the existing `Authorization: Bearer ...` header or the HTTP-only `access_token` cookie. Browser requests that cross origins must include credentials.
 
 ---
 

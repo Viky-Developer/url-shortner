@@ -147,6 +147,26 @@ func TestAuthMiddlewareValidTokenDecodesUserID(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareAcceptsAccessTokenCookie(t *testing.T) {
+	log, _ := logger.New(logger.WithLevel("error"))
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	encodedUserID := utils.EncodeID(100000, utils.UserIDPrefix, testCfg.UserIDSecretKey)
+	token := createTestJWT(t, testCfg.JWTSecretKey, encodedUserID)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
+	w := httptest.NewRecorder()
+
+	AuthMiddleware(testAuthService(), log)(next).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK || !called {
+		t.Fatalf("expected cookie authentication to succeed, status=%d called=%v", w.Code, called)
+	}
+}
+
 func TestAuthMiddlewareMalformedBearer(t *testing.T) {
 	log, _ := logger.New(logger.WithLevel("error"))
 	noop := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

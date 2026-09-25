@@ -81,6 +81,8 @@ type mockQuerier struct {
 	hardDeleteUserByIDFn    func(context.Context, int64) error
 	countAuditLogsFn        func(context.Context, gen.CountAuditLogsParams) (int64, error)
 	listAuditLogsFn         func(context.Context, gen.ListAuditLogsParams) ([]gen.AuditLog, error)
+	createOAuthAccountFn    func(context.Context, gen.CreateOAuthAccountParams) error
+	getOAuthUserFn          func(context.Context, gen.GetOAuthUserParams) (gen.GetOAuthUserRow, error)
 }
 
 func (m *mockQuerier) ExecContext(_ context.Context, _ string, _ ...interface{}) (sql.Result, error) {
@@ -121,6 +123,20 @@ func (m *mockQuerier) CreateURL(ctx context.Context, arg gen.CreateURLParams) (g
 
 func (m *mockQuerier) CreateUser(ctx context.Context, arg gen.CreateUserParams) (gen.CreateUserRow, error) {
 	return m.createUserFn(ctx, arg)
+}
+
+func (m *mockQuerier) CreateOAuthAccount(ctx context.Context, arg gen.CreateOAuthAccountParams) error {
+	if m.createOAuthAccountFn != nil {
+		return m.createOAuthAccountFn(ctx, arg)
+	}
+	return nil
+}
+
+func (m *mockQuerier) GetOAuthUser(ctx context.Context, arg gen.GetOAuthUserParams) (gen.GetOAuthUserRow, error) {
+	if m.getOAuthUserFn != nil {
+		return m.getOAuthUserFn(ctx, arg)
+	}
+	return gen.GetOAuthUserRow{}, sql.ErrNoRows
 }
 
 func (m *mockQuerier) GetUserByEmail(ctx context.Context, email string) (gen.GetUserByEmailRow, error) {

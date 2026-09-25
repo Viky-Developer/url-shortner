@@ -25,6 +25,22 @@ type mockAuthService struct {
 	revokeFn       func(context.Context, int64, int64) error
 	revokeOtherFn  func(context.Context, int64, int64) error
 	revokeAllFn    func(context.Context, int64) error
+	googleURLFn    func(string) string
+	googleLoginFn  func(context.Context, string, string, string, string, string, string, string) (*payload.AuthResponse, error)
+}
+
+func (m *mockAuthService) GoogleAuthURL(state string) string {
+	if m.googleURLFn != nil {
+		return m.googleURLFn(state)
+	}
+	return "https://accounts.google.com/o/oauth2/auth?state=" + state
+}
+
+func (m *mockAuthService) LoginWithGoogle(ctx context.Context, code, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error) {
+	if m.googleLoginFn != nil {
+		return m.googleLoginFn(ctx, code, deviceType, deviceName, ipAddress, country, city, userAgent)
+	}
+	return sampleAuthResponse(), nil
 }
 
 func (m *mockAuthService) Register(ctx context.Context, req *payload.RegisterRequest, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error) {
@@ -90,6 +106,137 @@ func sampleAuthResponse() *payload.AuthResponse {
 			Email:       "test@example.com",
 			DisplayName: "Test User",
 		},
+	}
+}
+
+func TestGoogleLoginSetsStateAndRedirects(t *testing.T) {
+	mock := &mockAuthService{googleURLFn: func(state string) string {
+		if state == "" {
+			t.Fatal("expected non-empty OAuth state")
+		}
+		return "https://accounts.google.com/o/oauth2/v2/auth?state=" + state
+	}}
+	h := NewAuthHandler(mock, testLog(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google", nil)
+	w := httptest.NewRecorder()
+
+	h.GoogleLogin(w, req)
+
+	if w.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("expected 307, got %d", w.Code)
+	}
+	if len(w.Result().Cookies()) != 1 || !w.Result().Cookies()[0].HttpOnly {
+		t.Fatal("expected an HTTP-only OAuth state cookie")
+	}
+}
+
+func TestGoogleCallbackRejectsStateMismatch(t *testing.T) {
+	h := NewAuthHandler(&mockAuthService{}, testLog(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?code=code&state=wrong", nil)
+	req.AddCookie(&http.Cookie{Name: googleOAuthStateCookie, Value: "expected"})
+	w := httptest.NewRecorder()
+
+	h.GoogleCallback(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestGoogleCallbackRejectsMissingStateCookie(t *testing.T) {
+	h := NewAuthHandler(&mockAuthService{}, testLog(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?code=code&state=state", nil)
+	w := httptest.NewRecorder()
+	h.GoogleCallback(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestGoogleCallbackRejectsProviderError(t *testing.T) {
+	h := NewAuthHandler(&mockAuthService{}, testLog(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?error=access_denied", nil)
+	w := httptest.NewRecorder()
+	h.GoogleCallback(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestGoogleCallbackRejectsMissingCode(t *testing.T) {
+	h := NewAuthHandler(&mockAuthService{}, testLog(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?state=expected", nil)
+	req.AddCookie(&http.Cookie{Name: googleOAuthStateCookie, Value: "expected"})
+	w := httptest.NewRecorder()
+	h.GoogleCallback(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGoogleCallbackHandlesServiceFailure(t *testing.T) {
+	mock := &mockAuthService{googleLoginFn: func(context.Context, string, string, string, string, string, string, string) (*payload.AuthResponse, error) {
+		return nil, apperror.ErrUnauthorized
+	}}
+	h := NewAuthHandler(mock, testLog(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?code=code&state=expected", nil)
+	req.AddCookie(&http.Cookie{Name: googleOAuthStateCookie, Value: "expected"})
+	w := httptest.NewRecorder()
+	h.GoogleCallback(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestGoogleCallbackLogsInWithValidState(t *testing.T) {
+	called := false
+	mock := &mockAuthService{googleLoginFn: func(_ context.Context, code, _, _, _, _, _, _ string) (*payload.AuthResponse, error) {
+		called = true
+		if code != "google-code" {
+			t.Fatalf("unexpected code %q", code)
+		}
+		return sampleAuthResponse(), nil
+	}}
+	h := NewAuthHandler(mock, testLog(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?code=google-code&state=expected", nil)
+	req.AddCookie(&http.Cookie{Name: googleOAuthStateCookie, Value: "expected"})
+	w := httptest.NewRecorder()
+
+	h.GoogleCallback(w, req)
+
+	if !called || w.Code != http.StatusOK {
+		t.Fatalf("expected successful callback, called=%v status=%d", called, w.Code)
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) == 0 || cookies[0].MaxAge != -1 {
+		t.Fatal("expected OAuth state cookie to be cleared")
+	}
+}
+
+func TestGoogleCallbackRedirectsToFrontendWithTokenCookies(t *testing.T) {
+	mock := &mockAuthService{googleLoginFn: func(context.Context, string, string, string, string, string, string, string) (*payload.AuthResponse, error) {
+		return sampleAuthResponse(), nil
+	}}
+	h := NewAuthHandler(mock, testLog(t), "http://frontend.test/dashboard")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?code=code&state=expected", nil)
+	req.AddCookie(&http.Cookie{Name: googleOAuthStateCookie, Value: "expected"})
+	w := httptest.NewRecorder()
+
+	h.GoogleCallback(w, req)
+
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "http://frontend.test/dashboard" {
+		t.Fatalf("expected dashboard redirect, status=%d location=%q", w.Code, w.Header().Get("Location"))
+	}
+	cookies := w.Result().Cookies()
+	values := make(map[string]*http.Cookie, len(cookies))
+	for _, cookie := range cookies {
+		values[cookie.Name] = cookie
+	}
+	if values[accessTokenCookie] == nil || values[accessTokenCookie].Value != "access-token" || !values[accessTokenCookie].HttpOnly {
+		t.Fatal("expected HTTP-only access-token cookie")
+	}
+	if values[refreshTokenCookie] == nil || values[refreshTokenCookie].Value != "refresh-token" || !values[refreshTokenCookie].HttpOnly {
+		t.Fatal("expected HTTP-only refresh-token cookie")
 	}
 }
 
