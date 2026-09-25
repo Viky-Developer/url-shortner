@@ -3,6 +3,9 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 
@@ -27,17 +30,92 @@ type AuthService interface {
 	RevokeSession(ctx context.Context, sessionID, userID int64) error
 	RevokeOtherDevices(ctx context.Context, userID, currentSessionID int64) error
 	RevokeAllSessions(ctx context.Context, userID int64) error
+	GoogleAuthURL(state string) string
+	LoginWithGoogle(ctx context.Context, code, deviceType, deviceName, ipAddress, country, city, userAgent string) (*payload.AuthResponse, error)
+}
+
+const googleOAuthStateCookie = "google_oauth_state"
+const accessTokenCookie = "access_token"
+const refreshTokenCookie = "refresh_token"
+
+// GoogleLogin starts the server-side Google OAuth authorization-code flow.
+func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
+	stateBytes := make([]byte, 32)
+	if _, err := rand.Read(stateBytes); err != nil {
+		response.Error(w, http.StatusInternalServerError, apperror.ErrInternal)
+		return
+	}
+	state := base64.RawURLEncoding.EncodeToString(stateBytes)
+	http.SetCookie(w, &http.Cookie{
+		Name: googleOAuthStateCookie, Value: state, Path: "/api/v1/auth/google/callback",
+		MaxAge: 600, HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode,
+	})
+	http.Redirect(w, r, h.authService.GoogleAuthURL(state), http.StatusTemporaryRedirect)
+}
+
+// GoogleCallback validates OAuth state, completes Google login, and returns
+// the application's normal JWT/refresh-token response.
+func (h *AuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("error") != "" {
+		response.Error(w, http.StatusUnauthorized, apperror.ErrUnauthorized)
+		return
+	}
+	cookie, err := r.Cookie(googleOAuthStateCookie)
+	state := r.URL.Query().Get("state")
+	if err != nil || cookie.Value == "" || state == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) != 1 {
+		response.Error(w, http.StatusUnauthorized, apperror.ErrUnauthorized)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: googleOAuthStateCookie, Value: "", Path: "/api/v1/auth/google/callback",
+		MaxAge: -1, HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode,
+	})
+
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		response.Error(w, http.StatusBadRequest, apperror.ErrInvalidPayload)
+		return
+	}
+
+	result, err := h.authService.LoginWithGoogle(
+		r.Context(), code, r.Header.Get("X-Device-Type"), r.Header.Get("X-Device-Name"),
+		utils.ClientIP(r).String(), r.Header.Get("X-Country"), r.Header.Get("X-City"), r.UserAgent(),
+	)
+	if err != nil {
+		h.log.Error("google login failed", logger.Error(err))
+		response.Error(w, response.StatusCodeFromError(err), err)
+		return
+	}
+	if h.frontendURL == "" {
+		response.Success(w, http.StatusOK, "google login successful", []any{result})
+		return
+	}
+	secure := r.TLS != nil
+	http.SetCookie(w, &http.Cookie{
+		Name: accessTokenCookie, Value: result.Token.AccessToken, Path: "/",
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name: refreshTokenCookie, Value: result.Token.RefreshToken, Path: "/api/v1/auth",
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
+	})
+	http.Redirect(w, r, h.frontendURL, http.StatusSeeOther)
 }
 
 // AuthHandler holds the dependencies required by the auth HTTP handlers.
 type AuthHandler struct {
 	authService AuthService
 	log         logger.Logger
+	frontendURL string
 }
 
 // NewAuthHandler constructs an AuthHandler with the given service and logger.
-func NewAuthHandler(authService AuthService, log logger.Logger) *AuthHandler {
-	return &AuthHandler{authService: authService, log: log}
+func NewAuthHandler(authService AuthService, log logger.Logger, frontendURL ...string) *AuthHandler {
+	redirectURL := ""
+	if len(frontendURL) > 0 {
+		redirectURL = frontendURL[0]
+	}
+	return &AuthHandler{authService: authService, log: log, frontendURL: redirectURL}
 }
 
 // Register handles POST /api/v1/auth/register

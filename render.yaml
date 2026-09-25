@@ -6,8 +6,8 @@ services:
     branch: dev
     autoDeploy: true
 
-    # Step 1: Install goose to bin/, compile server binary, and run migrations/seeds at build time if DB is accessible
-    buildCommand: GOBIN=$(pwd)/bin go install github.com/pressly/goose/v3/cmd/goose@latest && go build -o bin/url-shortner ./cmd/server && (./scripts/run-migrations.sh || true)
+    # Step 1: Install goose to bin/, compile server binary, and run migrations/seeds at build time
+    buildCommand: GOBIN=$(pwd)/bin go install github.com/pressly/goose/v3/cmd/goose@latest && go build -o bin/url-shortner ./cmd/server && ./scripts/run-migrations.sh
 
     # Step 2: Auto-run database schema migrations and seed data before deployment (paid tiers)
     preDeployCommand: ./scripts/run-migrations.sh
