@@ -14,6 +14,7 @@ import (
 	"github.com/vicky/url-shortner/internal/apperror"
 	"github.com/vicky/url-shortner/internal/config"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
+	"github.com/vicky/url-shortner/internal/enum"
 	"github.com/vicky/url-shortner/internal/payload"
 	"github.com/vicky/url-shortner/internal/utils"
 )
@@ -144,9 +145,9 @@ func TestLoginWithGoogleCreatesNewUser(t *testing.T) {
 		emailFn: func(context.Context, string) (gen.GetUserByEmailRow, error) {
 			return gen.GetUserByEmailRow{}, sql.ErrNoRows
 		},
-		createUserFn: func(_ context.Context, arg gen.CreateUserParams) (gen.CreateUserRow, error) {
-			createdUser = arg.Email == "new@example.com" && arg.PasswordHash != "" && arg.DisplayUserName.String == "New User"
-			return gen.CreateUserRow{ID: 77, Email: arg.Email}, nil
+		createOAuthUserFn: func(_ context.Context, arg gen.CreateOAuthUserParams) (gen.CreateOAuthUserRow, error) {
+			createdUser = arg.Email == "new@example.com" && arg.DisplayUserName.String == "New User"
+			return gen.CreateOAuthUserRow{ID: 77, Email: arg.Email, HasPassword: false}, nil
 		},
 		createOAuthAccountFn: func(context.Context, gen.CreateOAuthAccountParams) error { return nil },
 		createSessionFn:      successfulOAuthSession(77),
@@ -379,7 +380,7 @@ func TestRegisterUserCreatesAccount(t *testing.T) {
 		},
 		createUserFn: func(_ context.Context, arg gen.CreateUserParams) (gen.CreateUserRow, error) {
 			capturedEmail = arg.Email
-			capturedHash = arg.PasswordHash
+			capturedHash = arg.PasswordHash.String
 			return gen.CreateUserRow{
 				ID:    100000,
 				Email: arg.Email,
@@ -502,7 +503,7 @@ func TestLoginInvalidPassword(t *testing.T) {
 			return gen.GetUserByEmailRow{
 				ID:           1,
 				Email:        "test@example.com",
-				PasswordHash: hash,
+				PasswordHash: sql.NullString{String: hash, Valid: true},
 			}, nil
 		},
 	}
@@ -520,6 +521,70 @@ func TestLoginInvalidPassword(t *testing.T) {
 	}
 }
 
+func TestLoginOAuthOnlyAccountUsesDistinctGoogleSignInError(t *testing.T) {
+	mock := &mockQuerier{
+		emailFn: func(_ context.Context, _ string) (gen.GetUserByEmailRow, error) {
+			return gen.GetUserByEmailRow{
+				ID:          1,
+				Email:       "oauth@example.com",
+				HasPassword: false,
+			}, nil
+		},
+	}
+	svc := newAuthServiceFromQuerier(mock, testConfig())
+
+	_, err := svc.Login(context.Background(), payload.LoginRequest{
+		Email:    "oauth@example.com",
+		Password: "irrelevant-password",
+	}, "", "", "", "", "", "")
+	if !errors.Is(err, apperror.ErrOAuthOnlyAccount) {
+		t.Fatalf("expected OAuth-only account error, got %v", err)
+	}
+	if !errors.Is(err, apperror.ErrUnauthorized) {
+		t.Fatalf("expected OAuth-only error to preserve unauthorized status, got %v", err)
+	}
+}
+
+func TestForgotPasswordRejectsGoogleOnlyAccount(t *testing.T) {
+	q := &mockQuerier{
+		emailFn: func(_ context.Context, _ string) (gen.GetUserByEmailRow, error) {
+			return gen.GetUserByEmailRow{ID: 42, Email: "google@example.com", HasPassword: false}, nil
+		},
+	}
+	svc := newAuthServiceFromQuerier(q, testConfig())
+
+	err := svc.ForgotPassword(context.Background(), payload.ForgotPasswordRequest{
+		Email:       "google@example.com",
+		NewPassword: "NewStrongPassword123!",
+	}, "127.0.0.1", "test-agent")
+	if !errors.Is(err, apperror.ErrGoogleAccountPassword) {
+		t.Fatalf("expected Google account password error, got %v", err)
+	}
+	if !errors.Is(err, apperror.ErrUnauthorized) {
+		t.Fatalf("expected Google account password error to preserve unauthorized status, got %v", err)
+	}
+	if got := err.Error(); got != "Google account creation can't forgot password" {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
+func TestChangePasswordRejectsGoogleOnlyAccount(t *testing.T) {
+	q := &mockQuerier{
+		getUserByIDFn: func(_ context.Context, _ int64) (gen.GetUserByIDRow, error) {
+			return gen.GetUserByIDRow{ID: 42, Email: "google@example.com", HasPassword: false}, nil
+		},
+	}
+	svc := newAuthServiceFromQuerier(q, testConfig())
+
+	err := svc.ChangePassword(context.Background(), 42, payload.ChangePasswordRequest{
+		CurrentPassword: "CurrentPassword123!",
+		NewPassword:     "NewStrongPassword123!",
+	}, 7, "127.0.0.1", "test-agent")
+	if !errors.Is(err, apperror.ErrGoogleAccountPassword) {
+		t.Fatalf("expected Google account password error, got %v", err)
+	}
+}
+
 func TestLoginSuccess(t *testing.T) {
 	cfg := testConfig()
 	hash := "$2a$10$OnmqGsLru1/LiFn7CVNsJ.N/A7BVHyLmtwt5HiE9wraOvx6OOFpNm"
@@ -529,7 +594,8 @@ func TestLoginSuccess(t *testing.T) {
 			return gen.GetUserByEmailRow{
 				ID:            1,
 				Email:         "test@example.com",
-				PasswordHash:  hash,
+				PasswordHash:  sql.NullString{String: hash, Valid: true},
+				HasPassword:   true,
 				Status:        "ACTIVE",
 				DisplayUserID: utils.NullString("USR_test123"),
 			}, nil
@@ -573,7 +639,8 @@ func TestLoginPendingDeletionAllowed(t *testing.T) {
 			return gen.GetUserByEmailRow{
 				ID:            1,
 				Email:         "test@example.com",
-				PasswordHash:  hash,
+				PasswordHash:  sql.NullString{String: hash, Valid: true},
+				HasPassword:   true,
 				Status:        "PENDING_DELETION",
 				DisplayUserID: utils.NullString("USR_test123"),
 			}, nil
@@ -614,7 +681,7 @@ func TestGenerateTokensCreatesSession(t *testing.T) {
 	}
 	svc := newAuthServiceFromQuerier(mock, cfg)
 
-	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "USER", "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
+	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "USER", enum.OAuthProviderSystem.String(), "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
 	if err != nil {
 		t.Fatalf("GenerateTokens: %v", err)
 	}
@@ -1098,7 +1165,7 @@ func TestGenerateTokensPopulatesCache(t *testing.T) {
 
 	svc := NewAuthService(mock, nil, cfg, cache, testLog(t))
 
-	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "USER", "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
+	tokens, err := svc.GenerateTokens(context.Background(), 42, "USR_42", "user@example.com", "Test User", "USER", enum.OAuthProviderSystem.String(), "web", "Chrome", "127.0.0.1", "US", "San Francisco", "Mozilla/5.0")
 	if err != nil {
 		t.Fatalf("GenerateTokens: %v", err)
 	}

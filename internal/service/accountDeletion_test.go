@@ -20,7 +20,10 @@ func TestAccountDeletionRequestDeletion(t *testing.T) {
 		listActiveSessionsFn: func(_ context.Context, userID int64) ([]gen.Session, error) {
 			return []gen.Session{{ID: 1}, {ID: 2}}, nil
 		},
-		revokeAllSessionsFn: func(_ context.Context, userID int64) error {
+		revokeSessionsExceptFn: func(_ context.Context, arg gen.RevokeSessionsByUserExceptParams) error {
+			if arg.UserID != 1 || arg.ID != 1 {
+				t.Fatalf("unexpected preserved session: %+v", arg)
+			}
 			return nil
 		},
 		markPendingDeletionFn: func(_ context.Context, id int64) error {
@@ -30,7 +33,7 @@ func TestAccountDeletionRequestDeletion(t *testing.T) {
 	urlSvc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", newMockCache(), testLog(t), metrics.New())
 	svc := NewAccountDeletionService(mock, nil, NewAdminService(mock), nil, urlSvc, testLog(t))
 
-	resp, err := svc.RequestDeletion(context.Background(), int64(1))
+	resp, err := svc.RequestDeletion(context.Background(), int64(1), int64(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -50,7 +53,7 @@ func TestAccountDeletionRequestDeletionNotFound(t *testing.T) {
 	}
 	svc := NewAccountDeletionService(mock, nil, nil, nil, nil, testLog(t))
 
-	_, err := svc.RequestDeletion(context.Background(), int64(999))
+	_, err := svc.RequestDeletion(context.Background(), int64(999), int64(1))
 	if err == nil || err != apperror.ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -64,7 +67,7 @@ func TestAccountDeletionRequestDeletionAlreadyPending(t *testing.T) {
 	}
 	svc := NewAccountDeletionService(mock, nil, nil, nil, nil, testLog(t))
 
-	_, err := svc.RequestDeletion(context.Background(), int64(1))
+	_, err := svc.RequestDeletion(context.Background(), int64(1), int64(1))
 	if !errors.Is(err, apperror.ErrConflict) {
 		t.Errorf("expected ErrConflict, got %v", err)
 	}
@@ -126,7 +129,7 @@ func TestAccountDeletionRequestDeletionWithTransaction(t *testing.T) {
 		listActiveSessionsFn: func(_ context.Context, userID int64) ([]gen.Session, error) {
 			return []gen.Session{{ID: 1}}, nil
 		},
-		revokeAllSessionsFn: func(_ context.Context, userID int64) error {
+		revokeSessionsExceptFn: func(_ context.Context, arg gen.RevokeSessionsByUserExceptParams) error {
 			return nil
 		},
 		markPendingDeletionFn: func(_ context.Context, id int64) error {
@@ -136,7 +139,7 @@ func TestAccountDeletionRequestDeletionWithTransaction(t *testing.T) {
 	urlSvc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", newMockCache(), testLog(t), metrics.New())
 	svc := NewAccountDeletionService(mock, nil, NewAdminService(mock), nil, urlSvc, testLog(t))
 
-	resp, err := svc.RequestDeletion(context.Background(), int64(1))
+	resp, err := svc.RequestDeletion(context.Background(), int64(1), int64(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +156,7 @@ func TestAccountDeletionRequestDeletionTxRollback(t *testing.T) {
 		listActiveSessionsFn: func(_ context.Context, userID int64) ([]gen.Session, error) {
 			return []gen.Session{{ID: 1}}, nil
 		},
-		revokeAllSessionsFn: func(_ context.Context, userID int64) error {
+		revokeSessionsExceptFn: func(_ context.Context, arg gen.RevokeSessionsByUserExceptParams) error {
 			return nil
 		},
 		markPendingDeletionFn: func(_ context.Context, id int64) error {
@@ -163,7 +166,7 @@ func TestAccountDeletionRequestDeletionTxRollback(t *testing.T) {
 	urlSvc := NewURLService(mock, nil, "http://localhost:8085", "test-secret-key", newMockCache(), testLog(t), metrics.New())
 	svc := NewAccountDeletionService(mock, nil, nil, nil, urlSvc, testLog(t))
 
-	_, err := svc.RequestDeletion(context.Background(), int64(1))
+	_, err := svc.RequestDeletion(context.Background(), int64(1), int64(1))
 	if err == nil {
 		t.Fatal("expected error when markPendingDeletion fails")
 	}

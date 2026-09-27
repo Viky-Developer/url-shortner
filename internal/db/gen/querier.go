@@ -27,6 +27,7 @@ type Querier interface {
 	CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error)
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error)
 	CreateOAuthAccount(ctx context.Context, arg CreateOAuthAccountParams) error
+	CreateOAuthUser(ctx context.Context, arg CreateOAuthUserParams) (CreateOAuthUserRow, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateURL(ctx context.Context, arg CreateURLParams) (Url, error)
 	CreateURLVersion(ctx context.Context, arg CreateURLVersionParams) error

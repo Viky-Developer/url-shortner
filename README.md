@@ -51,8 +51,10 @@ A high-performance, resilient, and production-grade **URL Shortening and Link Ma
   - Log sanitization to prevent log injection vulnerabilities.
 - **Stateless Authentication & Session Management**:
   - JWT Access Token + Refresh Token rotation with multi-device tracking.
+  - Password login and Google OpenID Connect, with provider-aware JWT claims and sessions.
+  - OAuth-only accounts are stored without synthetic passwords and must continue with Google.
   - Device session limits with remote revocation (revoke single, other, or all devices).
-  - Self-service account deletion lifecycle with a 30-day grace period.
+  - Self-service account deletion lifecycle with a 30-day grace period; the initiating session remains available for account recovery while other sessions are revoked.
 - **Role-Based Access Control (RBAC)**: Distinct permissions for `USER` and `ADMIN` roles.
 - **Production Observability**: Built-in Prometheus metrics exposition (`/metrics`) and auto-provisioned Grafana monitoring dashboards.
 - **Type-Safe Persistence**: Pure SQL with 100% type-safe Go code generation using **sqlc** and **goose** migrations.
@@ -264,6 +266,10 @@ GET /api/v1/auth/google
 ```
 
 After Google authentication, the backend validates the state cookie, exchanges the authorization code, resolves or creates the local account, creates the normal application session, stores access and refresh tokens in HTTP-only cookies, and redirects the browser to `FRONTEND_URL`.
+
+New Google-only users are persisted without a local password. Password login returns a dedicated `401 Unauthorized` response directing them to continue with Google, while unknown emails and incorrect passwords retain the same generic invalid-credentials response. Forgot-password and change-password operations are also rejected for accounts that do not have a local password.
+
+The authentication provider (`SYSTEM` or `GOOGLE`) is recorded on each session and included in access-token claims. Successful browser callbacks additionally set short-lived login-success and user-status metadata cookies for the frontend; authentication cookies remain HTTP-only.
 
 Protected endpoints accept either the existing `Authorization: Bearer ...` header or the HTTP-only `access_token` cookie. Browser requests that cross origins must include credentials.
 

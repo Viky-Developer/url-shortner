@@ -2,7 +2,18 @@
 // handler layers so that handlers can map failures to HTTP status codes.
 package apperror
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
+
+type unauthorizedMessage string
+
+func (e unauthorizedMessage) Error() string { return string(e) }
+
+func (e unauthorizedMessage) Is(target error) bool {
+	return target == ErrUnauthorized
+}
 
 var (
 	// ErrNotFound is returned when a URL does not exist or has been deleted.
@@ -45,7 +56,13 @@ var (
 	// ErrInvalidCredentials is returned when email/password verification
 	// fails. Uses one generic message for both unknown emails and wrong
 	// passwords to prevent account enumeration.
-	ErrInvalidCredentials = errors.New("invalid email or password")
+	ErrInvalidCredentials = fmt.Errorf("%w: invalid email or password", ErrUnauthorized)
+	// ErrOAuthOnlyAccount is returned when an existing account has no local
+	// password and must authenticate through Google.
+	ErrOAuthOnlyAccount = fmt.Errorf("%w: this account uses Google sign-in; please Continue with Google", ErrUnauthorized)
+	// ErrGoogleAccountPassword is returned when a Google-only account attempts
+	// to use a local password-management endpoint.
+	ErrGoogleAccountPassword = unauthorizedMessage("Google account creation can't forgot password")
 	// ErrPasswordReuse is returned when the new password matches a
 	// previous password from history.
 	ErrPasswordReuse = errors.New("new password cannot be the same as current password")

@@ -33,7 +33,7 @@ func (q *Queries) CreateOAuthAccount(ctx context.Context, arg CreateOAuthAccount
 }
 
 const getOAuthUser = `-- name: GetOAuthUser :one
-SELECT u.id, u.email, u.display_user_id, u.display_user_name, u.role, u.status
+SELECT u.id, u.email, u.display_user_id, u.display_user_name, u.role, u.status, u.has_password
 FROM oauth_accounts oa
 JOIN users u ON u.id = oa.user_id
 WHERE oa.provider = $1
@@ -53,6 +53,7 @@ type GetOAuthUserRow struct {
 	DisplayUserName sql.NullString `json:"display_user_name"`
 	Role            string         `json:"role"`
 	Status          string         `json:"status"`
+	HasPassword     bool           `json:"has_password"`
 }
 
 func (q *Queries) GetOAuthUser(ctx context.Context, arg GetOAuthUserParams) (GetOAuthUserRow, error) {
@@ -65,6 +66,7 @@ func (q *Queries) GetOAuthUser(ctx context.Context, arg GetOAuthUserParams) (Get
 		&i.DisplayUserName,
 		&i.Role,
 		&i.Status,
+		&i.HasPassword,
 	)
 	return i, err
 }

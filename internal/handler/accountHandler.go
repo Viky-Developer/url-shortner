@@ -17,7 +17,7 @@ import (
 // AccountDeletionService is the contract the handlers depend on for account
 // deletion business logic. Implemented by *service.AccountDeletionService.
 type AccountDeletionService interface {
-	RequestDeletion(ctx context.Context, userID int64) (*payload.AccountStatusResponse, error)
+	RequestDeletion(ctx context.Context, userID, currentSessionID int64) (*payload.AccountStatusResponse, error)
 	CancelDeletion(ctx context.Context, userID int64) error
 }
 
@@ -48,13 +48,19 @@ func (h *AccountHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	currentSessionID, ok := utils.GetSessionIDFromContext(r)
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, apperror.ErrUnauthorized)
+		return
+	}
 
 	if strings.ToUpper(body.Confirmation) != "DELETE" {
 		response.Error(w, response.StatusCodeFromError(apperror.ErrInvalidPayload),
 			fmt.Errorf("%w: confirmation text must be exactly 'DELETE'", apperror.ErrInvalidPayload))
+		return
 	}
 
-	resp, err := h.deletionService.RequestDeletion(r.Context(), userID)
+	resp, err := h.deletionService.RequestDeletion(r.Context(), userID, currentSessionID)
 	if err != nil {
 		h.log.Error("delete account failed", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)

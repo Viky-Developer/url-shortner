@@ -1,9 +1,12 @@
 package enum
 
-// OAuthProvider identifies an external authentication provider.
+// OAuthProvider identifies the provider used to authenticate a user.
 type OAuthProvider string
 
 const (
+	// OAuthProviderSystem identifies password-based authentication managed by the application.
+	OAuthProviderSystem OAuthProvider = "SYSTEM"
+
 	// OAuthProviderGoogle identifies Google OAuth/OpenID Connect accounts.
 	OAuthProviderGoogle OAuthProvider = "GOOGLE"
 )

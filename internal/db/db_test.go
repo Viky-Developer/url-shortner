@@ -88,7 +88,7 @@ func ensureUser(t *testing.T, q *gen.Queries) int64 {
 	}
 	created, err := q.CreateUser(context.Background(), gen.CreateUserParams{
 		Email:         "default@urlshortner.local",
-		PasswordHash:  "test",
+		PasswordHash:  sql.NullString{String: "test", Valid: true},
 		DisplayUserID: sql.NullString{String: "USR_default", Valid: true},
 	})
 	if err != nil {

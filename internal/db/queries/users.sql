@@ -1,13 +1,18 @@
 -- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL;
+SELECT id, email, password_hash, has_password, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL;
 
 -- name: GetUserByID :one
-SELECT id, email, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL;
+SELECT id, email, display_user_id, display_user_name, role, status, password_changed_at, has_password FROM users WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: CreateUser :one
 INSERT INTO users (email, password_hash, display_user_id, display_user_name, password_changed_at)
 VALUES ($1, $2, $3, $4, NOW())
 RETURNING id, email, display_user_id, display_user_name, role, created_at, password_changed_at;
+
+-- name: CreateOAuthUser :one
+INSERT INTO users (email, password_hash, has_password, display_user_id, display_user_name, password_changed_at)
+VALUES ($1, NULL, FALSE, $2, $3, NULL)
+RETURNING id, email, display_user_id, display_user_name, role, status, created_at, password_changed_at, has_password;
 
 -- name: UpdateUserRole :exec
 UPDATE users SET role = $2 WHERE id = $1 AND deleted_at IS NULL;
@@ -17,8 +22,8 @@ UPDATE users SET display_user_id = $2 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, email, display_user_id, created_at;
 
 -- name: UpdateUserPassword :one
-UPDATE users SET password_hash = $2, password_changed_at = NOW() WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, email, password_changed_at;
+UPDATE users SET password_hash = $2, has_password = TRUE, password_changed_at = NOW() WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, email, password_changed_at, has_password;
 
 -- name: AddPasswordHistory :exec
 INSERT INTO password_history (user_id, password_hash, ip_address, user_agent)

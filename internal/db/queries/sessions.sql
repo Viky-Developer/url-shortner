@@ -1,15 +1,15 @@
 -- name: CreateSession :one
-INSERT INTO sessions (user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at;
+INSERT INTO sessions (user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, expires_at, auth_provider)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at, auth_provider;
 
 -- name: GetSessionByRefreshTokenHash :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at, auth_provider
 FROM sessions
 WHERE refresh_token_hash = $1 AND session_status = 1;
 
 -- name: GetSessionByID :one
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at, auth_provider
 FROM sessions
 WHERE id = $1;
 
@@ -20,13 +20,13 @@ UPDATE sessions SET last_active_at = NOW() WHERE id = $1 AND session_status = 1;
 UPDATE sessions SET session_status = 0, revoked_at = NOW() WHERE id = $1 AND user_id = $2;
 
 -- name: ListSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at, auth_provider
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at DESC;
 
 -- name: ListActiveSessionsByUser :many
-SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at
+SELECT id, user_id, refresh_token_hash, device_type, device_name, country, city, ip_address, user_agent, logged_in_at, last_active_at, session_status, expires_at, revoked_at, auth_provider
 FROM sessions
 WHERE user_id = $1 AND session_status = 1
 ORDER BY last_active_at ASC;
