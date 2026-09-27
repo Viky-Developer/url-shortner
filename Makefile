@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 MIGRATIONS_DIR := internal/db/migrations
+SEEDS_DIR := internal/db/seeds
 DB_DSN = postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)
 
 -include .env
@@ -61,11 +62,12 @@ lefthook-run: ## Manually run all pre-commit checks
 ## ---------------------------------------------------------------------------
 
 .PHONY: branch
-branch: ## Create a prefixed branch: make branch type=feat name=add-login
-	@test -n "$(type)" || (echo "Usage: make branch type=<feat|refactor|bug|fix|chore> name=<branch-name>"; exit 1)
-	@test -n "$(name)" || (echo "Usage: make branch type=<feat|refactor|bug|fix|chore> name=<branch-name>"; exit 1)
+branch: ## Create a prefixed branch: make branch type=feat issue=42 name=add-login
+	@test -n "$(type)" || (echo "Usage: make branch type=<type> issue=<number> name=<branch-name>"; exit 1)
+	@test -n "$(issue)" || (echo "Usage: make branch type=<type> issue=<number> name=<branch-name>"; exit 1)
+	@test -n "$(name)" || (echo "Usage: make branch type=<type> issue=<number> name=<branch-name>"; exit 1)
 	@case "$(type)" in feat|refactor|bug|fix|chore|hotfix) ;; *) echo "invalid type '$(type)': allowed types are feat|refactor|bug|fix|chore|hotfix"; exit 1;; esac
-	git checkout -b "$(type)/$(name)"
+	git checkout -b "$(type)/$(issue)/$(name)"
 
 ## ---------------------------------------------------------------------------
 ## Code quality
@@ -124,6 +126,27 @@ migration-reset: ## Roll back ALL migrations
 	goose -dir $(MIGRATIONS_DIR) postgres "$(DB_DSN)" reset
 
 ## ---------------------------------------------------------------------------
+## Seeds (goose — internal/db/seeds)
+## ---------------------------------------------------------------------------
+
+.PHONY: seed-create
+seed-create: ## Create a new seed file: make seed-create name=click_logs_test_data
+	@test -n "$(name)" || (echo "Usage: make seed-create name=your_seed_name"; exit 1)
+	goose -dir $(SEEDS_DIR) create $(name) sql
+
+.PHONY: seed-up
+seed-up: ## Apply seed migrations (blocked_domains, etc.)
+	goose -table goose_seed_version -allow-missing -dir $(SEEDS_DIR) postgres "$(DB_DSN)" up
+
+.PHONY: seed-down
+seed-down: ## Roll back the last seed migration
+	goose -table goose_seed_version -dir $(SEEDS_DIR) postgres "$(DB_DSN)" down
+
+.PHONY: seed-status
+seed-status: ## Show applied vs pending seed migrations
+	goose -table goose_seed_version -dir $(SEEDS_DIR) postgres "$(DB_DSN)" status
+
+## ---------------------------------------------------------------------------
 ## Build & run
 ## ---------------------------------------------------------------------------
 
@@ -135,6 +158,10 @@ sqlc-generate: ## Regenerate type-safe db code from SQL queries
 build: ## Compile the server binary
 	go build -o bin/url-shortner ./cmd/server
 
+.PHONY: dev
+dev: ## Run the server with live reload (air)
+	air
+
 .PHONY: run
 run: ## Build and run the server
 	go run ./cmd/server
@@ -142,6 +169,10 @@ run: ## Build and run the server
 .PHONY: test
 test: ## Run all tests
 	go test ./... -count=1
+
+.PHONY: prometheus-seed
+prometheus-seed: ## Generate traffic so the Prometheus/Grafana dashboards show data (server must be running)
+	./scripts/seed-prometheus.sh
 
 .PHONY: clean
 clean: ## Remove build artifacts

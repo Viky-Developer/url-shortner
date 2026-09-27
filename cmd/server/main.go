@@ -1,35 +1,190 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 
+	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
+	"github.com/vicky/url-shortner/external/metrics"
+	externaloauth "github.com/vicky/url-shortner/external/oauth"
+	"github.com/vicky/url-shortner/external/queue"
 	"github.com/vicky/url-shortner/internal/config"
 	"github.com/vicky/url-shortner/internal/db"
+	gen "github.com/vicky/url-shortner/internal/db/gen"
+	"github.com/vicky/url-shortner/internal/graceful"
+	"github.com/vicky/url-shortner/internal/handler"
+	"github.com/vicky/url-shortner/internal/middleware"
+	"github.com/vicky/url-shortner/internal/routes"
+	"github.com/vicky/url-shortner/internal/service"
+	"github.com/vicky/url-shortner/internal/utils"
+	"golang.org/x/crypto/bcrypt"
 )
 
+// main is the application entry point. It recovers from panics and exits with
+// a non-zero status when run fails.
 func main() {
 	defer logger.Recover()
 
-	cfg := config.Load()
-
-	log, err := logger.New(logger.WithLevel(cfg.LogLevel))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize logger: %v\n", err)
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// run wires configuration, logging, database, handlers, routes, and the HTTP
+// server together, then blocks until the server shuts down gracefully.
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	log, err := logger.New(
+		logger.WithLevel(cfg.LogLevel),
+		logger.WithColor(cfg.LogColor),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+
 	defer func() { _ = log.Sync() }()
 
-	database, err := cfg.Connect()
+	database, err := connectDatabase(cfg, log)
 	if err != nil {
-		log.Fatal("failed to connect to database", logger.Error(err))
+		return err
 	}
+
 	defer func() {
 		if err := database.Close(); err != nil {
 			log.Error("failed to close database", logger.Error(err))
 		}
 	}()
+
+	queries := gen.New(database)
+
+	cacheWrapper := &cache.ConnectionWrapper{}
+	sessionCache, err := cacheWrapper.GetRedisCache(cache.RedisConfig{
+		Addr:       cfg.RedisHost + ":" + cfg.RedisPort,
+		UserName:   cfg.RedisUserName,
+		Password:   cfg.RedisPassword,
+		DB:         cfg.RedisDB,
+		MaxRetries: cfg.RedisMaxRetries,
+		TLS:        cfg.RedisTLS,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to connect to redis: %w", err)
+	}
+	log.Info("redis connected", logger.String("addr", cfg.RedisHost+":"+cfg.RedisPort))
+	defer func() { _ = sessionCache.Close() }()
+
+	var clickPublisher queue.ClickPublisher
+	var rabbitMQClient *queue.RabbitMQClient
+	var consumerCancel context.CancelFunc
+
+	if cfg.EnableRabbitMQ {
+		rmq, err := queue.NewRabbitMQClient(queue.RabbitMQConfig{
+			URL:        cfg.RabbitMQURL,
+			Exchange:   cfg.RabbitMQExchangeClicks,
+			RoutingKey: cfg.RabbitMQRoutingKeyClicks,
+			QueueName:  cfg.RabbitMQQueueClicks,
+		}, log)
+		if err != nil {
+			return fmt.Errorf("failed to connect to rabbitmq: %w", err)
+		}
+		rabbitMQClient = rmq
+		clickPublisher = rmq
+		log.Info("rabbitmq connected",
+			logger.String("exchange", cfg.RabbitMQExchangeClicks),
+			logger.String("routingKey", cfg.RabbitMQRoutingKeyClicks),
+			logger.String("queue", cfg.RabbitMQQueueClicks),
+		)
+		defer func() { _ = rabbitMQClient.Close() }()
+	}
+
+	googleOAuth := externaloauth.NewGoogle(externaloauth.GoogleConfig{
+		ClientID: cfg.GoogleClientID, ClientSecret: cfg.GoogleClientSecret, RedirectURL: cfg.GoogleRedirectURL,
+		AuthURL: cfg.GoogleAuthURL, TokenURL: cfg.GoogleTokenURL, UserInfoURL: cfg.GoogleUserInfoURL,
+	})
+
+	log.Info("OAuth connected successfully...")
+
+	authService := service.NewAuthService(queries, database, cfg, sessionCache, log, googleOAuth)
+	authHandler := handler.NewAuthHandler(authService, log, cfg.FrontendURL)
+
+	appMetrics := metrics.New()
+
+	var urlOpts []service.URLOption
+	if clickPublisher != nil {
+		urlOpts = append(urlOpts, service.WithClickPublisher(clickPublisher))
+	}
+	urlService := service.NewURLService(queries, database, cfg.ServerBaseURL, cfg.UserIDSecretKey, sessionCache, log, appMetrics, urlOpts...)
+	urlHandler := handler.NewURLHandler(urlService, log)
+
+	if rabbitMQClient != nil {
+		clickConsumer := service.NewClickConsumerWorker(rabbitMQClient, urlService, log)
+		var consumerCtx context.Context
+		consumerCtx, consumerCancel = context.WithCancel(context.Background())
+		go clickConsumer.Start(consumerCtx)
+	}
+
+	adminService := service.NewAdminService(queries)
+	adminHandler := handler.NewAdminHandler(adminService, log)
+
+	accountDeletionService := service.NewAccountDeletionService(queries, database, adminService, sessionCache, urlService, log)
+	accountHandler := handler.NewAccountHandler(accountDeletionService, log)
+
+	app := middleware.Chain(routes.New(urlHandler, authHandler, adminHandler, accountHandler, authService, appMetrics),
+		middleware.Recovery(log),
+		middleware.Metrics(appMetrics),
+		middleware.Logger(log),
+		middleware.ContentTypeJSON,
+	)
+
+	// Start the background retention worker for session/password history cleanup
+	// and expired account deletions.
+	retentionWorker := service.NewRetentionWorker(adminService, accountDeletionService, queries, cfg, log)
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+
+	go retentionWorker.Start(retentionCtx)
+
+	server := &http.Server{
+		Addr:         cfg.ServerHost + ":" + cfg.ServerPort,
+		Handler:      app,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		log.Info("server starting", logger.String("addr", server.Addr))
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal("server failed", logger.Error(err))
+		}
+	}()
+
+	graceful.WaitForSignal()
+	retentionCancel() // stop the background retention worker
+	if consumerCancel != nil {
+		consumerCancel() // stop the background rabbitmq consumer worker
+	}
+	graceful.Shutdown(server, log, 10*time.Second)
+
+	return nil
+}
+
+// connectDatabase opens a Postgres connection and applies pending migrations,
+// logging each step along the way.
+func connectDatabase(cfg *config.Config, log logger.Logger) (*sql.DB, error) {
+	database, err := cfg.Connect()
+	if err != nil {
+		return nil, err
+	}
 
 	log.Info("connected to postgres",
 		logger.String("host", cfg.DBHost),
@@ -38,8 +193,96 @@ func main() {
 	)
 
 	if err := db.Migrate(database, "internal/db/migrations"); err != nil {
-		log.Fatal("failed to run migrations", logger.Error(err))
+		return nil, err
 	}
 
 	log.Info("migrations applied successfully")
+
+	if err := db.Seed(database, "internal/db/seeds"); err != nil {
+		return nil, err
+	}
+
+	log.Info("seed data applied successfully")
+
+	if err := ensureDefaultUser(database, cfg, log); err != nil {
+		return nil, err
+	}
+
+	return database, nil
+}
+
+func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) error {
+
+	q := gen.New(database)
+	user, err := q.GetUserByEmail(context.Background(), cfg.DefaultUserEmail)
+	if err == nil {
+		log.Info("default user already exists", logger.String("email", cfg.DefaultUserEmail))
+		// Ensure default user always has ADMIN role
+		if user.Role != "ADMIN" {
+			if err := q.UpdateUserRole(context.Background(), gen.UpdateUserRoleParams{
+				ID:   user.ID,
+				Role: "ADMIN",
+			}); err != nil {
+				return fmt.Errorf("promote default user to admin: %w", err)
+			}
+			log.Info("default user promoted to ADMIN", logger.String("email", cfg.DefaultUserEmail))
+		}
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("check default user: %w", err)
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(cfg.DefaultUserPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash default user password: %w", err)
+	}
+
+	row, err := q.CreateUser(context.Background(), gen.CreateUserParams{
+		Email:         cfg.DefaultUserEmail,
+		PasswordHash:  sql.NullString{String: string(hashedPassword), Valid: true},
+		DisplayUserID: sql.NullString{}, // NULL — computed and stored after insert
+	})
+	if err != nil {
+		return fmt.Errorf("create default user: %w", err)
+	}
+
+	// Set default user role to ADMIN
+	if err := q.UpdateUserRole(context.Background(), gen.UpdateUserRoleParams{
+		ID:   row.ID,
+		Role: "ADMIN",
+	}); err != nil {
+		return fmt.Errorf("set default user role to admin: %w", err)
+	}
+
+	// Seed the initial password history entry — forgot-password validates
+	// against the last history row, so it must exist from day one.
+	if err := q.AddPasswordHistory(context.Background(), gen.AddPasswordHistoryParams{
+		UserID:       row.ID,
+		PasswordHash: string(hashedPassword),
+		IpAddress:    utils.NullIP(""),
+		UserAgent:    utils.NullString(""),
+	}); err != nil {
+		return fmt.Errorf("seed default user password history: %w", err)
+	}
+
+	// The id is generated by the DB sequence, so the display_user_id is encoded
+	// from it afterwards and stored in our format (e.g. "USR_8dUQqQrLwel").
+	_, err = q.UpdateUserDisplayID(context.Background(), gen.UpdateUserDisplayIDParams{
+		ID: row.ID,
+		DisplayUserID: sql.NullString{
+			String: utils.EncodeID(row.ID, utils.UserIDPrefix, cfg.UserIDSecretKey),
+			Valid:  true,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("update default user display id: %w", err)
+	}
+
+	log.Info("default user created",
+		logger.Int64("id", row.ID),
+		logger.String("email", row.Email),
+		logger.String("userId", utils.EncodeID(row.ID, utils.UserIDPrefix, cfg.UserIDSecretKey)),
+	)
+	return nil
 }

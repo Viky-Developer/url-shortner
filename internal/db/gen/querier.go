@@ -6,11 +6,91 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
+	AddPasswordHistory(ctx context.Context, arg AddPasswordHistoryParams) error
+	ClickStatsByURL(ctx context.Context, arg ClickStatsByURLParams) (ClickStatsByURLRow, error)
+	ClickStatsByUser(ctx context.Context, arg ClickStatsByUserParams) (ClickStatsByUserRow, error)
+	ClicksByDateRange(ctx context.Context, arg ClicksByDateRangeParams) ([]ClicksByDateRangeRow, error)
+	ClicksByDateRangeByUser(ctx context.Context, arg ClicksByDateRangeByUserParams) ([]ClicksByDateRangeByUserRow, error)
+	CountAllClickLogsByUser(ctx context.Context, arg CountAllClickLogsByUserParams) (int64, error)
+	CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error)
+	CountClickLogsByURL(ctx context.Context, arg CountClickLogsByURLParams) (int64, error)
+	CountPasswordHistory(ctx context.Context, userID int64) (int64, error)
+	CountRevokedSessions(ctx context.Context) (int64, error)
+	CountURLs(ctx context.Context, arg CountURLsParams) (int64, error)
+	CountURLsByStatus(ctx context.Context, userID int64) (CountURLsByStatusRow, error)
+	CreateBlockedDomain(ctx context.Context, arg CreateBlockedDomainParams) (BlockedDomain, error)
+	CreateBlockedIPRange(ctx context.Context, arg CreateBlockedIPRangeParams) (BlockedIpRange, error)
+	CreateClickLog(ctx context.Context, arg CreateClickLogParams) (ClickLog, error)
+	CreateDestination(ctx context.Context, arg CreateDestinationParams) (CreateDestinationRow, error)
+	CreateOAuthAccount(ctx context.Context, arg CreateOAuthAccountParams) error
+	CreateOAuthUser(ctx context.Context, arg CreateOAuthUserParams) (CreateOAuthUserRow, error)
+	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateURL(ctx context.Context, arg CreateURLParams) (Url, error)
-	GetURLByShortCode(ctx context.Context, shortCode string) (Url, error)
+	CreateURLVersion(ctx context.Context, arg CreateURLVersionParams) error
+	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	CumulativeClickCounts(ctx context.Context, arg CumulativeClickCountsParams) ([]CumulativeClickCountsRow, error)
+	DeleteBlockedDomain(ctx context.Context, id int32) error
+	DeleteBlockedIPRange(ctx context.Context, id int64) error
+	DeletePasswordHistoryOver(ctx context.Context, arg DeletePasswordHistoryOverParams) error
+	ExpireSession(ctx context.Context, id int64) error
+	ExpireSessionsByUser(ctx context.Context, userID int64) error
+	GetAccountsDueForDeletion(ctx context.Context) ([]int64, error)
+	GetBlockedDomain(ctx context.Context, domain string) (GetBlockedDomainRow, error)
+	GetDailyStatsByURL(ctx context.Context, arg GetDailyStatsByURLParams) ([]GetDailyStatsByURLRow, error)
+	GetDestinationByHash(ctx context.Context, urlHash string) (GetDestinationByHashRow, error)
+	GetDestinationByID(ctx context.Context, id int64) (GetDestinationByIDRow, error)
+	GetLatestURLVersion(ctx context.Context, urlID int64) (int32, error)
+	GetOAuthUser(ctx context.Context, arg GetOAuthUserParams) (GetOAuthUserRow, error)
+	GetSessionByID(ctx context.Context, id int64) (Session, error)
+	GetSessionByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (Session, error)
+	GetSoftDeletedURLByID(ctx context.Context, arg GetSoftDeletedURLByIDParams) (GetSoftDeletedURLByIDRow, error)
+	GetURLByID(ctx context.Context, arg GetURLByIDParams) (GetURLByIDRow, error)
+	GetURLByShortCode(ctx context.Context, shortCode string) (GetURLByShortCodeRow, error)
+	GetURLByShortCodeForUpdate(ctx context.Context, shortCode string) (GetURLByShortCodeForUpdateRow, error)
+	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
+	GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, error)
+	GetUserStatusByID(ctx context.Context, id int64) (GetUserStatusByIDRow, error)
+	HardDeleteURL(ctx context.Context, arg HardDeleteURLParams) error
+	HardDeleteUser(ctx context.Context, id int64) error
+	HardDeleteUserByID(ctx context.Context, id int64) error
+	IncrementURLClick(ctx context.Context, id int64) error
+	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
+	ListActiveSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
+	ListAllClickLogsByUser(ctx context.Context, arg ListAllClickLogsByUserParams) ([]ListAllClickLogsByUserRow, error)
+	ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]AuditLog, error)
+	ListBlockedDomains(ctx context.Context) ([]BlockedDomain, error)
+	ListBlockedIPRanges(ctx context.Context) ([]BlockedIpRange, error)
+	ListClickLogsByURL(ctx context.Context, arg ListClickLogsByURLParams) ([]ListClickLogsByURLRow, error)
+	ListPasswordHistory(ctx context.Context, arg ListPasswordHistoryParams) ([]string, error)
+	ListSessionsByUser(ctx context.Context, userID int64) ([]Session, error)
+	ListURLs(ctx context.Context, arg ListURLsParams) ([]ListURLsRow, error)
+	MarkPendingDeletion(ctx context.Context, id int64) error
+	PurgeOldPasswordHistory(ctx context.Context, createdAt sql.NullTime) error
+	PurgeOldRevokedSessions(ctx context.Context, revokedAt sql.NullTime) error
+	RefreshDailyStats(ctx context.Context, arg RefreshDailyStatsParams) error
+	RestoreAccount(ctx context.Context, id int64) error
+	RevokeAllSessionsByUser(ctx context.Context, userID int64) error
+	RevokeOtherSessionsByUser(ctx context.Context, arg RevokeOtherSessionsByUserParams) error
+	RevokeSession(ctx context.Context, arg RevokeSessionParams) error
+	RevokeSessionsByUserExcept(ctx context.Context, arg RevokeSessionsByUserExceptParams) error
+	ShortCodeExists(ctx context.Context, shortCode string) (bool, error)
+	SoftDeleteURL(ctx context.Context, arg SoftDeleteURLParams) (Url, error)
+	SoftDeleteUser(ctx context.Context, id int64) error
+	TopBrowsersByURL(ctx context.Context, arg TopBrowsersByURLParams) ([]TopBrowsersByURLRow, error)
+	TopDeviceTypesByURL(ctx context.Context, arg TopDeviceTypesByURLParams) ([]TopDeviceTypesByURLRow, error)
+	TopReferrersByURL(ctx context.Context, arg TopReferrersByURLParams) ([]TopReferrersByURLRow, error)
+	TopReferrersByUser(ctx context.Context, arg TopReferrersByUserParams) ([]TopReferrersByUserRow, error)
+	UpdateSessionLastActive(ctx context.Context, id int64) error
+	UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error)
+	UpdateURLHealthStatus(ctx context.Context, arg UpdateURLHealthStatusParams) (Url, error)
+	UpdateUserDisplayID(ctx context.Context, arg UpdateUserDisplayIDParams) (UpdateUserDisplayIDRow, error)
+	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (UpdateUserPasswordRow, error)
+	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error
+	UpsertDailyStats(ctx context.Context, arg UpsertDailyStatsParams) error
 }
 
 var _ Querier = (*Queries)(nil)

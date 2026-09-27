@@ -1,204 +1,341 @@
-# url-shortner
+# URL Shortener Microservice
 
-A URL shortening service built with **Go**, using **sqlc + goose** for type-safe database access and migrations, a message queue (**RabbitMQ**) for async processing, and **Grafana** (with **Prometheus**) for observability and monitoring.
+[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-336791?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7+-DC382D?style=flat&logo=redis&logoColor=white)](https://redis.io/)
+[![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3+-FF6600?style=flat&logo=rabbitmq&logoColor=white)](https://www.rabbitmq.com/)
+[![Prometheus](https://img.shields.io/badge/Prometheus-Monitoring-E6522C?style=flat&logo=prometheus&logoColor=white)](https://prometheus.io/)
+[![Grafana](https://img.shields.io/badge/Grafana-Dashboards-F46800?style=flat&logo=grafana&logoColor=white)](https://grafana.com/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Features
+A high-performance, resilient, and production-grade **URL Shortening and Link Management Service** written in **Go**. Built using clean architecture, type-safe database queries (**sqlc**), versioned migrations (**goose**), distributed in-memory caching (**Redis**), asynchronous event processing (**RabbitMQ**), and full-stack observability (**Prometheus & Grafana**).
 
-- Create short URLs from long URLs
-- Redirect short URLs to their original destination
-- Async link analytics / click tracking via RabbitMQ
-- Type-safe SQL queries generated with sqlc
-- Database migrations managed with goose
-- Metrics scraping with Prometheus and dashboards in Grafana
+---
 
-## Architecture
+## Table of Contents
 
-```
-Client ──► HTTP Server (cmd/server)
-              │
-              ├── handler ──► service ──► db (sqlc generated)
-              │                                │
-              │                                └── Postgres (goose migrations)
-              │
-              └── publish click events ──► RabbitMQ
-                                               │
-                                               └── consumers (analytics)
-```
+- [Key Features](#key-features)
+- [System Architecture](#system-architecture)
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Quickstart with Docker Compose](#quickstart-with-docker-compose)
+  - [Database Migrations](#database-migrations)
+  - [Running the Application](#running-the-application)
+- [Configuration Reference](#configuration-reference)
+- [API Reference](#api-reference)
+  - [Health & Observability](#health--observability)
+  - [Redirection (Public)](#redirection-public)
+  - [Authentication & Sessions](#authentication--sessions)
+  - [URL Management & Analytics](#url-management--analytics)
+  - [Account Management](#account-management)
+  - [Admin Panel](#admin-panel)
+- [Observability & Monitoring](#observability--monitoring)
+- [Development & Quality Assurance](#development--quality-assurance)
+  - [Makefile Commands](#makefile-commands)
+  - [Git Hooks & Commit Guidelines](#git-hooks--commit-guidelines)
+- [License](#license)
 
-- **cmd/server** — application entry point
-- **internal/handler** — HTTP handlers
-- **internal/service** — business logic (shortening, redirect, analytics)
-- **internal/db** — database layer (migrations + queries + generated code)
-- **internal/db/migrations** — goose SQL migrations (schema source of truth)
-- **internal/db/queries** — raw SQL queries used by sqlc
-- **internal/db/gen** — sqlc-generated type-safe Go code
-- **pkg** — shared / reusable packages
+---
 
-## Requirements
+## Key Features
 
-- Go 1.26+
-- [sqlc](https://sqlc.dev/) (installed via `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest`)
-- [goose](https://pressly.github.io/goose/) for database migrations
-- Docker & Docker Compose (for Postgres, RabbitMQ, Prometheus, Grafana)
-- PostgreSQL for URL storage
-- [lefthook](https://lefthook.dev/) for git hooks (install via `go install github.com/evilmartians/lefthook@latest`)
+- **Blazing Fast Redirects**: Sub-millisecond response times with **Redis 30-minute TTL caching** (zero database queries on cache hits).
+- **Asynchronous Click Analytics**: High-throughput click ingestion via **RabbitMQ** direct exchange (`url.clicks.direct`), routing keys (`url.clicks.route`), and durable queues (`url.clicks`).
+- **Resilient Fallback**: Automatically degrades gracefully to synchronous transactional database writes if RabbitMQ or Redis is unavailable or unconfigured.
+- **Rich Analytics & Reporting**: Tracks referrers, device types (desktop/mobile/tablet), browsers, and cumulative daily click aggregations.
+- **Robust Security**:
+  - Domain blacklisting to prevent phishing and malicious URL targets.
+  - CIDR-based IP range blocking.
+  - Active URL destination health checks before short code creation or updates.
+  - Log sanitization to prevent log injection vulnerabilities.
+- **Stateless Authentication & Session Management**:
+  - JWT Access Token + Refresh Token rotation with multi-device tracking.
+  - Password login and Google OpenID Connect, with provider-aware JWT claims and sessions.
+  - OAuth-only accounts are stored without synthetic passwords and must continue with Google.
+  - Device session limits with remote revocation (revoke single, other, or all devices).
+  - Self-service account deletion lifecycle with a 30-day grace period; the initiating session remains available for account recovery while other sessions are revoked.
+- **Role-Based Access Control (RBAC)**: Distinct permissions for `USER` and `ADMIN` roles.
+- **Production Observability**: Built-in Prometheus metrics exposition (`/metrics`) and auto-provisioned Grafana monitoring dashboards.
+- **Type-Safe Persistence**: Pure SQL with 100% type-safe Go code generation using **sqlc** and **goose** migrations.
 
-## Git Hooks (lefthook)
+---
 
-Git hooks are managed with [lefthook](https://lefthook.dev/), configured in `lefthook.yml`. Install them once:
+## System Architecture
 
-```bash
-lefthook install
-```
-
-### pre-commit
-
-Runs in parallel (up to 4) over staged Go files:
-
-| Check      | What it does                                             |
-|------------|----------------------------------------------------------|
-| `gofmt`    | Fails if staged `.go` files are unformatted               |
-| `goimports`| Fails on import formatting issues (skipped on merges)     |
-| `go-vet`   | Runs `go vet ./...`                                       |
-| `golangci` | Runs `golangci-lint run ./... --timeout 5m`               |
-| `sqlc`     | Runs `sqlc generate` and fails if `internal/db/gen` is stale |
-| `build`    | Runs `go build ./...`                                     |
-
-> `sqlc`, `sqlc-dev`, and a Go toolchain must be on `PATH` for the hooks to pass.
-
-### commit-msg
-
-Enforces [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-<type>(<optional scope>): <subject>
-```
-
-Allowed types: `feat, fix, refactor, chore, docs, test, perf, ci, style, build, revert`. Merges are skipped.
-
-### pre-push (branch naming)
-
-Branches must use a context prefix. Pushes are blocked if the name does not match:
-
-| Prefix      | Purpose                   |
-|-------------|---------------------------|
-| `feat/`     | New features              |
-| `refactor/` | Refactoring existing code |
-| `bug/`      | Bug fixes                 |
-| `fix/`      | Immediate fixes (dev/main)|
-| `hotfix/`   | Urgent production fixes   |
-| `chore/`    | Maintenance tasks         |
-
-> `main`, `dev`, and `migrations` are allowlisted and can be pushed without a prefix.
-
-Create a properly named branch with the Makefile helper:
-
-```bash
-make branch type=feat name=add-login
-```
-
-This runs `git checkout -b feat/add-login`.
-
-## Database (sqlc + goose)
-
-Database access is **not** ORM-based. Instead:
-
-- **goose** owns the schema via SQL migrations in `internal/db/migrations`.
-- **sqlc** generates type-safe Go code (in `internal/db/gen`) from the raw queries in `internal/db/queries` and the schema in `internal/db/migrations`. Configuration lives in `sqlc.yaml`.
-
-### Generate code (after changing schema or queries)
-
-```bash
-sqlc generate
+```text
+                            ┌────────────────────────────────────────┐
+                            │           Client Requests              │
+                            └───────────────────┬────────────────────┘
+                                                │
+                                                ▼
+                            ┌────────────────────────────────────────┐
+                            │    HTTP Server (cmd/server:8080)       │
+                            │  ├── Auth Middleware (JWT / Sessions)  │
+                            │  ├── Role Middleware (User / Admin)    │
+                            │  └── Metrics & Structured Logging      │
+                            └─────────┬───────────────────┬──────────┘
+                                      │                   │
+         [GET /api/v1/{shortCode}]    │                   │   [Other API Endpoints]
+                                      ▼                   ▼
+    ┌────────────────────────────────────────┐     ┌─────────────────────────────┐
+    │          URL Service (Redirect)        │     │  Auth / Admin / Account Svc │
+    └───────┬──────────────────────┬─────────┘     └──────────────┬──────────────┘
+            │                      │                              │
+     [Cache Hit]            [Cache Miss]                          │
+            │                      │                              │
+            ▼                      ▼                              │
+┌───────────────────────┐  ┌────────────────────────────────┐    │
+│  Redis (Cache Service)│  │      PostgreSQL (sqlc)         │◄───┘
+│  - 30-min TTL         │  │  - Source of Truth Records     │
+└───────────────────────┘  └────────────────────────────────┘
+            │                      ▲
+     (Async Click Event)           │ (Buffered Transactional Writes)
+            │                      │
+            ▼                      │
+┌───────────────────────┐  ┌────────────────────────────────┐
+│  RabbitMQ Broker      │─►│  ClickConsumerWorker (Service) │
+│  - Exchange & Routing │  │  - Manual ACK / Fair QoS (10)  │
+│  - Durable Queue      │  │  - RecordClickTx Atomicity     │
+└───────────────────────┘  └────────────────────────────────┘
 ```
 
-### Apply migrations
+---
 
-```bash
-goose -dir internal/db/migrations postgres "$DB_DSN" up
-```
+## Tech Stack
 
-> Do not edit files in `internal/db/gen` by hand — they are regenerated by sqlc.
+| Layer | Technology | Purpose |
+|---|---|---|
+| **Language** | [Go 1.26+](https://go.dev/) | High-concurrency backend microservice |
+| **Primary Database** | [PostgreSQL 16](https://www.postgresql.org/) | Relational store for URLs, users, sessions, and analytics |
+| **SQL Compiler** | [sqlc](https://sqlc.dev/) | Generates type-safe Go boilerplate from raw SQL queries |
+| **Database Migrations** | [goose](https://pressly.github.io/goose/) | Database schema versioning and seeds |
+| **In-Memory Cache** | [Redis 7](https://redis.io/) | URL redirect caching and active user session caching |
+| **Message Broker** | [RabbitMQ 3](https://www.rabbitmq.com/) | Decoupled asynchronous click event processing |
+| **Metrics & Monitoring**| [Prometheus](https://prometheus.io/) | Real-time application and HTTP performance metric scraping |
+| **Visualization** | [Grafana](https://grafana.com/) | Auto-provisioned dashboards for service observability |
+| **Git Hooks** | [lefthook](https://lefthook.dev/) | Fast pre-commit formatting, linting, and branch validation |
+| **Linter** | [golangci-lint](https://golangci-lint.run/) | Static analysis and code quality assurance |
+
+---
 
 ## Getting Started
 
-### 1. Start infrastructure with Docker Compose
+### Prerequisites
+
+Ensure you have the following installed on your machine:
+- **Go 1.26+**
+- **Docker & Docker Compose**
+- **sqlc**: `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest`
+- **goose**: `go install github.com/pressly/goose/v3/cmd/goose@latest`
+- **lefthook**: `go install github.com/evilmartians/lefthook@latest`
+- **golangci-lint**: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
+
+### Quickstart with Docker Compose
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/Viky-Developer/url-shortner.git
+   cd url-shortner
+   ```
+
+2. **Configure environment variables**:
+   ```bash
+   cp .env.example .env # or customize .env
+   ```
+
+3. **Start infrastructure services**:
+   ```bash
+   make docker-up
+   ```
+   This spins up:
+   - **PostgreSQL** on `localhost:5432`
+   - **Redis** on `localhost:6379`
+   - **RabbitMQ** (AMQP on `localhost:5672`, Management UI on `http://localhost:15672`)
+   - **Prometheus** on `http://localhost:9090`
+   - **Grafana** on `http://localhost:3000`
+
+### Database Migrations
+
+Apply database schema migrations and initial seed records:
 
 ```bash
-docker compose up -d rabbitmq prometheus grafana
+make migration-up
+make seed-up
 ```
 
-This brings up:
+### Running the Application
 
-| Service   | URL                              | Default credentials   |
-|-----------|----------------------------------|-----------------------|
-| RabbitMQ  | http://localhost:15672           | guest / guest         |
-| Prometheus| http://localhost:9090            | -                     |
-| Grafana   | http://localhost:3000            | admin / admin         |
-
-### 2. Run the server
+Start the server natively:
 
 ```bash
-go run ./cmd/server
+make run
 ```
 
-## Configuration
+Or run with live reload using [Air](https://github.com/air-verse/air):
 
-Configuration is handled in `internal/config`. Settings can be provided via environment variables or a config file (e.g. `.env` / YAML), including:
-
-- Server listen address and port
-- Database connection (DSN)
-- RabbitMQ connection URL
-- Base URL prefix for generated short links
-
-## RabbitMQ
-
-RabbitMQ is used for async event processing, such as recording click count per short link. The service publishes messages (e.g. click events) to a queue, and consumers handle the analytics.
-
-## Observability (Grafana + Prometheus)
-
-The service exposes Prometheus metrics (e.g. `/:metrics` or `/metrics`).
-
-- **Prometheus** scrapes the service metrics endpoint (scrape config: `prometheus.yml`).
-- **Grafana** connects to Prometheus as a data source and provides:
-  - Request rate and latency dashboards
-  - Total URLs created / redirects served
-  - RabbitMQ queue depth and consumer health
-
-### Import dashboard
-
-In Grafana, add the Prometheus data source (`http://prometheus:9090`) and import a dashboard (JSON can be provided in `deploy/grafana/`).
-
-## API
-
-| Method | Path           | Description             |
-|--------|----------------|-------------------------|
-| POST   | `/shorten`     | Create a short URL      |
-| GET    | `/:shortCode`  | Redirect to original URL|
-| GET    | `/metrics`     | Prometheus metrics      |
-
-> Endpoints are placeholders until the service is fully implemented.
-
-## Project Structure
-
+```bash
+make dev
 ```
-.
-├── cmd/server          # main entry point
-├── internal
-│   ├── config         # configuration
-│   ├── handler        # HTTP handlers
-│   ├── service        # business logic
-│   └── db             # database layer (sqlc + goose)
-│       ├── migrations # goose SQL migrations
-│       ├── queries    # raw SQL queries (sqlc input)
-│       └── gen        # sqlc-generated code
-├── pkg                 # shared packages
-├── sqlc.yaml          # sqlc configuration
-├── Dockerfile
-├── docker-compose.yml
-└── README.md
+
+The service will listen on `http://localhost:8080` (or your configured `SERVER_PORT`).
+
+---
+
+## Configuration Reference
+
+The application is configured through environment variables loaded from `.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `SERVER_BASE_URL` | `http://localhost:8080` | Base URL used to construct short link redirects |
+| `LOG_LEVEL` | `info` | Logging verbosity (`debug`, `info`, `warn`, `error`) |
+| `LOG_COLOR` | `true` | Enable or disable ANSI colors in console output (`true`, `false`) |
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5432` | PostgreSQL port |
+| `DB_USER` | `urlshortner` | PostgreSQL username |
+| `DB_PASSWORD` | *(required)* | PostgreSQL password |
+| `DB_NAME` | `urlshortner` | Database name |
+| `DB_SSLMODE` | `disable` | PostgreSQL SSL mode (`disable`, `require`, etc.) |
+| `DB_MAX_OPEN_CONNS` | `25` | Maximum database open connection pool size |
+| `DB_MAX_IDLE_CONNS` | `25` | Maximum database idle connections |
+| `DB_MAX_LIFETIME` | `5` | Maximum connection lifetime in minutes |
+| `JWT_SECRET_KEY` | *(required)* | Secret key for signing HMAC-SHA256 JWT tokens |
+| `USER_ID_SECRET_KEY` | *(required)* | Secret key for obfuscating internal user IDs |
+| `ACCESS_TOKEN_EXPIRY` | `15` | Access token lifespan (in minutes) |
+| `REFRESH_TOKEN_EXPIRY`| `7` | Refresh token lifespan (in days) |
+| `GOOGLE_CLIENT_ID` | *(required)* | Google OAuth web client ID |
+| `GOOGLE_CLIENT_SECRET` | *(required)* | Google OAuth web client secret; never commit it |
+| `GOOGLE_REDIRECT_URL` | *(required)* | Exact authorized Google callback URI |
+| `GOOGLE_AUTH_URL` | *(required)* | Google OAuth authorization endpoint |
+| `GOOGLE_TOKEN_URL` | *(required)* | Google OAuth token endpoint |
+| `GOOGLE_USER_INFO_URL` | *(required)* | Google OpenID Connect user-info endpoint |
+| `FRONTEND_URL` | *(required)* | Frontend dashboard URL used after successful authentication |
+| `REDIS_HOST` | `localhost` | Redis host |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_USERNAME` | `""` | Redis authentication username (if required) |
+| `REDIS_PASSWORD` | `""` | Redis authentication password (if required) |
+| `REDIS_DB` | `0` | Redis logical database index |
+| `REDIS_MAX_RETRIES` | `3` | Maximum retry attempts for Redis operations |
+| `REDIS_TLS` | `false` | Enable TLS for Redis (required by providers like Upstash) |
+| `ENABLE_RABBITMQ` | `true` | Toggle asynchronous RabbitMQ click tracking |
+| `RABBITMQ_URL` | `amqp://guest:guest@localhost:5672/` | Full AMQP connection URL (supports `amqp://` and `amqps://`) |
+| `RABBITMQ_EXCHANGE_CLICKS` | `url.clicks.direct` | Direct exchange for click events |
+| `RABBITMQ_ROUTING_KEY_CLICKS` | `url.clicks.route` | Routing key for click events |
+| `RABBITMQ_QUEUE_CLICKS` | `url.clicks` | Durable queue for click consumer |
+
+---
+
+## API Reference
+
+The service exposes RESTful JSON endpoints under the `/api/v1` prefix.
+
+> 📖 **Complete Technical Specification**: For detailed request/response schemas, JSON payloads, pagination parameters, and status codes, see **[docs/api.md](docs/api.md)**.
+
+### Core Endpoints Overview
+
+| Category | Method | Endpoint | Access | Purpose |
+|---|---|---|---|---|
+| **Health** | `GET` | `/health` | Public | Microservice liveness probe |
+| **Metrics** | `GET` | `/metrics` | Public | Prometheus scraping endpoint |
+| **Redirect** | `GET` | `/api/v1/{shortCode}` | Public | 302/307 Redirect (Redis cached, RabbitMQ async clicks) |
+| **Auth** | `POST` | `/api/v1/auth/register` | Public | Create new user account |
+| **Auth** | `POST` | `/api/v1/auth/login` | Public | Authenticate user, issue JWT access + refresh tokens |
+| **Auth** | `GET` | `/api/v1/auth/google` | Public | Start server-side Google OAuth login |
+| **Auth** | `GET` | `/api/v1/auth/google/callback` | Public | Complete Google OAuth and issue application tokens |
+| **Auth** | `POST` | `/api/v1/auth/refresh` | Bearer Token | Rotate expired access token |
+| **Sessions** | `GET` | `/api/v1/auth/sessions` | Bearer Token | Multi-device session tracking & revocation |
+| **URLs** | `POST` | `/api/v1/shorten` | Bearer Token | Shorten URL (with target health checks & domain validation) |
+| **URLs** | `GET` | `/api/v1/urls` | Bearer Token | List and search user shortened URLs (paginated) |
+| **URLs** | `PATCH` | `/api/v1/urls/{id}` | Bearer Token | Update destination URL & auto-invalidate Redis cache |
+| **Analytics** | `GET` | `/api/v1/urls/analytics` | Bearer Token | Aggregate analytics (devices, browsers, referrers) |
+| **Account** | `DELETE`| `/api/v1/account` | Bearer Token | Self-service account deletion (30-day grace period) |
+| **Admin** | `POST` | `/api/v1/admin/blocked-domains` | Admin Role | Blacklist malicious or phishing domains |
+| **Admin** | `POST` | `/api/v1/admin/blocked-ip-ranges`| Admin Role | Block abusive CIDR IP ranges |
+
+👉 *For the full list of all 25+ endpoints with request and response examples, refer to [docs/api.md](docs/api.md).*
+
+### Google OAuth login
+
+Configure a Google OAuth web client and register `GOOGLE_REDIRECT_URL` as an authorized redirect URI. All provider endpoints and application redirect URLs are required environment variables; credentials and URLs are not hard-coded in the service.
+
+Start browser login at:
+
+```text
+GET /api/v1/auth/google
 ```
+
+After Google authentication, the backend validates the state cookie, exchanges the authorization code, resolves or creates the local account, creates the normal application session, stores access and refresh tokens in HTTP-only cookies, and redirects the browser to `FRONTEND_URL`.
+
+New Google-only users are persisted without a local password. Password login returns a dedicated `401 Unauthorized` response directing them to continue with Google, while unknown emails and incorrect passwords retain the same generic invalid-credentials response. Forgot-password and change-password operations are also rejected for accounts that do not have a local password.
+
+The authentication provider (`SYSTEM` or `GOOGLE`) is recorded on each session and included in access-token claims. Successful browser callbacks additionally set short-lived login-success and user-status metadata cookies for the frontend; authentication cookies remain HTTP-only.
+
+Protected endpoints accept either the existing `Authorization: Bearer ...` header or the HTTP-only `access_token` cookie. Browser requests that cross origins must include credentials.
+
+---
+
+## Observability & Monitoring
+
+The service exposes Prometheus metrics at `/metrics`.
+
+### Key Metrics Tracked
+- `http_requests_total`: Total count of HTTP requests partitioned by HTTP method, route pattern, and status code.
+- `http_request_duration_seconds`: Histogram measuring response latency distributions across all handlers.
+- `shortener_urls_created_total`: Counter for URLs created.
+- `shortener_redirects_served_total`: Counter for short URL redirects served.
+- Standard Go runtime metrics (goroutines, heap allocations, GC pause durations).
+
+### Pre-configured Grafana Dashboards
+- **URL**: `http://localhost:3000`
+- **Default Credentials**: `admin` / `admin`
+- Comes pre-configured with automated datasource provisioning and dashboards displaying traffic volume, request latency percentiles, error rates, and system memory.
+- **Traffic Generator**: Run `make prometheus-seed` while the server is running to generate synthetic traffic and visualize live metrics.
+
+---
+
+## Development & Quality Assurance
+
+### Makefile Commands
+
+| Command | Action |
+|---|---|
+| `make help` | View all available Makefile commands |
+| `make docker-up` | Start Postgres, Redis, RabbitMQ, Prometheus, and Grafana in background |
+| `make docker-down` | Stop and remove running Docker containers |
+| `make migration-up` | Apply pending database migrations with goose |
+| `make migration-down` | Roll back the most recent migration |
+| `make migration-status`| Inspect applied vs pending migrations |
+| `make seed-up` | Apply seed data migrations |
+| `make sqlc-generate` | Regenerate type-safe Go code from SQL queries (`internal/db/gen`) |
+| `make format` | Auto-format Go code using `gofmt` and `goimports` |
+| `make lint` | Run `golangci-lint` with all configured linters |
+| `make test` | Run full test suite (`go test ./... -count=1`) |
+| `make build` | Compile production binary into `bin/url-shortner` |
+| `make dev` | Run server with live reloading via `air` |
+| `make branch type=<type> issue=<id> name=<name>` | Create properly formatted git branch |
+
+### Git Hooks & Commit Guidelines
+
+Git hooks are managed via [lefthook](https://lefthook.dev/):
+
+1. **Install hooks**:
+   ```bash
+   make lefthook-install
+   ```
+2. **Branch Naming**:
+   Branches must follow the pattern `<type>/<issue>/<name>`:
+   - Allowed types: `feat`, `fix`, `bug`, `refactor`, `chore`, `hotfix`
+   - Example: `feat/26/rabbitmq-async-clicks`
+3. **Commit Messages**:
+   Commits must follow the Conventional Commits format with issue reference and an emoji:
+   ```text
+   <type>(#<issue>): <emoji> <description>
+   ```
+   *Example*: `feat(#26): ✨ add logs for rabbitmq publishing and consumption`
+
+---
 
 ## License
 
-See [LICENSE](LICENSE).
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

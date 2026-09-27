@@ -6,48 +6,140 @@ package db
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/sqlc-dev/pqtype"
 )
 
+type AuditLog struct {
+	ID          int64                 `json:"id"`
+	ActorUserID sql.NullInt64         `json:"actor_user_id"`
+	Action      string                `json:"action"`
+	EntityType  sql.NullString        `json:"entity_type"`
+	EntityID    sql.NullInt64         `json:"entity_id"`
+	Metadata    pqtype.NullRawMessage `json:"metadata"`
+	CreatedAt   sql.NullTime          `json:"created_at"`
+}
+
+type BlockedDomain struct {
+	ID        int32          `json:"id"`
+	Domain    string         `json:"domain"`
+	Reason    sql.NullString `json:"reason"`
+	CreatedAt sql.NullTime   `json:"created_at"`
+}
+
+type BlockedIpRange struct {
+	ID          int64       `json:"id"`
+	Cidr        pqtype.CIDR `json:"cidr"`
+	Description string      `json:"description"`
+}
+
 type ClickLog struct {
-	ID        int64          `json:"id"`
-	UrlID     int64          `json:"url_id"`
-	ClickedAt sql.NullTime   `json:"clicked_at"`
-	IpAddress pqtype.Inet    `json:"ip_address"`
-	UserAgent sql.NullString `json:"user_agent"`
-	Referrer  sql.NullString `json:"referrer"`
+	ID         int64          `json:"id"`
+	UrlID      int64          `json:"url_id"`
+	ClickedAt  sql.NullTime   `json:"clicked_at"`
+	IpAddress  pqtype.Inet    `json:"ip_address"`
+	Country    sql.NullString `json:"country"`
+	City       sql.NullString `json:"city"`
+	Browser    sql.NullString `json:"browser"`
+	DeviceType sql.NullString `json:"device_type"`
+	Referrer   sql.NullString `json:"referrer"`
+	UserAgent  sql.NullString `json:"user_agent"`
+}
+
+type DailyUrlStat struct {
+	UrlID       int64         `json:"url_id"`
+	StatDate    time.Time     `json:"stat_date"`
+	TotalClicks sql.NullInt64 `json:"total_clicks"`
+}
+
+type Destination struct {
+	ID                      int64         `json:"id"`
+	OriginalUrl             string        `json:"original_url"`
+	UrlHash                 string        `json:"url_hash"`
+	DestinationHealthStatus sql.NullInt16 `json:"destination_health_status"`
+	LastHealthCheck         sql.NullTime  `json:"last_health_check"`
+}
+
+type OauthAccount struct {
+	ID              int64     `json:"id"`
+	UserID          int64     `json:"user_id"`
+	Provider        string    `json:"provider"`
+	ProviderSubject string    `json:"provider_subject"`
+	ProviderEmail   string    `json:"provider_email"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type PasswordHistory struct {
+	ID           int64          `json:"id"`
+	UserID       int64          `json:"user_id"`
+	PasswordHash string         `json:"password_hash"`
+	IpAddress    pqtype.Inet    `json:"ip_address"`
+	UserAgent    sql.NullString `json:"user_agent"`
+	CreatedAt    sql.NullTime   `json:"created_at"`
 }
 
 type Session struct {
-	ID           int64          `json:"id"`
-	UserID       int64          `json:"user_id"`
-	DeviceType   sql.NullString `json:"device_type"`
-	DeviceName   sql.NullString `json:"device_name"`
-	IpAddress    pqtype.Inet    `json:"ip_address"`
-	UserAgent    sql.NullString `json:"user_agent"`
-	LoggedInAt   sql.NullTime   `json:"logged_in_at"`
-	LastActiveAt sql.NullTime   `json:"last_active_at"`
-	IsActive     sql.NullBool   `json:"is_active"`
+	ID               int64          `json:"id"`
+	UserID           int64          `json:"user_id"`
+	RefreshTokenHash string         `json:"refresh_token_hash"`
+	DeviceType       sql.NullString `json:"device_type"`
+	DeviceName       sql.NullString `json:"device_name"`
+	Country          sql.NullString `json:"country"`
+	City             sql.NullString `json:"city"`
+	IpAddress        pqtype.Inet    `json:"ip_address"`
+	UserAgent        sql.NullString `json:"user_agent"`
+	LoggedInAt       sql.NullTime   `json:"logged_in_at"`
+	LastActiveAt     sql.NullTime   `json:"last_active_at"`
+	SessionStatus    sql.NullInt16  `json:"session_status"`
+	ExpiresAt        sql.NullTime   `json:"expires_at"`
+	RevokedAt        sql.NullTime   `json:"revoked_at"`
+	AuthProvider     string         `json:"auth_provider"`
 }
 
 type Url struct {
-	ID          int64         `json:"id"`
-	UserID      sql.NullInt64 `json:"user_id"`
-	ShortCode   string        `json:"short_code"`
-	OriginalUrl string        `json:"original_url"`
-	IsCustom    sql.NullBool  `json:"is_custom"`
-	ExpiresAt   sql.NullTime  `json:"expires_at"`
-	IsActive    sql.NullBool  `json:"is_active"`
-	CreatedAt   sql.NullTime  `json:"created_at"`
-	UpdatedAt   sql.NullTime  `json:"updated_at"`
+	ID                        int64          `json:"id"`
+	UserID                    int64          `json:"user_id"`
+	ShortCode                 string         `json:"short_code"`
+	DestinationID             int64          `json:"destination_id"`
+	Title                     sql.NullString `json:"title"`
+	Description               sql.NullString `json:"description"`
+	IsCustom                  sql.NullBool   `json:"is_custom"`
+	IsSafe                    sql.NullBool   `json:"is_safe"`
+	ClickCount                sql.NullInt64  `json:"click_count"`
+	ExpiresAt                 sql.NullTime   `json:"expires_at"`
+	UrlStatus                 sql.NullInt16  `json:"url_status"`
+	LastAccessedAt            sql.NullTime   `json:"last_accessed_at"`
+	DestinationHealthStatus   sql.NullInt16  `json:"destination_health_status"`
+	LastHealthCheck           sql.NullTime   `json:"last_health_check"`
+	DestinationLastHttpStatus sql.NullInt32  `json:"destination_last_http_status"`
+	CreatedAt                 sql.NullTime   `json:"created_at"`
+	UpdatedAt                 sql.NullTime   `json:"updated_at"`
+	DeletedAt                 sql.NullTime   `json:"deleted_at"`
+}
+
+type UrlVersion struct {
+	ID            int64        `json:"id"`
+	UrlID         int64        `json:"url_id"`
+	OriginalUrl   string       `json:"original_url"`
+	VersionNumber int32        `json:"version_number"`
+	CreatedAt     sql.NullTime `json:"created_at"`
 }
 
 type User struct {
-	ID           int64        `json:"id"`
-	Email        string       `json:"email"`
-	PasswordHash string       `json:"password_hash"`
-	CreatedAt    sql.NullTime `json:"created_at"`
-	UpdatedAt    sql.NullTime `json:"updated_at"`
-	DeletedAt    sql.NullTime `json:"deleted_at"`
+	ID                  int64          `json:"id"`
+	Email               string         `json:"email"`
+	PasswordHash        sql.NullString `json:"password_hash"`
+	DisplayUserID       sql.NullString `json:"display_user_id"`
+	DisplayUserName     sql.NullString `json:"display_user_name"`
+	Role                string         `json:"role"`
+	CreatedAt           sql.NullTime   `json:"created_at"`
+	UpdatedAt           sql.NullTime   `json:"updated_at"`
+	DeletedAt           sql.NullTime   `json:"deleted_at"`
+	PasswordChangedAt   sql.NullTime   `json:"password_changed_at"`
+	Status              string         `json:"status"`
+	DeletionScheduledAt sql.NullTime   `json:"deletion_scheduled_at"`
+	// Whether password_hash contains a usable local login credential.
+	HasPassword bool `json:"has_password"`
 }

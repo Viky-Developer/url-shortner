@@ -7,6 +7,8 @@
 *.dll
 *.so
 *.dylib
+bin/
+tmp/
 
 # Test binary, built with `go test -c`
 *.test
@@ -30,6 +32,19 @@ go.work.sum
 # context (do not push to GitHub)
 context/
 
+# GitNexus (local codebase index)
+.gitnexus/
+
+AGENTS.md
+CLAUDE.md
+*.md
+!README.md
+!DESIGN.md
+!docs/*.md
+!AI_USAGE.md
+
 # Editor/IDE
 # .idea/
 # .vscode/
+# Neon CLI local context
+.neon
