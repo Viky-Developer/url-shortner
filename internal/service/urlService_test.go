@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -3554,8 +3555,7 @@ func TestRecordClickTx(t *testing.T) {
 }
 
 func TestNewSafeHTTPClient_DoesNotFollowRedirects(t *testing.T) {
-	svc := &URLService{}
-	client := svc.newSafeHTTPClient("")
+	client := newSafeHTTPClient(net.ParseIP("203.0.113.10"), "443", "example.com", true)
 
 	if client.CheckRedirect == nil {
 		t.Fatal("expected CheckRedirect to be configured on safe HTTP client")
@@ -3570,6 +3570,38 @@ func TestNewSafeHTTPClient_DoesNotFollowRedirects(t *testing.T) {
 	err = client.CheckRedirect(req, via)
 	if !errors.Is(err, http.ErrUseLastResponse) {
 		t.Fatalf("expected http.ErrUseLastResponse, got: %v", err)
+	}
+}
+
+func TestHealthCheckPort(t *testing.T) {
+	tests := []struct {
+		name    string
+		rawURL  string
+		want    string
+		wantErr bool
+	}{
+		{name: "http default", rawURL: "http://example.com", want: "80"},
+		{name: "http explicit default", rawURL: "http://example.com:80", want: "80"},
+		{name: "https default", rawURL: "https://example.com", want: "443"},
+		{name: "https explicit default", rawURL: "https://example.com:443", want: "443"},
+		{name: "http custom port", rawURL: "http://example.com:8080", wantErr: true},
+		{name: "https custom port", rawURL: "https://example.com:8443", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, err := url.Parse(tt.rawURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := healthCheckPort(u)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("healthCheckPort() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("healthCheckPort() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
