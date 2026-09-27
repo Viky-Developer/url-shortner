@@ -137,36 +137,6 @@ func isDisallowedIP(ip net.IP, blockedRanges []*net.IPNet) bool {
 	return false
 }
 
-// safeDialContext wraps the default dialer and re-validates the resolved
-// IP at connection time, closing the TOCTOU/DNS-rebinding gap that
-// pre-request validation alone leaves open.
-func (s *URLService) safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-	if err != nil {
-		return nil, fmt.Errorf("dns lookup failed: %w", err)
-	}
-	var dialErr error
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	for _, ip := range ips {
-		if isDisallowedIP(ip, s.blockedIPRanges) {
-			continue
-		}
-		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-		if err == nil {
-			return conn, nil
-		}
-		dialErr = err
-	}
-	if dialErr == nil {
-		dialErr = fmt.Errorf("no permitted IP address for host %q", host)
-	}
-	return nil, dialErr
-}
-
 // hostHeaderTransport injects a custom Host header into outgoing requests
 // while allowing the underlying transport to dial a different address (e.g. a
 // resolved IP for SSRF protection). This keeps TLS certificate validation
@@ -181,9 +151,12 @@ func (t *hostHeaderTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	return t.base.RoundTrip(req)
 }
 
-func (s *URLService) newSafeHTTPClient(customHost string) *http.Client {
+func newSafeHTTPClient(targetIP net.IP, targetPort, serverName string, useTLS bool) *http.Client {
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{
-		DialContext:           s.safeDialContext,
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, net.JoinHostPort(targetIP.String(), targetPort))
+		},
 		MaxIdleConns:          10,
 		IdleConnTimeout:       30 * time.Second,
 		TLSHandshakeTimeout:   5 * time.Second,
@@ -194,20 +167,15 @@ func (s *URLService) newSafeHTTPClient(customHost string) *http.Client {
 	// the certificate against the original hostname. Setting ServerName
 	// tells the TLS layer which hostname to check, instead of using the
 	// IP address from the URL.
-	if customHost != "" {
+	if useTLS {
 		transport.TLSClientConfig = &tls.Config{
-			ServerName: customHost,
+			ServerName: serverName,
 		}
-	}
-
-	var rt http.RoundTripper = transport
-	if customHost != "" {
-		rt = &hostHeaderTransport{base: transport, customHost: customHost}
 	}
 
 	return &http.Client{
 		Timeout:   10 * time.Second,
-		Transport: rt,
+		Transport: &hostHeaderTransport{base: transport, customHost: serverName},
 		// Do not follow redirects: receiving a 3xx redirect status code (e.g. 301/302)
 		// means the destination server is alive and responding. http.ErrUseLastResponse
 		// causes the client to return the redirect response directly without looping.
@@ -218,8 +186,7 @@ func (s *URLService) newSafeHTTPClient(customHost string) *http.Client {
 }
 
 // validateRequestURL enforces scheme allowlisting up front. IP-level
-// checks happen later in safeDialContext (post-DNS-resolution), which is
-// the check that actually matters for SSRF.
+// checks happen again after DNS resolution before the transport is created.
 func validateRequestURL(u *url.URL) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
@@ -230,22 +197,15 @@ func validateRequestURL(u *url.URL) error {
 	return nil
 }
 
-func defaultPort(u *url.URL) string {
-	if u.Port() != "" {
-		return u.Port()
-	}
+func healthCheckPort(u *url.URL) (string, error) {
+	port := "80"
 	if u.Scheme == "https" {
-		return "443"
+		port = "443"
 	}
-	return "80"
-}
-
-func buildCleanURL(ip net.IP, useHTTPS bool, port string) string {
-	scheme := "http"
-	if useHTTPS {
-		scheme = "https"
+	if explicit := u.Port(); explicit != "" && explicit != port {
+		return "", fmt.Errorf("non-standard destination port %q is not allowed", explicit)
 	}
-	return scheme + "://" + net.JoinHostPort(ip.String(), port)
+	return port, nil
 }
 
 // checkDestinationHealth performs a HEAD request against the destination URL
@@ -262,6 +222,11 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0, false
 	}
 	if err := validateRequestURL(parsedURL); err != nil {
+		s.log.Warn("rejected URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
+		return enum.DestinationStatusUnknown, 0, false
+	}
+	port, err := healthCheckPort(parsedURL)
+	if err != nil {
 		s.log.Warn("rejected URL for health check", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0, false
 	}
@@ -287,14 +252,13 @@ func (s *URLService) checkDestinationHealth(originalURL string) (enum.Destinatio
 		return enum.DestinationStatusUnknown, 0, false
 	}
 
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return enum.DestinationStatusUnknown, 0, false
+	useTLS := parsedURL.Scheme == "https"
+	requestURL := "http://health-check.invalid"
+	if useTLS {
+		requestURL = "https://health-check.invalid"
 	}
-
-	cleanURL := buildCleanURL(safeIP, parsedURL.Scheme == "https", defaultPort(parsedURL))
-
-	client := s.newSafeHTTPClient(host)
-	req, err := http.NewRequest(http.MethodHead, cleanURL, nil)
+	client := newSafeHTTPClient(safeIP, port, host, useTLS)
+	req, err := http.NewRequest(http.MethodHead, requestURL, nil)
 	if err != nil {
 		s.log.Warn("failed to build health check request", logger.Error(err), logger.String("originalURL", utils.SanitizeLog(originalURL)))
 		return enum.DestinationStatusUnknown, 0, false
