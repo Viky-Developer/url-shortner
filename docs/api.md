@@ -122,6 +122,10 @@ Creates a new user account.
 ### `POST /api/v1/auth/login`
 Authenticates user credentials, registers a new device session, and returns access and refresh tokens.
 - **Auth**: Public
+- **OAuth-only accounts**: Password login returns `401 Unauthorized` with the
+  distinct message `this account uses Google sign-in; please Continue with Google`.
+- **Invalid credentials**: Unknown emails and incorrect passwords continue to
+  return the generic `invalid email or password` message.
 - **Request Body**:
   ```json
   {
@@ -435,4 +439,3 @@ Maintenance job to purge expired and revoked tokens from the database.
 ### `POST /api/v1/admin/maintenance/purge-password-history`
 Maintenance job to clean up obsolete password history entries.
 - **Response**: `200 OK`
-

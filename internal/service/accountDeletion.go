@@ -9,11 +9,10 @@ import (
 	"github.com/vicky/url-shortner/external/cache"
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
+	"github.com/vicky/url-shortner/internal/cachekey"
 	gen "github.com/vicky/url-shortner/internal/db/gen"
 	"github.com/vicky/url-shortner/internal/payload"
 )
-
-const cacheKeySessionPrefix = "session:"
 
 // AccountDeletionService handles self-service account deletion, cancellation,
 // and background hard-deletion of expired accounts.
@@ -45,9 +44,9 @@ func NewAccountDeletionService(
 	}
 }
 
-// RequestDeletion validates the confirmation text, revokes all sessions,
-// and marks the account as PENDING_DELETION with a 30-day grace period.
-func (s *AccountDeletionService) RequestDeletion(ctx context.Context, userID int64) (*payload.AccountStatusResponse, error) {
+// RequestDeletion revokes every other session and marks the account as
+// PENDING_DELETION while preserving the initiating session for recovery.
+func (s *AccountDeletionService) RequestDeletion(ctx context.Context, userID, currentSessionID int64) (*payload.AccountStatusResponse, error) {
 
 	// Check user exists and is ACTIVE
 	user, err := s.queries.GetUserStatusByID(ctx, userID)
@@ -73,8 +72,11 @@ func (s *AccountDeletionService) RequestDeletion(ctx context.Context, userID int
 			return apperror.ErrInternal
 		}
 
-		// Bulk revoke all sessions
-		if rErr := q.RevokeAllSessionsByUser(ctx, userID); rErr != nil {
+		// Revoke other devices while preserving the session needed to restore the account.
+		if rErr := q.RevokeSessionsByUserExcept(ctx, gen.RevokeSessionsByUserExceptParams{
+			UserID: userID,
+			ID:     currentSessionID,
+		}); rErr != nil {
 			s.log.Error("requestDeletion: failed to revoke sessions", logger.Error(rErr), logger.Int64("userID", userID))
 			return apperror.ErrInternal
 		}
@@ -94,7 +96,10 @@ func (s *AccountDeletionService) RequestDeletion(ctx context.Context, userID int
 	// Evict session caches
 	if s.cache != nil {
 		for _, sess := range sessions {
-			_ = s.cache.Del(ctx, fmt.Sprintf("%s%d", cacheKeySessionPrefix, sess.ID))
+			if sess.ID == currentSessionID {
+				continue
+			}
+			_ = s.cache.Del(ctx, fmt.Sprintf("%s%d", cachekey.SessionPrefix, sess.ID))
 		}
 	}
 

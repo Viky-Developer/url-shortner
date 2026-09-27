@@ -61,7 +61,8 @@ func StatusCodeFromError(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, apperror.ErrURLDeleted):
 		return http.StatusGone
-	case errors.Is(err, apperror.ErrUnauthorized),
+	case errors.Is(err, apperror.ErrOAuthOnlyAccount),
+		errors.Is(err, apperror.ErrUnauthorized),
 		errors.Is(err, apperror.ErrSessionExpired),
 		errors.Is(err, apperror.ErrSessionRevoked),
 		errors.Is(err, apperror.ErrInvalidToken),

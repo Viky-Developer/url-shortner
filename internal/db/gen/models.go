@@ -95,6 +95,7 @@ type Session struct {
 	SessionStatus    sql.NullInt16  `json:"session_status"`
 	ExpiresAt        sql.NullTime   `json:"expires_at"`
 	RevokedAt        sql.NullTime   `json:"revoked_at"`
+	AuthProvider     string         `json:"auth_provider"`
 }
 
 type Url struct {
@@ -129,7 +130,7 @@ type UrlVersion struct {
 type User struct {
 	ID                  int64          `json:"id"`
 	Email               string         `json:"email"`
-	PasswordHash        string         `json:"password_hash"`
+	PasswordHash        sql.NullString `json:"password_hash"`
 	DisplayUserID       sql.NullString `json:"display_user_id"`
 	DisplayUserName     sql.NullString `json:"display_user_name"`
 	Role                string         `json:"role"`
@@ -139,4 +140,6 @@ type User struct {
 	PasswordChangedAt   sql.NullTime   `json:"password_changed_at"`
 	Status              string         `json:"status"`
 	DeletionScheduledAt sql.NullTime   `json:"deletion_scheduled_at"`
+	// Whether password_hash contains a usable local login credential.
+	HasPassword bool `json:"has_password"`
 }

@@ -2,12 +2,8 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
-
-	"golang.org/x/crypto/bcrypt"
 
 	externaloauth "github.com/vicky/url-shortner/external/oauth"
 	"github.com/vicky/url-shortner/internal/apperror"
@@ -51,7 +47,7 @@ func (s *AuthService) LoginWithGoogle(ctx context.Context, code, deviceType, dev
 		}
 	}
 
-	tokens, err := s.GenerateTokens(ctx, user.ID, displayUserID, user.Email, user.DisplayUserName.String, user.Role, deviceType, deviceName, ipAddress, country, city, userAgent)
+	tokens, err := s.GenerateTokens(ctx, user.ID, displayUserID, user.Email, user.DisplayUserName.String, user.Role, enum.OAuthProviderGoogle.String(), deviceType, deviceName, ipAddress, country, city, userAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -75,16 +71,8 @@ func (s *AuthService) createOrLinkGoogleUser(ctx context.Context, identity *exte
 		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
 			return lookupErr
 		} else {
-			randomPassword := make([]byte, 32)
-			if _, err := rand.Read(randomPassword); err != nil {
-				return err
-			}
-			hash, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(randomPassword)), bcrypt.DefaultCost)
-			if err != nil {
-				return err
-			}
-			created, err := q.CreateUser(ctx, gen.CreateUserParams{
-				Email: identity.Email, PasswordHash: string(hash), DisplayUserName: utils.NullString(identity.Name),
+			created, err := q.CreateOAuthUser(ctx, gen.CreateOAuthUserParams{
+				Email: identity.Email, DisplayUserName: utils.NullString(identity.Name),
 			})
 			if err != nil {
 				return err

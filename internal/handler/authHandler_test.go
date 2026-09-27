@@ -105,6 +105,7 @@ func sampleAuthResponse() *payload.AuthResponse {
 			ID:          "USR_test123",
 			Email:       "test@example.com",
 			DisplayName: "Test User",
+			Status:      "ACTIVE",
 		},
 	}
 }
@@ -238,6 +239,33 @@ func TestGoogleCallbackRedirectsToFrontendWithTokenCookies(t *testing.T) {
 	if values[refreshTokenCookie] == nil || values[refreshTokenCookie].Value != "refresh-token" || !values[refreshTokenCookie].HttpOnly {
 		t.Fatal("expected HTTP-only refresh-token cookie")
 	}
+	if values[userMetadataCookie] == nil || values[userMetadataCookie].Value != "ACTIVE" || !values[userMetadataCookie].HttpOnly {
+		t.Fatal("expected HTTP-only user metadata cookie with account status")
+	}
+	if values[oauthLoginSuccessCookie] == nil || values[oauthLoginSuccessCookie].Value != "1" || !values[oauthLoginSuccessCookie].HttpOnly {
+		t.Fatal("expected short-lived HTTP-only OAuth success cookie")
+	}
+}
+
+func TestGoogleCallbackPreservesPendingDeletionStatus(t *testing.T) {
+	auth := sampleAuthResponse()
+	auth.User.Status = "PENDING_DELETION"
+	mock := &mockAuthService{googleLoginFn: func(context.Context, string, string, string, string, string, string, string) (*payload.AuthResponse, error) {
+		return auth, nil
+	}}
+	h := NewAuthHandler(mock, testLog(t), "http://frontend.test/dashboard")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?code=code&state=expected", nil)
+	req.AddCookie(&http.Cookie{Name: googleOAuthStateCookie, Value: "expected"})
+	w := httptest.NewRecorder()
+
+	h.GoogleCallback(w, req)
+
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == userMetadataCookie && cookie.Value == "PENDING_DELETION" && cookie.HttpOnly {
+			return
+		}
+	}
+	t.Fatal("expected pending-deletion metadata cookie")
 }
 
 func TestRegisterHandler(t *testing.T) {

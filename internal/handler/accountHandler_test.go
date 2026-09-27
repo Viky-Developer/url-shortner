@@ -9,17 +9,18 @@ import (
 	"testing"
 
 	"github.com/vicky/url-shortner/internal/apperror"
+	"github.com/vicky/url-shortner/internal/contextutil"
 	"github.com/vicky/url-shortner/internal/payload"
 )
 
 type mockAccountDeletionService struct {
-	requestFn func(context.Context, int64) (*payload.AccountStatusResponse, error)
+	requestFn func(context.Context, int64, int64) (*payload.AccountStatusResponse, error)
 	cancelFn  func(context.Context, int64) error
 }
 
-func (m *mockAccountDeletionService) RequestDeletion(ctx context.Context, userID int64) (*payload.AccountStatusResponse, error) {
+func (m *mockAccountDeletionService) RequestDeletion(ctx context.Context, userID, currentSessionID int64) (*payload.AccountStatusResponse, error) {
 	if m.requestFn != nil {
-		return m.requestFn(ctx, userID)
+		return m.requestFn(ctx, userID, currentSessionID)
 	}
 	return &payload.AccountStatusResponse{Status: "PENDING_DELETION"}, nil
 }
@@ -33,7 +34,7 @@ func (m *mockAccountDeletionService) CancelDeletion(ctx context.Context, userID 
 
 func TestDeleteAccount(t *testing.T) {
 	mock := &mockAccountDeletionService{
-		requestFn: func(_ context.Context, _ int64) (*payload.AccountStatusResponse, error) {
+		requestFn: func(_ context.Context, _, _ int64) (*payload.AccountStatusResponse, error) {
 			return &payload.AccountStatusResponse{Status: "PENDING_DELETION"}, nil
 		},
 	}
@@ -43,6 +44,7 @@ func TestDeleteAccount(t *testing.T) {
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/account", bytes.NewReader(b))
 	req = withUserID(req, 1)
+	req = req.WithContext(context.WithValue(req.Context(), contextutil.SessionIDKey, int64(10)))
 	w := httptest.NewRecorder()
 
 	h.DeleteAccount(w, req)
@@ -54,7 +56,7 @@ func TestDeleteAccount(t *testing.T) {
 
 func TestDeleteAccountWrongConfirmation(t *testing.T) {
 	mock := &mockAccountDeletionService{
-		requestFn: func(_ context.Context, _ int64) (*payload.AccountStatusResponse, error) {
+		requestFn: func(_ context.Context, _, _ int64) (*payload.AccountStatusResponse, error) {
 			return nil, apperror.ErrInvalidPayload
 		},
 	}
@@ -64,6 +66,7 @@ func TestDeleteAccountWrongConfirmation(t *testing.T) {
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/account", bytes.NewReader(b))
 	req = withUserID(req, 1)
+	req = req.WithContext(context.WithValue(req.Context(), contextutil.SessionIDKey, int64(10)))
 	w := httptest.NewRecorder()
 
 	h.DeleteAccount(w, req)

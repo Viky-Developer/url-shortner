@@ -240,7 +240,7 @@ func ensureDefaultUser(database *sql.DB, cfg *config.Config, log logger.Logger) 
 
 	row, err := q.CreateUser(context.Background(), gen.CreateUserParams{
 		Email:         cfg.DefaultUserEmail,
-		PasswordHash:  string(hashedPassword),
+		PasswordHash:  sql.NullString{String: string(hashedPassword), Valid: true},
 		DisplayUserID: sql.NullString{}, // NULL — computed and stored after insert
 	})
 	if err != nil {

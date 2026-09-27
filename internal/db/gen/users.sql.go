@@ -45,6 +45,47 @@ func (q *Queries) CountPasswordHistory(ctx context.Context, userID int64) (int64
 	return count, err
 }
 
+const createOAuthUser = `-- name: CreateOAuthUser :one
+INSERT INTO users (email, password_hash, has_password, display_user_id, display_user_name, password_changed_at)
+VALUES ($1, NULL, FALSE, $2, $3, NULL)
+RETURNING id, email, display_user_id, display_user_name, role, status, created_at, password_changed_at, has_password
+`
+
+type CreateOAuthUserParams struct {
+	Email           string         `json:"email"`
+	DisplayUserID   sql.NullString `json:"display_user_id"`
+	DisplayUserName sql.NullString `json:"display_user_name"`
+}
+
+type CreateOAuthUserRow struct {
+	ID                int64          `json:"id"`
+	Email             string         `json:"email"`
+	DisplayUserID     sql.NullString `json:"display_user_id"`
+	DisplayUserName   sql.NullString `json:"display_user_name"`
+	Role              string         `json:"role"`
+	Status            string         `json:"status"`
+	CreatedAt         sql.NullTime   `json:"created_at"`
+	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
+	HasPassword       bool           `json:"has_password"`
+}
+
+func (q *Queries) CreateOAuthUser(ctx context.Context, arg CreateOAuthUserParams) (CreateOAuthUserRow, error) {
+	row := q.db.QueryRowContext(ctx, createOAuthUser, arg.Email, arg.DisplayUserID, arg.DisplayUserName)
+	var i CreateOAuthUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayUserID,
+		&i.DisplayUserName,
+		&i.Role,
+		&i.Status,
+		&i.CreatedAt,
+		&i.PasswordChangedAt,
+		&i.HasPassword,
+	)
+	return i, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, password_hash, display_user_id, display_user_name, password_changed_at)
 VALUES ($1, $2, $3, $4, NOW())
@@ -53,7 +94,7 @@ RETURNING id, email, display_user_id, display_user_name, role, created_at, passw
 
 type CreateUserParams struct {
 	Email           string         `json:"email"`
-	PasswordHash    string         `json:"password_hash"`
+	PasswordHash    sql.NullString `json:"password_hash"`
 	DisplayUserID   sql.NullString `json:"display_user_id"`
 	DisplayUserName sql.NullString `json:"display_user_name"`
 }
@@ -111,13 +152,14 @@ func (q *Queries) DeletePasswordHistoryOver(ctx context.Context, arg DeletePassw
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL
+SELECT id, email, password_hash, has_password, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE email = $1 AND deleted_at IS NULL
 `
 
 type GetUserByEmailRow struct {
 	ID                int64          `json:"id"`
 	Email             string         `json:"email"`
-	PasswordHash      string         `json:"password_hash"`
+	PasswordHash      sql.NullString `json:"password_hash"`
+	HasPassword       bool           `json:"has_password"`
 	DisplayUserID     sql.NullString `json:"display_user_id"`
 	DisplayUserName   sql.NullString `json:"display_user_name"`
 	Role              string         `json:"role"`
@@ -132,6 +174,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 		&i.ID,
 		&i.Email,
 		&i.PasswordHash,
+		&i.HasPassword,
 		&i.DisplayUserID,
 		&i.DisplayUserName,
 		&i.Role,
@@ -142,7 +185,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, display_user_id, display_user_name, role, status, password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL
+SELECT id, email, display_user_id, display_user_name, role, status, password_changed_at, has_password FROM users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserByIDRow struct {
@@ -153,6 +196,7 @@ type GetUserByIDRow struct {
 	Role              string         `json:"role"`
 	Status            string         `json:"status"`
 	PasswordChangedAt sql.NullTime   `json:"password_changed_at"`
+	HasPassword       bool           `json:"has_password"`
 }
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, error) {
@@ -166,6 +210,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (GetUserByIDRow, er
 		&i.Role,
 		&i.Status,
 		&i.PasswordChangedAt,
+		&i.HasPassword,
 	)
 	return i, err
 }
@@ -262,25 +307,31 @@ func (q *Queries) UpdateUserDisplayID(ctx context.Context, arg UpdateUserDisplay
 }
 
 const updateUserPassword = `-- name: UpdateUserPassword :one
-UPDATE users SET password_hash = $2, password_changed_at = NOW() WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, email, password_changed_at
+UPDATE users SET password_hash = $2, has_password = TRUE, password_changed_at = NOW() WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, email, password_changed_at, has_password
 `
 
 type UpdateUserPasswordParams struct {
-	ID           int64  `json:"id"`
-	PasswordHash string `json:"password_hash"`
+	ID           int64          `json:"id"`
+	PasswordHash sql.NullString `json:"password_hash"`
 }
 
 type UpdateUserPasswordRow struct {
 	ID                int64        `json:"id"`
 	Email             string       `json:"email"`
 	PasswordChangedAt sql.NullTime `json:"password_changed_at"`
+	HasPassword       bool         `json:"has_password"`
 }
 
 func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (UpdateUserPasswordRow, error) {
 	row := q.db.QueryRowContext(ctx, updateUserPassword, arg.ID, arg.PasswordHash)
 	var i UpdateUserPasswordRow
-	err := row.Scan(&i.ID, &i.Email, &i.PasswordChangedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordChangedAt,
+		&i.HasPassword,
+	)
 	return i, err
 }
 

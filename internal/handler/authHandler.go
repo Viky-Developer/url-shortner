@@ -37,6 +37,8 @@ type AuthService interface {
 const googleOAuthStateCookie = "google_oauth_state"
 const accessTokenCookie = "access_token"
 const refreshTokenCookie = "refresh_token"
+const userMetadataCookie = "user_metadata"
+const oauthLoginSuccessCookie = "oauth_login_success"
 
 // GoogleLogin starts the server-side Google OAuth authorization-code flow.
 func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +99,14 @@ func (h *AuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 	})
 	http.SetCookie(w, &http.Cookie{
 		Name: refreshTokenCookie, Value: result.Token.RefreshToken, Path: "/api/v1/auth",
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name: userMetadataCookie, Value: result.User.Status, Path: "/",
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name: oauthLoginSuccessCookie, Value: "1", Path: "/", MaxAge: 60,
 		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, h.frontendURL, http.StatusSeeOther)

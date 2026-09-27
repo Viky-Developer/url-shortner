@@ -114,6 +114,8 @@ func TestStatusCodeFromError(t *testing.T) {
 		{"ErrBlockedDomain", apperror.ErrBlockedDomain, http.StatusBadRequest},
 		{"ErrConflict", apperror.ErrConflict, http.StatusConflict},
 		{"ErrURLDeleted", apperror.ErrURLDeleted, http.StatusGone},
+		{"ErrInvalidCredentials", apperror.ErrInvalidCredentials, http.StatusUnauthorized},
+		{"ErrOAuthOnlyAccount", apperror.ErrOAuthOnlyAccount, http.StatusUnauthorized},
 		{"wrapped ErrNotFound", fmt.Errorf("wrap: %w", apperror.ErrNotFound), http.StatusNotFound},
 		{"unknown error", errors.New("something"), http.StatusInternalServerError},
 	}

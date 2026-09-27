@@ -25,6 +25,7 @@ import (
 type mockQuerier struct {
 	createFn                func(context.Context, gen.CreateURLParams) (gen.Url, error)
 	createUserFn            func(context.Context, gen.CreateUserParams) (gen.CreateUserRow, error)
+	createOAuthUserFn       func(context.Context, gen.CreateOAuthUserParams) (gen.CreateOAuthUserRow, error)
 	byCodeFn                func(context.Context, string) (gen.GetURLByShortCodeRow, error)
 	byCodeForUpdateFn       func(context.Context, string) (gen.GetURLByShortCodeForUpdateRow, error)
 	byIDFn                  func(context.Context, gen.GetURLByIDParams) (gen.GetURLByIDRow, error)
@@ -123,6 +124,13 @@ func (m *mockQuerier) CreateURL(ctx context.Context, arg gen.CreateURLParams) (g
 
 func (m *mockQuerier) CreateUser(ctx context.Context, arg gen.CreateUserParams) (gen.CreateUserRow, error) {
 	return m.createUserFn(ctx, arg)
+}
+
+func (m *mockQuerier) CreateOAuthUser(ctx context.Context, arg gen.CreateOAuthUserParams) (gen.CreateOAuthUserRow, error) {
+	if m.createOAuthUserFn != nil {
+		return m.createOAuthUserFn(ctx, arg)
+	}
+	return gen.CreateOAuthUserRow{}, nil
 }
 
 func (m *mockQuerier) CreateOAuthAccount(ctx context.Context, arg gen.CreateOAuthAccountParams) error {
