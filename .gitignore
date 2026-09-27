@@ -37,9 +37,9 @@ context/
 
 AGENTS.md
 CLAUDE.md
-DESIGN.md
 *.md
 !README.md
+!DESIGN.md
 !docs/*.md
 !AI_USAGE.md
 
