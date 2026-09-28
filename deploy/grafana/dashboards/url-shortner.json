@@ -74,7 +74,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_requests_total[5m]))",
+          "expr": "sum(rate(http_requests_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -135,7 +135,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(shortener_urls_created_total)",
+          "expr": "sum(shortener_urls_created_total{environment=~\"$environment\"})",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -196,7 +196,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(shortener_redirects_served_total)",
+          "expr": "sum(shortener_redirects_served_total{environment=~\"$environment\"})",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -285,7 +285,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (route) (rate(http_requests_total[5m]))",
+          "expr": "sum by (route) (rate(http_requests_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{route}}",
           "range": true,
           "refId": "A"
@@ -374,7 +374,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket{environment=~\"$environment\"}[5m])))",
           "legendFormat": "{{route}} p95",
           "range": true,
           "refId": "A"
@@ -463,7 +463,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (status) (rate(http_requests_total[5m]))",
+          "expr": "sum by (status) (rate(http_requests_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{status}}",
           "range": true,
           "refId": "A"
@@ -552,7 +552,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(shortener_urls_created_total[5m]))",
+          "expr": "sum(rate(shortener_urls_created_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "URLs created",
           "range": true,
           "refId": "A"
@@ -563,7 +563,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(shortener_redirects_served_total[5m]))",
+          "expr": "sum(rate(shortener_redirects_served_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "Redirects served",
           "range": true,
           "refId": "B"
@@ -652,7 +652,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "go_goroutines",
+          "expr": "go_goroutines{environment=~\"$environment\"}",
           "legendFormat": "goroutines",
           "range": true,
           "refId": "A"
@@ -741,7 +741,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "go_memstats_heap_alloc_bytes",
+          "expr": "go_memstats_heap_alloc_bytes{environment=~\"$environment\"}",
           "legendFormat": "heap alloc",
           "range": true,
           "refId": "A"
@@ -752,7 +752,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "go_memstats_heap_inuse_bytes",
+          "expr": "go_memstats_heap_inuse_bytes{environment=~\"$environment\"}",
           "legendFormat": "heap inuse",
           "range": true,
           "refId": "B"
@@ -765,7 +765,7 @@
   "refresh": "15s",
   "schemaVersion": 38,
   "tags": [
-    "url-shortner",
+    "linkpluse",
     "observability"
   ],
   "templating": {
@@ -783,6 +783,33 @@
         "regex": "/^Prometheus$/",
         "skipUrlSync": false,
         "type": "datasource"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(environment)",
+        "includeAll": true,
+        "label": "Environment",
+        "multi": true,
+        "name": "environment",
+        "options": [],
+        "query": {
+          "query": "label_values(environment)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
       }
     ]
   },
@@ -792,8 +819,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "URL Shortener Monitoring",
-  "uid": "url-shortner-monitoring",
+  "title": "link pluse Monitoring",
+  "uid": "link-pluse-monitoring",
   "version": 1,
   "weekStart": ""
 }
