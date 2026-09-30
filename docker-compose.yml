@@ -80,23 +80,6 @@ services:
       timeout: 5s
       retries: 5
 
-  alloy:
-    image: grafana/alloy:v1.4.3
-    container_name: linkpluse-alloy
-    profiles: ["cloud-monitoring"]
-    restart: unless-stopped
-    volumes:
-      - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
-    environment:
-      - GRAFANA_CLOUD_PROMETHEUS_URL=${GRAFANA_CLOUD_PROMETHEUS_URL}
-      - GRAFANA_CLOUD_PROMETHEUS_USERNAME=${GRAFANA_CLOUD_PROMETHEUS_USERNAME}
-      - GRAFANA_CLOUD_API_TOKEN=${GRAFANA_CLOUD_API_TOKEN}
-    command:
-      - run
-      - --server.http.listen-addr=0.0.0.0:12345
-      - --storage.path=/var/lib/alloy/data
-      - /etc/alloy/config.alloy
-
 volumes:
   postgres_data:
   redis_data:
