@@ -116,6 +116,7 @@ func run() error {
 
 	authService := service.NewAuthService(queries, database, cfg, sessionCache, log, googleOAuth)
 	authHandler := handler.NewAuthHandler(authService, log, cfg.FrontendURL)
+	authHandler.ConfigureTokenCookies(cfg.AccessTokenExpiry, cfg.RefreshTokenExpiry)
 
 	appMetrics := metrics.New()
 

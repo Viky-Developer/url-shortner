@@ -3,7 +3,7 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: url-shortner
+  - job_name: linkpluse
     metrics_path: /metrics
     static_configs:
       - targets:

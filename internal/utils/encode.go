@@ -54,7 +54,7 @@ func DecodeBase62(s string) (int64, error) {
 // int64.
 func deriveDisplayIDKey(secretKey string) int64 {
 	mac := hmac.New(sha256.New, []byte(secretKey))
-	mac.Write([]byte("url-shortner:display-id"))
+	mac.Write([]byte("linkpluse:display-id"))
 	sum := binary.BigEndian.Uint64(mac.Sum(nil)[:8])
 	return int64(sum & 0x7FFFFFFFFFFFFFFF)
 }
