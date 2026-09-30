@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vicky/url-shortner/internal/apperror"
 	"github.com/vicky/url-shortner/internal/contextutil"
@@ -108,6 +109,44 @@ func sampleAuthResponse() *payload.AuthResponse {
 			Status:      "ACTIVE",
 		},
 	}
+}
+
+func assertTokenCookies(t *testing.T, cookies []*http.Cookie, accessToken, refreshToken string) {
+	t.Helper()
+	values := make(map[string]*http.Cookie, len(cookies))
+	for _, cookie := range cookies {
+		values[cookie.Name] = cookie
+	}
+	if cookie := values[accessTokenCookie]; cookie == nil || cookie.Value != accessToken || !cookie.HttpOnly || cookie.Path != "/" {
+		t.Fatalf("expected HTTP-only access-token cookie, got %#v", cookie)
+	} else if cookie.MaxAge != 7*24*60*60 {
+		t.Fatalf("expected access-token cookie to remain for refresh lifetime, got MaxAge %d", cookie.MaxAge)
+	}
+	if cookie := values[refreshTokenCookie]; cookie == nil || cookie.Value != refreshToken || !cookie.HttpOnly || cookie.Path != refreshTokenCookiePath {
+		t.Fatalf("expected HTTP-only refresh-token cookie, got %#v", cookie)
+	} else if cookie.MaxAge != 7*24*60*60 {
+		t.Fatalf("expected refresh-token cookie MaxAge 7 days, got %d", cookie.MaxAge)
+	}
+}
+
+func assertAccessTokenCookie(t *testing.T, cookies []*http.Cookie, accessToken string) {
+	t.Helper()
+	for _, cookie := range cookies {
+		if cookie.Name == refreshTokenCookie {
+			t.Fatal("refresh must not extend the existing refresh-token cookie lifetime")
+		}
+		if cookie.Name == accessTokenCookie {
+			if cookie.Value != accessToken || !cookie.HttpOnly || cookie.Path != "/" || cookie.MaxAge != 7*24*60*60 {
+				t.Fatalf("unexpected access-token cookie: %#v", cookie)
+			}
+			return
+		}
+	}
+	t.Fatal("expected refreshed access-token cookie")
+}
+
+func configureTestTokenCookies(h *AuthHandler) {
+	h.ConfigureTokenCookies(2*time.Minute, 7*24*time.Hour)
 }
 
 func TestGoogleLoginSetsStateAndRedirects(t *testing.T) {
@@ -219,6 +258,7 @@ func TestGoogleCallbackRedirectsToFrontendWithTokenCookies(t *testing.T) {
 		return sampleAuthResponse(), nil
 	}}
 	h := NewAuthHandler(mock, testLog(t), "http://frontend.test/dashboard")
+	configureTestTokenCookies(h)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?code=code&state=expected", nil)
 	req.AddCookie(&http.Cookie{Name: googleOAuthStateCookie, Value: "expected"})
 	w := httptest.NewRecorder()
@@ -239,6 +279,7 @@ func TestGoogleCallbackRedirectsToFrontendWithTokenCookies(t *testing.T) {
 	if values[refreshTokenCookie] == nil || values[refreshTokenCookie].Value != "refresh-token" || !values[refreshTokenCookie].HttpOnly {
 		t.Fatal("expected HTTP-only refresh-token cookie")
 	}
+	assertTokenCookies(t, cookies, "access-token", "refresh-token")
 	if values[userMetadataCookie] == nil || values[userMetadataCookie].Value != "ACTIVE" || !values[userMetadataCookie].HttpOnly {
 		t.Fatal("expected HTTP-only user metadata cookie with account status")
 	}
@@ -275,6 +316,7 @@ func TestRegisterHandler(t *testing.T) {
 		},
 	}
 	h := NewAuthHandler(mock, testLog(t))
+	configureTestTokenCookies(h)
 
 	body := `{"email":"test@example.com","password":"secret123","displayName":"Test User"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/register", bytes.NewBufferString(body))
@@ -288,11 +330,13 @@ func TestRegisterHandler(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"accessToken":"access-token"`) {
 		t.Errorf("expected accessToken in body, got %s", w.Body.String())
 	}
+	assertTokenCookies(t, w.Result().Cookies(), "access-token", "refresh-token")
 }
 
 func TestRegisterHandlerInvalidJSON(t *testing.T) {
 	mock := &mockAuthService{}
 	h := NewAuthHandler(mock, testLog(t))
+	configureTestTokenCookies(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/auth/register", bytes.NewBufferString("{invalid"))
 	w := httptest.NewRecorder()
@@ -348,6 +392,7 @@ func TestLoginHandler(t *testing.T) {
 		},
 	}
 	h := NewAuthHandler(mock, testLog(t))
+	configureTestTokenCookies(h)
 
 	body := `{"email":"test@example.com","password":"secret123"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewBufferString(body))
@@ -358,6 +403,7 @@ func TestLoginHandler(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	assertTokenCookies(t, w.Result().Cookies(), "access-token", "refresh-token")
 }
 
 func TestLoginHandlerInvalidJSON(t *testing.T) {
@@ -409,8 +455,10 @@ func TestLoginHandlerServiceError(t *testing.T) {
 }
 
 func TestRefreshTokenHandler(t *testing.T) {
+	var receivedToken string
 	mock := &mockAuthService{
-		refreshFn: func(_ context.Context, _ string, _ int64) (*payload.RefreshTokenResponse, error) {
+		refreshFn: func(_ context.Context, token string, _ int64) (*payload.RefreshTokenResponse, error) {
+			receivedToken = token
 			return &payload.RefreshTokenResponse{
 				AccessToken:  "new-access-token",
 				RefreshToken: "same-refresh-token",
@@ -418,6 +466,7 @@ func TestRefreshTokenHandler(t *testing.T) {
 		},
 	}
 	h := NewAuthHandler(mock, testLog(t))
+	configureTestTokenCookies(h)
 
 	body := `{"refreshToken":"some-token"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewBufferString(body))
@@ -429,6 +478,32 @@ func TestRefreshTokenHandler(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	if receivedToken != "some-token" {
+		t.Fatalf("expected body refresh token, got %q", receivedToken)
+	}
+	assertAccessTokenCookie(t, w.Result().Cookies(), "new-access-token")
+}
+
+func TestRefreshTokenHandlerUsesHTTPOnlyCookie(t *testing.T) {
+	var receivedToken string
+	mock := &mockAuthService{
+		refreshFn: func(_ context.Context, token string, _ int64) (*payload.RefreshTokenResponse, error) {
+			receivedToken = token
+			return &payload.RefreshTokenResponse{AccessToken: "new-access-token", RefreshToken: token}, nil
+		},
+	}
+	h := NewAuthHandler(mock, testLog(t))
+	configureTestTokenCookies(h)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
+	req.AddCookie(&http.Cookie{Name: refreshTokenCookie, Value: "cookie-refresh-token"})
+	w := httptest.NewRecorder()
+
+	h.RefreshToken(w, req)
+
+	if w.Code != http.StatusOK || receivedToken != "cookie-refresh-token" {
+		t.Fatalf("expected cookie refresh token, status=%d token=%q body=%s", w.Code, receivedToken, w.Body.String())
+	}
+	assertAccessTokenCookie(t, w.Result().Cookies(), "new-access-token")
 }
 
 func TestRefreshTokenHandlerMissingToken(t *testing.T) {
@@ -467,15 +542,17 @@ func TestRefreshTokenHandlerServiceError(t *testing.T) {
 }
 
 func TestLogoutHandler(t *testing.T) {
+	var receivedToken string
 	mock := &mockAuthService{
-		logoutFn: func(_ context.Context, _ string, _, _ int64) error {
+		logoutFn: func(_ context.Context, token string, _, _ int64) error {
+			receivedToken = token
 			return nil
 		},
 	}
 	h := NewAuthHandler(mock, testLog(t))
 
-	body := `{"refreshToken":"some-token"}`
-	req := httptest.NewRequest(http.MethodPost, "/auth/logout", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: refreshTokenCookie, Value: "some-token"})
 	req = req.WithContext(context.WithValue(req.Context(), contextutil.UserIDKey, int64(1)))
 	req = req.WithContext(context.WithValue(req.Context(), contextutil.SessionIDKey, int64(10)))
 	w := httptest.NewRecorder()
@@ -484,6 +561,21 @@ func TestLogoutHandler(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if receivedToken != "some-token" {
+		t.Fatalf("expected cookie refresh token, got %q", receivedToken)
+	}
+	for _, name := range []string{accessTokenCookie, refreshTokenCookie, userMetadataCookie, oauthLoginSuccessCookie} {
+		var cleared bool
+		for _, cookie := range w.Result().Cookies() {
+			if cookie.Name == name && cookie.MaxAge == -1 {
+				cleared = true
+				break
+			}
+		}
+		if !cleared {
+			t.Fatalf("expected %s cookie to be cleared", name)
+		}
 	}
 }
 

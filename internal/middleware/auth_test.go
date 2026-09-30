@@ -227,6 +227,39 @@ func TestAuthMiddlewareCaseInsensitiveBearer(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareAllowsExpiredTokenOnRefresh(t *testing.T) {
+	log, _ := logger.New(logger.WithLevel("error"))
+	encodedUserID := utils.EncodeID(42, utils.UserIDPrefix, testCfg.UserIDSecretKey)
+	claims := service.Claims{
+		UserID:    encodedUserID,
+		SessionID: 77,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-2 * time.Minute)),
+			Subject:   encodedUserID,
+		},
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testCfg.JWTSecretKey))
+	if err != nil {
+		t.Fatalf("sign expired token: %v", err)
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sessionID, ok := r.Context().Value(contextutil.SessionIDKey).(int64); !ok || sessionID != 77 {
+			t.Fatalf("expected session ID 77 in context, got %d, %v", sessionID, ok)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
+	w := httptest.NewRecorder()
+
+	AuthMiddleware(testAuthService(), log)(next).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected expired signed token to reach refresh handler, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAuthMiddlewareErrorResponse(t *testing.T) {
 	log, _ := logger.New(logger.WithLevel("error"))
 	noop := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
