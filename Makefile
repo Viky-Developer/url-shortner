@@ -36,7 +36,7 @@ docker-down-volumes: ## Stop and remove containers AND volumes (destroys data)
 .PHONY: db-wait
 db-wait: ## Wait until postgres is healthy
 	@echo "Waiting for postgres..."
-	@until [ "$$(docker inspect --format '{{.State.Health.Status}}' url-shortner-db 2>/dev/null)" = "healthy" ]; do \
+	@until [ "$$(docker inspect --format '{{.State.Health.Status}}' linkpluse-db 2>/dev/null)" = "healthy" ]; do \
 		sleep 2; \
 	done
 	@echo "Postgres is healthy"
@@ -156,7 +156,7 @@ sqlc-generate: ## Regenerate type-safe db code from SQL queries
 
 .PHONY: build
 build: ## Compile the server binary
-	go build -o bin/url-shortner ./cmd/server
+	go build -o bin/linkpluse ./cmd/server
 
 .PHONY: dev
 dev: ## Run the server with live reload (air)
