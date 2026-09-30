@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/vicky/url-shortner/external/logger"
 	"github.com/vicky/url-shortner/internal/apperror"
@@ -37,8 +38,68 @@ type AuthService interface {
 const googleOAuthStateCookie = "google_oauth_state"
 const accessTokenCookie = "access_token"
 const refreshTokenCookie = "refresh_token"
+const refreshTokenCookiePath = "/"
 const userMetadataCookie = "user_metadata"
 const oauthLoginSuccessCookie = "oauth_login_success"
+
+func secureCookie(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
+func tokenCookie(name, value, path string, ttl time.Duration, secure bool) *http.Cookie {
+	cookie := &http.Cookie{
+		Name: name, Value: value, Path: path,
+		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
+	}
+	if ttl > 0 {
+		cookie.MaxAge = int(ttl.Seconds())
+		cookie.Expires = time.Now().Add(ttl)
+	}
+	return cookie
+}
+
+func (h *AuthHandler) setTokenCookies(w http.ResponseWriter, r *http.Request, tokens payload.RefreshTokenResponse, includeRefresh bool) {
+	secure := secureCookie(r)
+	accessCookieTTL := h.refreshTokenTTL
+	if accessCookieTTL <= 0 {
+		accessCookieTTL = h.accessTokenTTL
+	}
+	// Keep the signed access JWT available for the refresh flow after its JWT
+	// exp claim has elapsed. Authentication still enforces ACCESS_TOKEN_EXPIRY;
+	// the cookie only survives long enough to identify the session during refresh.
+	http.SetCookie(w, tokenCookie(accessTokenCookie, tokens.AccessToken, "/", accessCookieTTL, secure))
+	if includeRefresh {
+		http.SetCookie(w, tokenCookie(refreshTokenCookie, tokens.RefreshToken, refreshTokenCookiePath, h.refreshTokenTTL, secure))
+	}
+}
+
+func clearAuthCookies(w http.ResponseWriter, r *http.Request) {
+	secure := secureCookie(r)
+	for _, cookie := range []http.Cookie{
+		{Name: accessTokenCookie, Path: "/"},
+		{Name: refreshTokenCookie, Path: refreshTokenCookiePath},
+		{Name: userMetadataCookie, Path: "/"},
+		{Name: oauthLoginSuccessCookie, Path: "/"},
+	} {
+		cookie.MaxAge = -1
+		cookie.HttpOnly = true
+		cookie.Secure = secure
+		cookie.SameSite = http.SameSiteLaxMode
+		http.SetCookie(w, &cookie)
+	}
+}
+
+func refreshTokenFromRequest(r *http.Request, w http.ResponseWriter) (string, bool) {
+	if cookie, err := r.Cookie(refreshTokenCookie); err == nil && cookie.Value != "" {
+		return cookie.Value, true
+	}
+
+	req, ok := validation.BindAndValidate[payload.RefreshTokenRequest](r, w)
+	if !ok {
+		return "", false
+	}
+	return req.RefreshToken, true
+}
 
 // GoogleLogin starts the server-side Google OAuth authorization-code flow.
 func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
@@ -92,15 +153,8 @@ func (h *AuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 		response.Success(w, http.StatusOK, "google login successful", []any{result})
 		return
 	}
-	secure := r.TLS != nil
-	http.SetCookie(w, &http.Cookie{
-		Name: accessTokenCookie, Value: result.Token.AccessToken, Path: "/",
-		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name: refreshTokenCookie, Value: result.Token.RefreshToken, Path: "/api/v1/auth",
-		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
-	})
+	h.setTokenCookies(w, r, result.Token, true)
+	secure := secureCookie(r)
 	http.SetCookie(w, &http.Cookie{
 		Name: userMetadataCookie, Value: result.User.Status, Path: "/",
 		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
@@ -114,9 +168,18 @@ func (h *AuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 
 // AuthHandler holds the dependencies required by the auth HTTP handlers.
 type AuthHandler struct {
-	authService AuthService
-	log         logger.Logger
-	frontendURL string
+	authService     AuthService
+	log             logger.Logger
+	frontendURL     string
+	accessTokenTTL  time.Duration
+	refreshTokenTTL time.Duration
+}
+
+// ConfigureTokenCookies aligns JWT validation and browser session lifetimes
+// with the authentication service configuration.
+func (h *AuthHandler) ConfigureTokenCookies(accessTokenTTL, refreshTokenTTL time.Duration) {
+	h.accessTokenTTL = accessTokenTTL
+	h.refreshTokenTTL = refreshTokenTTL
 }
 
 // NewAuthHandler constructs an AuthHandler with the given service and logger.
@@ -151,6 +214,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("user registered", logger.String("email", utils.SanitizeLog(req.Email)))
+	h.setTokenCookies(w, r, resp.Token, true)
 	response.Success(w, http.StatusCreated, "user registered", []any{resp})
 }
 
@@ -176,6 +240,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("user logged in", logger.String("email", utils.SanitizeLog(req.Email)))
+	h.setTokenCookies(w, r, resp.Token, true)
 	response.Success(w, http.StatusOK, "login successful", []any{resp})
 }
 
@@ -232,32 +297,29 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // RefreshToken handles POST /api/v1/auth/refresh
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
-	req, ok := validation.BindAndValidate[payload.RefreshTokenRequest](r, w)
+	refreshToken, ok := refreshTokenFromRequest(r, w)
 	if !ok {
 		return
 	}
 
 	// sessionID is 0 when the client sent no access token; the middleware
 	// populates it from a valid-signature (possibly expired) JWT.
-	sessionID, ok := r.Context().Value(contextutil.SessionIDKey).(int64)
-	if !ok {
-		response.Error(w, http.StatusUnauthorized, fmt.Errorf("%w: unauthorized", apperror.ErrUnauthorized))
-		return
-	}
+	sessionID, _ := r.Context().Value(contextutil.SessionIDKey).(int64)
 
-	resp, err := h.authService.RefreshToken(r.Context(), req.RefreshToken, sessionID)
+	resp, err := h.authService.RefreshToken(r.Context(), refreshToken, sessionID)
 	if err != nil {
 		h.log.Error("token refresh failed", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
 
+	h.setTokenCookies(w, r, *resp, false)
 	response.Success(w, http.StatusOK, "token refreshed", []any{resp})
 }
 
 // Logout handles POST /api/v1/auth/logout
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	req, ok := validation.BindAndValidate[payload.RefreshTokenRequest](r, w)
+	refreshToken, ok := refreshTokenFromRequest(r, w)
 	if !ok {
 		return
 	}
@@ -274,13 +336,14 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.authService.Logout(r.Context(), req.RefreshToken, userID, sessionID)
+	err := h.authService.Logout(r.Context(), refreshToken, userID, sessionID)
 	if err != nil {
 		h.log.Error("logout failed", logger.Error(err))
 		response.Error(w, response.StatusCodeFromError(err), err)
 		return
 	}
 
+	clearAuthCookies(w, r)
 	response.Success(w, http.StatusOK, "logged out", []any{})
 }
 

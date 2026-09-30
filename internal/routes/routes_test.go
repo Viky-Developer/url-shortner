@@ -2,7 +2,9 @@ package routes
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/vicky/url-shortner/external/logger"
@@ -41,6 +43,7 @@ func TestRoutesRegistered(t *testing.T) {
 		{http.MethodGet, "/health"},
 		{http.MethodGet, "/api/v1/auth/google"},
 		{http.MethodGet, "/api/v1/auth/google/callback"},
+		{http.MethodPost, "/api/v1/auth/refresh"},
 		{http.MethodPost, "/api/v1/shorten"},
 		{http.MethodGet, "/abc"},
 		{http.MethodGet, "/api/v1/urls"},
@@ -64,5 +67,25 @@ func TestRoutesRegistered(t *testing.T) {
 				t.Fatalf("no route registered for %s %s", rt.method, rt.path)
 			}
 		})
+	}
+}
+
+func TestRefreshRouteRequiresSignedAccessToken(t *testing.T) {
+	log, _ := logger.New()
+	mux := New(
+		handler.NewURLHandler(nil, log),
+		handler.NewAuthHandler(nil, log),
+		handler.NewAdminHandler(nil, log),
+		handler.NewAccountHandler(nil, log),
+		nil,
+		nil,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected refresh route middleware to reject missing access token, got %d", w.Code)
 	}
 }

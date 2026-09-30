@@ -2,10 +2,7 @@ package cache
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -30,17 +27,17 @@ type RedisConfig struct {
 // to verify connectivity. Returns an error if unreachable.
 func NewRedisCache(cfg RedisConfig) (*RedisCache, error) {
 
-	var tlsConfig *tls.Config
-	if cfg.TLS || strings.Contains(cfg.Addr, "upstash.io") {
-		host, _, err := net.SplitHostPort(cfg.Addr)
-		if err != nil {
-			host = cfg.Addr
-		}
-		tlsConfig = &tls.Config{
-			ServerName: host,
-			MinVersion: tls.VersionTLS12,
-		}
-	}
+	// var tlsConfig *tls.Config
+	// if cfg.TLS || strings.Contains(cfg.Addr, "upstash.io") {
+	// 	host, _, err := net.SplitHostPort(cfg.Addr)
+	// 	if err != nil {
+	// 		host = cfg.Addr
+	// 	}
+	// 	tlsConfig = &tls.Config{
+	// 		ServerName: host,
+	// 		MinVersion: tls.VersionTLS12,
+	// 	}
+	// }
 
 	client := redis.NewClient(&redis.Options{
 		Addr:       cfg.Addr,
@@ -48,7 +45,7 @@ func NewRedisCache(cfg RedisConfig) (*RedisCache, error) {
 		Password:   cfg.Password,
 		DB:         cfg.DB,
 		MaxRetries: cfg.MaxRetries,
-		TLSConfig:  tlsConfig,
+		// TLSConfig:  tlsConfig,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
