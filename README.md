@@ -223,9 +223,6 @@ The application is configured through environment variables loaded from `.env`:
 | `RABBITMQ_EXCHANGE_CLICKS` | `url.clicks.direct` | Direct exchange for click events |
 | `RABBITMQ_ROUTING_KEY_CLICKS` | `url.clicks.route` | Routing key for click events |
 | `RABBITMQ_QUEUE_CLICKS` | `url.clicks` | Durable queue for click consumer |
-| `GRAFANA_CLOUD_PROMETHEUS_URL` | `""` | Grafana Cloud Prometheus push endpoint URL |
-| `GRAFANA_CLOUD_PROMETHEUS_USERNAME` | `""` | Grafana Cloud Prometheus instance ID / username |
-| `GRAFANA_CLOUD_API_TOKEN` | `""` | Grafana Cloud access policy token with `metrics:write` |
 
 ---
 
@@ -293,54 +290,7 @@ The service exposes Prometheus metrics at `/metrics`.
 - **URL**: `http://localhost:3000`
 - **Default Credentials**: `admin` / `admin`
 - Comes pre-configured with automated datasource provisioning and dashboards displaying traffic volume, request latency percentiles, error rates, and system memory.
-- **Dashboard**: **link pluse Monitoring** (UID: `link-pluse-monitoring`)
-- Comes pre-configured with automated datasource provisioning and dashboards displaying traffic volume, request latency percentiles, error rates, and Go runtime stats.
-- Includes a multi-select `$environment` variable filter to inspect `staging` and `production` deployments independently or in aggregate.
 - **Traffic Generator**: Run `make prometheus-seed` while the server is running to generate synthetic traffic and visualize live metrics.
-
-### Grafana Cloud
-### Grafana Cloud & Alloy Monitoring
-
-The optional Alloy profile scrapes the Render staging and production services
-and forwards their metrics to Grafana Cloud. Metrics include an `environment`
-label with either `staging` or `production` so dashboards can filter deployments.
-[Grafana Alloy](https://grafana.com/docs/alloy/) is configured (`deploy/alloy/config.alloy`) to scrape both staging (`url-shortner-0skn.onrender.com`) and production (`url-shortner-1-rpra.onrender.com`) endpoints at 60-second intervals and remote-write metrics to Grafana Cloud with `job="linkpluse"` and `service="linkpluse"`.
-
-Create a Grafana Cloud access-policy token with `metrics:write`, then set these
-values in your untracked `.env` file:
-#### 1. Running Locally with Docker Compose
-
-To run the Alloy collector container locally:
-
-1. Create a Grafana Cloud access-policy token with the `metrics:write` scope.
-2. Set the following variables in your untracked `.env` file:
-
-```dotenv
-GRAFANA_CLOUD_PROMETHEUS_URL=https://prometheus-<region>.grafana.net/api/prom/push
-GRAFANA_CLOUD_PROMETHEUS_USERNAME=<metrics-instance-id>
-GRAFANA_CLOUD_API_TOKEN=<access-policy-token>
-```
-
-Start only the cloud collector with:
-3. Start the Alloy container:
-
-```bash
-docker compose --profile cloud-monitoring up -d alloy
-```
-
-The token must remain in `.env` or a deployment secret manager and must never
-be committed. The collector scrapes each Render service every 60 seconds; this
-inbound traffic can keep free Render services awake and consume instance hours.
-#### 2. Deploying as a Render Background Worker
-
-For continuous 24/7 scraping when local machines are offline, Alloy is configured as a background worker in `render.yaml` using `deploy/alloy/Dockerfile`:
-
-- **Service Type**: `worker` (`name: alloy`, `runtime: docker`, `plan: starter`)
-- **Docker Context**: `./deploy/alloy`
-- **Environment Variables**: Set `GRAFANA_CLOUD_PROMETHEUS_URL`, `GRAFANA_CLOUD_PROMETHEUS_USERNAME`, and `GRAFANA_CLOUD_API_TOKEN` in your Render service dashboard (`sync: false`).
-
-> [!NOTE]
-> The access-policy token must remain in `.env` or your Render secret manager and must never be committed. Periodic scraping keeps free-tier web services active and consumes instance hours.
 
 ---
 

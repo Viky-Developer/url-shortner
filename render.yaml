@@ -1,33 +1,16 @@
 services:
   - type: web
-    name: url-shortner
+    name: linkpluse
     runtime: go
     plan: free
     branch: dev
     autoDeploy: true
 
     # Step 1: Install goose to bin/, compile server binary, and run migrations/seeds at build time
-    buildCommand: GOBIN=$(pwd)/bin go install github.com/pressly/goose/v3/cmd/goose@latest && go build -o bin/url-shortner ./cmd/server && ./scripts/run-migrations.sh
+    buildCommand: GOBIN=$(pwd)/bin go install github.com/pressly/goose/v3/cmd/goose@latest && go build -o bin/linkpluse ./cmd/server && ./scripts/run-migrations.sh
 
     # Step 2: Auto-run database schema migrations and seed data before deployment (paid tiers)
     preDeployCommand: ./scripts/run-migrations.sh
 
     # Step 3: Ensure migrations and seeds have executed (required for free tier), then start web server
-    startCommand: ./scripts/run-migrations.sh && ./bin/url-shortner
-
-  - type: worker
-    name: alloy
-    runtime: docker
-    dockerfilePath: ./deploy/alloy/Dockerfile
-    dockerContext: ./deploy/alloy
-    plan: starter
-    branch: dev
-    autoDeploy: true
-    envVars:
-      - key: GRAFANA_CLOUD_PROMETHEUS_URL
-        value: https://prometheus-prod-43-prod-ap-south-1.grafana.net/api/prom/push
-      - key: GRAFANA_CLOUD_PROMETHEUS_USERNAME
-        value: "3618890"
-      - key: GRAFANA_CLOUD_API_TOKEN
-        sync: false
-
+    startCommand: ./scripts/run-migrations.sh && ./bin/linkpluse
