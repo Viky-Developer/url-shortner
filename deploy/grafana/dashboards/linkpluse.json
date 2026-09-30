@@ -765,7 +765,7 @@
   "refresh": "15s",
   "schemaVersion": 38,
   "tags": [
-    "url-shortner",
+    "linkpluse",
     "observability"
   ],
   "templating": {
@@ -792,8 +792,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "URL Shortener Monitoring",
-  "uid": "url-shortner-monitoring",
+  "title": "linkpluse Monitoring",
+  "uid": "linkpluse-monitoring",
   "version": 1,
   "weekStart": ""
 }
