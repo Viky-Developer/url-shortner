@@ -8,13 +8,6 @@ prometheus.scrape "render" {
       "job"         = "linkpluse",
       "service"     = "linkpluse",
     },
-    {
-      "__address__" = "url-shortner-1-rpra.onrender.com",
-      "__scheme__"  = "https",
-      "environment" = "production",
-      "job"         = "linkpluse",
-      "service"     = "linkpluse",
-    },
   ]
 
   metrics_path    = "/metrics"
