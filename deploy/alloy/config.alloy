@@ -5,12 +5,14 @@ prometheus.scrape "render" {
       "__address__" = sys.env("SERVER_BASE_URL"),
       "__scheme__"  = "https",
       "environment" = "staging",
+      "job"         = "linkpluse",
       "service"     = "linkpluse",
     },
     {
-      "__address__" = sys.env("SERVER_BASE_URL"),
+      "__address__" = "url-shortner-1-rpra.onrender.com",
       "__scheme__"  = "https",
       "environment" = "production",
+      "job"         = "linkpluse",
       "service"     = "linkpluse",
     },
   ]
