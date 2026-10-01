@@ -1,0 +1,32 @@
+prometheus.scrape "render" {
+  job_name = "linkpluse"
+  targets = [
+    {
+      "__address__" = sys.env("SERVER_BASE_URL"),
+      "__scheme__"  = "https",
+      "environment" = "staging",
+      "service"     = "linkpluse",
+    },
+    {
+      "__address__" = sys.env("SERVER_BASE_URL"),
+      "__scheme__"  = "https",
+      "environment" = "production",
+      "service"     = "linkpluse",
+    },
+  ]
+
+  metrics_path    = "/metrics"
+  scrape_interval = "60s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROMETHEUS_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROMETHEUS_USERNAME")
+      password = sys.env("GRAFANA_CLOUD_API_TOKEN")
+    }
+  }
+}
