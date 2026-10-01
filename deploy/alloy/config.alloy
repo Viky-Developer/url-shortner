@@ -5,12 +5,7 @@ prometheus.scrape "render" {
       "__address__" = sys.env("SERVER_BASE_URL"),
       "__scheme__"  = "https",
       "environment" = "staging",
-      "service"     = "linkpluse",
-    },
-    {
-      "__address__" = sys.env("SERVER_BASE_URL"),
-      "__scheme__"  = "https",
-      "environment" = "production",
+      "job"         = "linkpluse",
       "service"     = "linkpluse",
     },
   ]
