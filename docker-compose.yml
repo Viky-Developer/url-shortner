@@ -80,6 +80,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # Grafana Alloy — activate with: docker compose --profile cloud-monitoring up -d alloy
+  alloy:
+    image: grafana/alloy:v1.4.3
+    container_name: linkpluse-alloy
+    restart: unless-stopped
+    profiles:
+      - cloud-monitoring
+    volumes:
+      - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
+    env_file:
+      - .env
+    ports:
+      - "12345:12345"
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - /etc/alloy/config.alloy
+
 volumes:
   postgres_data:
   redis_data:

@@ -14,3 +14,20 @@ services:
 
     # Step 3: Ensure migrations and seeds have executed (required for free tier), then start web server
     startCommand: ./scripts/run-migrations.sh && ./bin/linkpluse
+
+  # Grafana Alloy — scrapes production /metrics and remote_writes to Grafana Cloud
+  - type: web
+    name: alloy
+    runtime: docker
+    dockerfilePath: ./deploy/alloy/Dockerfile
+    dockerContext: ./deploy/alloy
+    plan: free
+    branch: dev
+    autoDeploy: true
+    envVars:
+      - key: GRAFANA_CLOUD_PROMETHEUS_URL
+        value: https://prometheus-prod-43-prod-ap-south-1.grafana.net/api/prom/push
+      - key: GRAFANA_CLOUD_PROMETHEUS_USERNAME
+        value: "3618890"
+      - key: GRAFANA_CLOUD_API_TOKEN
+        sync: false
